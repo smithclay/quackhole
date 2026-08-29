@@ -33,7 +33,11 @@ impl From<crate::Response> for QhResponse {
         Self {
             status: response.status,
             reason_c: c(response.reason),
-            headers_c: response.headers.into_iter().map(|(k, v)| (c(k), c(v))).collect(),
+            headers_c: response
+                .headers
+                .into_iter()
+                .map(|(k, v)| (c(k), c(v)))
+                .collect(),
             body: response.body,
         }
     }
@@ -312,7 +316,10 @@ pub unsafe extern "C" fn qh_response_header_count(response: *const QhResponse) -
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn qh_response_header_name(response: *const QhResponse, index: usize) -> *const c_char {
+pub unsafe extern "C" fn qh_response_header_name(
+    response: *const QhResponse,
+    index: usize,
+) -> *const c_char {
     match response.as_ref().and_then(|r| r.headers_c.get(index)) {
         Some((name, _)) => name.as_ptr(),
         None => std::ptr::null(),
@@ -320,7 +327,10 @@ pub unsafe extern "C" fn qh_response_header_name(response: *const QhResponse, in
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn qh_response_header_value(response: *const QhResponse, index: usize) -> *const c_char {
+pub unsafe extern "C" fn qh_response_header_value(
+    response: *const QhResponse,
+    index: usize,
+) -> *const c_char {
     match response.as_ref().and_then(|r| r.headers_c.get(index)) {
         Some((_, value)) => value.as_ptr(),
         None => std::ptr::null(),

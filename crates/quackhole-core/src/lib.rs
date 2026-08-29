@@ -104,7 +104,12 @@ pub fn peer_addr(endpoint_id: &str, relay_url: &str) -> Result<iroh::EndpointAdd
 }
 
 /// Record or refresh a peer. Never overwrites a known path with "unknown".
-pub(crate) fn record_peer(peers: &PeerMap, id: EndpointId, path: &'static str, direction: &'static str) {
+pub(crate) fn record_peer(
+    peers: &PeerMap,
+    id: EndpointId,
+    path: &'static str,
+    direction: &'static str,
+) {
     if let Ok(mut map) = peers.lock() {
         let entry = map.entry(id).or_insert(PeerEntry { path, direction });
         // Never downgrade a known path to "unknown", and keep the direction we
@@ -276,9 +281,11 @@ fn create_private(path: &Path) -> std::io::Result<std::fs::File> {
 #[cfg(not(target_family = "wasm"))]
 #[cfg(not(unix))]
 fn create_private(path: &Path) -> std::io::Result<std::fs::File> {
-    std::fs::OpenOptions::new().write(true).create_new(true).open(path)
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
 }
-
 
 #[cfg(not(target_family = "wasm"))]
 #[cfg(test)]
@@ -358,7 +365,10 @@ mod tests {
         // Accepting only FromStr would reject our own printed output.
         assert_eq!(parse_endpoint_id(&id.to_string()).unwrap(), id);
         assert_eq!(parse_endpoint_id(&id.to_z32()).unwrap(), id);
-        assert_eq!(parse_endpoint_id(&format!("  {}  ", id.to_z32())).unwrap(), id);
+        assert_eq!(
+            parse_endpoint_id(&format!("  {}  ", id.to_z32())).unwrap(),
+            id
+        );
         assert_eq!(id.to_z32().len(), 52, "z-base-32 must fit a DNS label");
 
         assert!(parse_endpoint_id("not-an-endpoint-id").is_err());

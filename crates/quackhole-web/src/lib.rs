@@ -102,7 +102,8 @@ impl QuackholeClient {
                 body: body.as_deref(),
                 content_type: &content_type,
             };
-            let bytes = build_request(&request).map_err(|e| JsValue::from_str(&format!("{e:#}")))?;
+            let bytes =
+                build_request(&request).map_err(|e| JsValue::from_str(&format!("{e:#}")))?;
 
             let raw = n0_future::time::timeout(
                 Duration::from_millis(u64::from(timeout_ms)),

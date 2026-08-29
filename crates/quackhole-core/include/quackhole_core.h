@@ -37,7 +37,7 @@ extern "C" {
 #define QH_ENDPOINT_ID_LEN 80
 
 //! Return codes. Negative values are failures.
-#define QH_OK 0
+#define QH_OK  0
 #define QH_ERR (-1)
 
 //! Opaque handle: tokio runtime + iroh endpoint + accept loop + dial cache.

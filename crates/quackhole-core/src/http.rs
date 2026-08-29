@@ -136,7 +136,9 @@ pub fn parse_response(bytes: &[u8], expect_body: bool) -> Result<Response> {
     }
     for line in lines {
         if let Some((name, value)) = line.split_once(':') {
-            response.headers.push((name.trim().to_string(), value.trim().to_string()));
+            response
+                .headers
+                .push((name.trim().to_string(), value.trim().to_string()));
         }
     }
 
@@ -149,7 +151,10 @@ pub fn parse_response(bytes: &[u8], expect_body: bool) -> Result<Response> {
         Vec::new()
     } else if chunked {
         decode_chunked(rest)?
-    } else if let Some(len) = response.header("content-length").and_then(|v| v.parse::<usize>().ok()) {
+    } else if let Some(len) = response
+        .header("content-length")
+        .and_then(|v| v.parse::<usize>().ok())
+    {
         if len > rest.len() {
             // The stream ended early -- the serving side's bridge died, or the
             // peer was killed mid-response. Clamping here would hand the caller
@@ -284,7 +289,10 @@ mod tests {
     fn a_body_without_content_length_runs_to_the_end() {
         // The normal case: we send Connection: close and read to stream end.
         let raw = b"HTTP/1.1 200 OK\r\n\r\neverything after the head";
-        assert_eq!(parse_response(raw, true).unwrap().body, b"everything after the head");
+        assert_eq!(
+            parse_response(raw, true).unwrap().body,
+            b"everything after the head"
+        );
     }
 
     #[test]
@@ -297,7 +305,8 @@ mod tests {
     fn an_oversized_chunk_size_is_rejected_rather_than_wrapping() {
         // pos + chunk_size overflows here; a guard written that way would let
         // this through and then re-scan forever.
-        let raw = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffee\r\nhi\r\n";
+        let raw =
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffee\r\nhi\r\n";
         assert!(parse_response(raw, true).is_err());
     }
 

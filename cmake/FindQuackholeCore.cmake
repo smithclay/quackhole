@@ -50,9 +50,9 @@ else()
   set(QUACKHOLE_LIB_NAME "libquackhole_core.a")
 endif()
 
-set(QUACKHOLE_LIB_PATH
-    "${QUACKHOLE_WORKSPACE_DIR}/target/${QUACKHOLE_RUST_TARGET}/${QUACKHOLE_CARGO_PROFILE_DIR}/${QUACKHOLE_LIB_NAME}"
-)
+set(QUACKHOLE_TARGET_DIR "${QUACKHOLE_WORKSPACE_DIR}/target/${QUACKHOLE_RUST_TARGET}")
+set(QUACKHOLE_PROFILE_DIR "${QUACKHOLE_TARGET_DIR}/${QUACKHOLE_CARGO_PROFILE_DIR}")
+set(QUACKHOLE_LIB_PATH "${QUACKHOLE_PROFILE_DIR}/${QUACKHOLE_LIB_NAME}")
 
 # --- Build rule --------------------------------------------------------------
 # DEPENDS matters: an add_custom_command without it only re-runs when OUTPUT is
@@ -73,13 +73,13 @@ add_custom_command(
   COMMENT "Building quackhole-core (${QUACKHOLE_CARGO_PROFILE_DIR}, ${QUACKHOLE_RUST_TARGET})"
   VERBATIM)
 
-add_custom_target(quackhole_core_build DEPENDS ${QUACKHOLE_LIB_PATH})
+add_custom_target(quackhole_core_build DEPENDS ${QUACKHOLE_LIB_PATH}
+                  COMMENT "Building the quackhole Rust transport core")
 
 add_library(quackhole::core STATIC IMPORTED GLOBAL)
-set_target_properties(
-  quackhole::core PROPERTIES IMPORTED_LOCATION ${QUACKHOLE_LIB_PATH}
-                             INTERFACE_INCLUDE_DIRECTORIES
-                             "${QUACKHOLE_CORE_DIR}/include")
+set_target_properties(quackhole::core
+                      PROPERTIES IMPORTED_LOCATION "${QUACKHOLE_LIB_PATH}"
+                                 INTERFACE_INCLUDE_DIRECTORIES "${QUACKHOLE_CORE_DIR}/include")
 add_dependencies(quackhole::core quackhole_core_build)
 
 # --- System libraries a Rust staticlib expects the consumer to provide -------

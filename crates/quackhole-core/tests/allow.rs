@@ -87,11 +87,18 @@ fn allow_list_admits_the_listed_peer_and_rejects_others() {
         }
     };
     assert_eq!(response.status, 200);
-    assert_eq!(response.body, BODY.as_bytes(), "allowed peer did not get the response");
+    assert_eq!(
+        response.body,
+        BODY.as_bytes(),
+        "allowed peer did not get the response"
+    );
 
     // --- denied ----------------------------------------------------------
     // A different endpoint id, so the dialer is definitively not on the list.
-    let stranger = Core::new(None, true).expect("stranger").endpoint_id_z32().to_string();
+    let stranger = Core::new(None, true)
+        .expect("stranger")
+        .endpoint_id_z32()
+        .to_string();
     let denied = Core::new(None, true).expect("denied core");
     denied
         .serve_start(&spawn_http_server(), vec![stranger])
@@ -115,10 +122,17 @@ fn allow_list_admits_the_listed_peer_and_rejects_others() {
             }
         }
     };
-    assert!(err.contains("not on allow list"), "rejected for the wrong reason: {err}");
+    assert!(
+        err.contains("not on allow list"),
+        "rejected for the wrong reason: {err}"
+    );
 
-    permitted.serve_stop(Duration::from_secs(5)).expect("stop permitted");
-    denied.serve_stop(Duration::from_secs(5)).expect("stop denied");
+    permitted
+        .serve_stop(Duration::from_secs(5))
+        .expect("stop permitted");
+    denied
+        .serve_stop(Duration::from_secs(5))
+        .expect("stop denied");
 }
 
 #[test]
@@ -128,7 +142,9 @@ fn empty_allow_list_admits_anyone() {
     }
 
     let serving = Core::new(None, true).expect("serving");
-    serving.serve_start(&spawn_http_server(), Vec::new()).expect("serve");
+    serving
+        .serve_start(&spawn_http_server(), Vec::new())
+        .expect("serve");
     let peer = serving.endpoint_id_z32().to_string();
 
     let dialer = Core::new(None, true).expect("dialer");
@@ -154,7 +170,10 @@ fn a_malformed_allow_list_entry_fails_the_call() {
     // Parsed up front, so a typo is an error the caller sees rather than a
     // silent "nobody can connect".
     let err = serving
-        .serve_start("127.0.0.1:9494", vec!["obviously-not-an-endpoint-id".to_string()])
+        .serve_start(
+            "127.0.0.1:9494",
+            vec!["obviously-not-an-endpoint-id".to_string()],
+        )
         .unwrap_err();
     assert!(format!("{err:#}").contains("allow list"), "got: {err:#}");
     assert!(!serving.is_serving());

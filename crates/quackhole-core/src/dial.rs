@@ -96,7 +96,10 @@ enum Attempt {
 /// selected yet, any open path is a better answer than none.
 fn observed_path(conn: &Connection) -> &'static str {
     let paths = conn.paths();
-    let path = paths.iter().find(|p| p.is_selected()).or_else(|| paths.iter().next());
+    let path = paths
+        .iter()
+        .find(|p| p.is_selected())
+        .or_else(|| paths.iter().next());
     match path {
         Some(p) if p.is_ip() => "direct",
         Some(p) if p.is_relay() => "relay",
@@ -108,7 +111,9 @@ fn observed_path(conn: &Connection) -> &'static str {
 async fn round_trip(conn: &Connection, req: &[u8]) -> Attempt {
     let (mut send, mut recv) = match conn.open_bi().await {
         Ok(pair) => pair,
-        Err(e) => return Attempt::BeforeSend(anyhow::Error::new(e).context("failed to open bi-stream")),
+        Err(e) => {
+            return Attempt::BeforeSend(anyhow::Error::new(e).context("failed to open bi-stream"))
+        }
     };
     if let Err(e) = send.write_all(req).await {
         return Attempt::BeforeSend(anyhow::Error::new(e).context("failed to write request"));
@@ -198,9 +203,12 @@ impl Core {
         let peers = self.peers.clone();
 
         let raw = self.runtime()?.block_on(async move {
-            tokio::time::timeout(timeout, request_async(&endpoint, &cache, &peers, addr, &bytes))
-                .await
-                .context("request timed out")?
+            tokio::time::timeout(
+                timeout,
+                request_async(&endpoint, &cache, &peers, addr, &bytes),
+            )
+            .await
+            .context("request timed out")?
         })?;
         // HEAD carries a Content-Length it does not honour.
         crate::http::parse_response(&raw, req.method != "HEAD")

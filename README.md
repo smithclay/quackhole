@@ -150,11 +150,24 @@ test/docker/run.sh                         # two DuckDBs on networks that cannot
 Tests that need the network are gated on `QUACKHOLE_NET_TESTS=1` so the default suite stays
 hermetic.
 
-CI also runs two quality gates, which are worth reproducing before pushing because the
-formatter is pinned to a version nothing installs by default:
+Formatting and lints run as pre-commit hooks, so they fail on your machine rather than in
+the CI matrix:
 
 ```sh
-pip install "black>=24" cmake-format "clang_format==11.0.1"   # exactly 11.0.1; newer disagrees
+pip install pre-commit && pre-commit install
+pre-commit run --all-files      # first time, or after changing the config
+```
+
+`.pre-commit-config.yaml` pins clang-format to **exactly 11.0.1**, which is what DuckDB's
+`format.py` expects; newer releases disagree about line breaking and CI rejects the result.
+It also runs `cargo fmt` and `cargo clippy -D warnings`, which nothing else did — the C++
+side had two gates and the side containing every unsafe block had none.
+
+CI's own gates can still be run directly, and cover a slightly different set (`format.py`
+reaches into `test/`; the hooks reach the C ABI header it does not):
+
+```sh
+pip install "black>=24" cmake-format "clang_format==11.0.1"
 make format-check
 TIDY_BINARY=$(brew --prefix llvm)/bin/clang-tidy make tidy-check
 ```

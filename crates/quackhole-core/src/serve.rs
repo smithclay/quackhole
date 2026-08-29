@@ -141,7 +141,8 @@ async fn accept_loop(
                 Ok(conn) => conn,
                 Err(_) => return,
             };
-            if let Err(err) = handle_connection(conn, target, allow, peers, path, cancel, inner).await
+            if let Err(err) =
+                handle_connection(conn, target, allow, peers, path, cancel, inner).await
             {
                 // A peer disconnecting is normal, not an error worth surfacing.
                 let _ = err;
