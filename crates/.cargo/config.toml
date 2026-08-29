@@ -1,0 +1,4 @@
+# Applies to the whole workspace: selecting a browser backend for getrandom is
+# a property of building this Rust for wasm, not of one crate.
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", 'getrandom_backend="wasm_js"']

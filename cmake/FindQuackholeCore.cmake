@@ -4,7 +4,10 @@
 # Adapted from duckdb-otlp/cmake/FindOtlp2Records.cmake, which learned most of
 # these lessons the hard way.
 
-set(QUACKHOLE_CORE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/crates/quackhole-core")
+# The crates share one workspace, so build output and the lockfile live at the
+# workspace root rather than beside the crate.
+set(QUACKHOLE_WORKSPACE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/crates")
+set(QUACKHOLE_CORE_DIR "${QUACKHOLE_WORKSPACE_DIR}/quackhole-core")
 
 if(NOT EXISTS "${QUACKHOLE_CORE_DIR}/Cargo.toml")
   message(FATAL_ERROR "quackhole-core not found at ${QUACKHOLE_CORE_DIR}")
@@ -48,7 +51,7 @@ else()
 endif()
 
 set(QUACKHOLE_LIB_PATH
-    "${QUACKHOLE_CORE_DIR}/target/${QUACKHOLE_RUST_TARGET}/${QUACKHOLE_CARGO_PROFILE_DIR}/${QUACKHOLE_LIB_NAME}"
+    "${QUACKHOLE_WORKSPACE_DIR}/target/${QUACKHOLE_RUST_TARGET}/${QUACKHOLE_CARGO_PROFILE_DIR}/${QUACKHOLE_LIB_NAME}"
 )
 
 # --- Build rule --------------------------------------------------------------
@@ -65,7 +68,7 @@ add_custom_command(
   COMMAND ${CARGO_EXECUTABLE} build ${QUACKHOLE_CARGO_FLAGS} --target
           ${QUACKHOLE_RUST_TARGET}
   DEPENDS ${QUACKHOLE_RUST_SOURCES} "${QUACKHOLE_CORE_DIR}/Cargo.toml"
-          "${QUACKHOLE_CORE_DIR}/Cargo.lock"
+          "${QUACKHOLE_WORKSPACE_DIR}/Cargo.lock"
   WORKING_DIRECTORY ${QUACKHOLE_CORE_DIR}
   COMMENT "Building quackhole-core (${QUACKHOLE_CARGO_PROFILE_DIR}, ${QUACKHOLE_RUST_TARGET})"
   VERBATIM)

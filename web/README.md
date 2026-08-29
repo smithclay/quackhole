@@ -22,6 +22,12 @@ resolved off the worker global *at call time*, so replacing
 | `protocol.js` | The shared-memory layout and budgets. Loaded by both halves. |
 | `wasm/` | Built from `crates/quackhole-web` — iroh, plus the framing from the core. |
 
+`crates/` is a Cargo workspace, so the browser and native builds resolve their
+dependencies together. That is the point of it: independent lockfiles would let
+`cargo update` in one directory leave the two clients on different iroh versions,
+disagreeing about the wire — which is what sharing the transport code exists to
+prevent.
+
 ## Using it
 
 Point the DuckDB worker at `qh-worker.js` instead of the bundle's own worker:

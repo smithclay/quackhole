@@ -1,3 +1,0 @@
-# getrandom 0.3 will not pick a browser backend on its own.
-[target.wasm32-unknown-unknown]
-rustflags = ["--cfg", 'getrandom_backend="wasm_js"']

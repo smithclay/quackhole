@@ -8,7 +8,7 @@ __pycache__/
 .Rhistory
 
 # Rust core build output
-crates/*/target/
+crates/target/
 # Persisted iroh endpoint key (the address); never commit
 .quackhole/
 

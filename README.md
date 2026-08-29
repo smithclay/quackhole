@@ -178,10 +178,11 @@ src/                        C++ extension
   quackhole_extension.cpp     entry point, table functions, load-order re-arm
   quackhole_http.cpp          QuackholeHTTPUtil / QuackholeHTTPClient
   quackhole_state.cpp         per-DatabaseInstance state; shuts the core down on close
-crates/quackhole-core/      Rust static library (iroh + tokio)
-  src/http.rs                 request building and response parsing, shared by both clients
-  include/quackhole_core.h    hand-written C ABI
-crates/quackhole-web/       the same core built for browsers (wasm-bindgen, relay-only)
+crates/                     Cargo workspace: one Cargo.lock, one target/
+  quackhole-core/             Rust static library (iroh + tokio)
+    src/http.rs                 request building and parsing, shared by both clients
+    include/quackhole_core.h    hand-written C ABI
+  quackhole-web/              the same core built for browsers (wasm-bindgen, relay-only)
 web/                        browser client: the XHR shim and its bridge worker
 cmake/FindQuackholeCore.cmake
 test/docker/                two peers on unroutable networks; the cross-network test
