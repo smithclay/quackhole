@@ -1,0 +1,84 @@
+//! End-to-end transport test: one Core serves, another dials it by endpoint id.
+//!
+//! Dialing a bare endpoint id goes through n0's pkarr/DNS address lookup, so
+//! this test needs the network and a few seconds of publish propagation. It is
+//! gated behind QUACKHOLE_NET_TESTS=1 to keep `cargo test` hermetic, mirroring
+//! the `require-env` idiom used for live tests in DuckDB extensions.
+
+use quackhole_core::Core;
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::time::{Duration, Instant};
+
+const BODY: &str = "quack-over-iroh";
+
+/// A one-shot HTTP/1.1 server: read a request, reply, close.
+///
+/// Closing is what turns the loopback TCP FIN into a QUIC stream FIN, which is
+/// how the dialing side knows the response ended.
+fn spawn_http_server() -> (String, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr").to_string();
+    let handle = std::thread::spawn(move || {
+        for stream in listener.incoming().take(1) {
+            let mut stream = match stream {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                BODY.len(),
+                BODY
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+    (addr, handle)
+}
+
+#[test]
+fn request_round_trips_over_iroh() {
+    if std::env::var("QUACKHOLE_NET_TESTS").as_deref() != Ok("1") {
+        eprintln!("skipping: set QUACKHOLE_NET_TESTS=1 to run live-network tests");
+        return;
+    }
+
+    let (target, server) = spawn_http_server();
+
+    let serving = Core::new(None, true).expect("serving core");
+    serving.serve_start(&target, Vec::new()).expect("serve");
+    let peer_id = serving.endpoint_id_z32().to_string();
+    assert_eq!(peer_id.len(), 52, "z-base-32 endpoint id fits a DNS label");
+
+    let dialing = Core::new(None, true).expect("dialing core");
+    let request = format!(
+        "POST /quack HTTP/1.1\r\nHost: {peer_id}.iroh:9494\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+
+    // Address lookup has to propagate before the dial can resolve the id.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let response = loop {
+        match dialing.request(&peer_id, request.as_bytes(), Duration::from_secs(20)) {
+            Ok(body) => break body,
+            Err(err) if Instant::now() < deadline => {
+                eprintln!("retrying after: {err:#}");
+                std::thread::sleep(Duration::from_secs(2));
+            }
+            Err(err) => panic!("request failed: {err:#}"),
+        }
+    };
+
+    let text = String::from_utf8_lossy(&response);
+    assert!(text.starts_with("HTTP/1.1 200 OK"), "got: {text}");
+    assert!(text.ends_with(BODY), "got: {text}");
+
+    let peers = dialing.peer_snapshot();
+    assert_eq!(peers.len(), 1);
+    assert_eq!(peers[0].1.direction, "out");
+
+    serving.serve_stop(Duration::from_secs(5)).expect("stop");
+    let _ = server.join();
+}

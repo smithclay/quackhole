@@ -1,0 +1,19 @@
+[package]
+name = "quackhole-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "iroh transport core for the quackhole DuckDB extension"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+iroh = "1.1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+anyhow = "1"
+hex = "0.4"
+
+[profile.release]
+opt-level = 2

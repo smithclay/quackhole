@@ -1,0 +1,20 @@
+build
+.idea
+cmake-build-debug
+duckdb_unittest_tempdir/
+.DS_Store
+testext
+test/python/__pycache__/
+.Rhistory
+
+# Rust core build output
+crates/*/target/
+# Persisted iroh endpoint key (the address); never commit
+.quackhole/
+
+# Editor / tooling artifacts
+.cache/
+# Symlinks into the duckdb submodule, created by extension-ci-tools at configure time
+/.clang-format
+/.clang-tidy
+/.editorconfig
