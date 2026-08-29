@@ -1,6 +1,6 @@
 //! Outbound side: one cached QUIC connection per peer, one bi-stream per request.
 
-use crate::{record_peer, PeerMap, ALPN};
+use crate::{ALPN, PeerMap, record_peer};
 use anyhow::{Context, Result};
 use iroh::endpoint::Connection;
 use iroh::{Endpoint, EndpointAddr, EndpointId};
@@ -112,7 +112,7 @@ async fn round_trip(conn: &Connection, req: &[u8]) -> Attempt {
     let (mut send, mut recv) = match conn.open_bi().await {
         Ok(pair) => pair,
         Err(e) => {
-            return Attempt::BeforeSend(anyhow::Error::new(e).context("failed to open bi-stream"))
+            return Attempt::BeforeSend(anyhow::Error::new(e).context("failed to open bi-stream"));
         }
     };
     if let Err(e) = send.write_all(req).await {

@@ -1,8 +1,8 @@
 //! Inbound side: accept iroh connections and bridge each bi-stream to a fresh
 //! TCP connection to the local Quack server. Bytes only -- no HTTP parsing here.
 
-use crate::{parse_endpoint_id, record_peer, Core, PeerMap};
-use anyhow::{bail, Context, Result};
+use crate::{Core, PeerMap, parse_endpoint_id, record_peer};
+use anyhow::{Context, Result, bail};
 use iroh::endpoint::{Connection, IncomingAddr};
 use iroh::{Endpoint, EndpointId};
 use std::collections::HashSet;

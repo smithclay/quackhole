@@ -14,8 +14,8 @@ mod ffi;
 #[cfg(not(target_family = "wasm"))]
 mod serve;
 
-pub use dial::{request_async, ConnCache};
-pub use http::{build_request, parse_response, Request, Response};
+pub use dial::{ConnCache, request_async};
+pub use http::{Request, Response, build_request, parse_response};
 
 use anyhow::{Context, Result};
 use iroh::EndpointId;

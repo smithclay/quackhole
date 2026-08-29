@@ -9,9 +9,9 @@
 //! entirely here and every connection runs over a relay via WebSocket. It is
 //! still end-to-end encrypted -- the relay forwards ciphertext it cannot read.
 
-use iroh::endpoint::presets;
 use iroh::Endpoint;
-use quackhole_core::{build_request, parse_response, peer_addr, request_async, ConnCache, PeerMap};
+use iroh::endpoint::presets;
+use quackhole_core::{ConnCache, PeerMap, build_request, parse_response, peer_addr, request_async};
 use std::rc::Rc;
 use std::time::Duration;
 use wasm_bindgen::prelude::*;

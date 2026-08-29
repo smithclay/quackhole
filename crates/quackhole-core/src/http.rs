@@ -10,7 +10,7 @@
 //! Deliberately not a general HTTP client. It speaks exactly the subset Quack
 //! uses, over a transport that gives us one request per stream.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 /// A request to build. Headers are the caller's; framing headers are ours.
 #[derive(Debug)]
