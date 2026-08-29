@@ -25,7 +25,7 @@ COPY . /src
 # release CI uses this same escape hatch; the version string has to be a real
 # release or INSTALL cannot find matching extension binaries.
 ENV GEN=ninja \
-    OVERRIDE_GIT_DESCRIBE=v1.5.4 \
+    OVERRIDE_GIT_DESCRIBE=v1.5.5 \
     ENABLE_EXTENSION_AUTOLOADING=1 \
     ENABLE_EXTENSION_AUTOINSTALL=1 \
     EXT_FLAGS=-DBUILD_UNITTESTS=0 \

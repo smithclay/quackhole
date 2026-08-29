@@ -121,6 +121,14 @@ against the shim's own console output — that is what distinguishes "our deadli
 fired" from "something else failed within the budget". It is also why the shim
 logs failures with `console.error` even when tracing is off.
 
+### A cross-version test, incidentally
+
+`@duckdb/duckdb-wasm` reports **v1.5.4** while the native server this repo builds
+is **v1.5.5** — npm releases do not track DuckDB patch versions. Every scenario
+here therefore runs Quack across a version mismatch, and passes. That is a useful
+property to know about rather than a problem to fix: a browser cannot be expected
+to match the server's build.
+
 ## Notes
 
 - The page is bundled with esbuild because duckdb-wasm's ESM entry point imports
