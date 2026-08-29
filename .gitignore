@@ -18,3 +18,7 @@ crates/*/target/
 /.clang-format
 /.clang-tidy
 /.editorconfig
+
+# Browser test dependencies (duckdb-wasm bundles + playwright)
+test/browser/node_modules/
+test/browser/public/bundle.js
