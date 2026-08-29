@@ -43,6 +43,10 @@ public:
 	QuackholeHTTPClient(const string &proto_host_port, QhCore *core);
 
 	void Initialize(HTTPParams &http_params) override;
+	//! Optional relay to reach the peer through, skipping address lookup.
+	void SetRelayUrl(string url) {
+		relay_url = std::move(url);
+	}
 
 	unique_ptr<HTTPResponse> Get(GetRequestInfo &info) override;
 	unique_ptr<HTTPResponse> Post(PostRequestInfo &info) override;
@@ -58,6 +62,9 @@ private:
 
 	string endpoint_id; //!< iroh endpoint id parsed out of the hostname
 	string host;        //!< full hostname including the .iroh label, for the Host header
+	//! Optional relay hint from the quackhole_relay_url setting. Empty means
+	//! resolve the peer by address lookup, which is the default.
+	string relay_url;
 	string port;
 	QhCore *core;
 	uint32_t timeout_ms = 30000;

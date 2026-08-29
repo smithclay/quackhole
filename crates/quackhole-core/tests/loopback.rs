@@ -12,6 +12,23 @@ use std::time::{Duration, Instant};
 
 const BODY: &str = "quack-over-iroh";
 
+/// A GET for the peer's root. Framing comes from the core, so this test no
+/// longer hand-writes HTTP -- which also means it exercises the same builder
+/// the extension uses rather than a lookalike.
+fn get(peer: &str) -> quackhole_core::Request<'static> {
+    // Leaked so the borrow outlives the retry loop below; this is a test.
+    let host: &'static str = Box::leak(format!("{peer}.iroh").into_boxed_str());
+    quackhole_core::Request {
+        method: "GET",
+        path: "/",
+        host,
+        port: "9494",
+        headers: Vec::new(),
+        body: None,
+        content_type: "",
+    }
+}
+
 /// A one-shot HTTP/1.1 server: read a request, reply, close.
 ///
 /// Closing is what turns the loopback TCP FIN into a QUIC stream FIN, which is
@@ -54,15 +71,12 @@ fn request_round_trips_over_iroh() {
     assert_eq!(peer_id.len(), 52, "z-base-32 endpoint id fits a DNS label");
 
     let dialing = Core::new(None, true).expect("dialing core");
-    let request = format!(
-        "POST /quack HTTP/1.1\r\nHost: {peer_id}.iroh:9494\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-    );
 
     // Address lookup has to propagate before the dial can resolve the id.
     let deadline = Instant::now() + Duration::from_secs(60);
     let response = loop {
-        match dialing.request(&peer_id, request.as_bytes(), Duration::from_secs(20)) {
-            Ok(body) => break body,
+        match dialing.request(&peer_id, "", &get(&peer_id), Duration::from_secs(20)) {
+            Ok(response) => break response,
             Err(err) if Instant::now() < deadline => {
                 eprintln!("retrying after: {err:#}");
                 std::thread::sleep(Duration::from_secs(2));
@@ -71,9 +85,8 @@ fn request_round_trips_over_iroh() {
         }
     };
 
-    let text = String::from_utf8_lossy(&response);
-    assert!(text.starts_with("HTTP/1.1 200 OK"), "got: {text}");
-    assert!(text.ends_with(BODY), "got: {text}");
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body, BODY.as_bytes());
 
     let peers = dialing.peer_snapshot();
     assert_eq!(peers.len(), 1);

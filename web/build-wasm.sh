@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Builds the browser transport into public/wasm/.
+# Builds the browser transport into web/wasm/.
 #
 # Apple clang cannot target wasm32-unknown-unknown and `ring` needs a C compiler
 # that can, so Homebrew LLVM is required. getrandom's browser backend is selected
@@ -11,7 +11,7 @@ LLVM="$(brew --prefix llvm)/bin"
 
 [[ -x "$LLVM/clang" ]] || { echo "need Homebrew LLVM: brew install llvm" >&2; exit 1; }
 
-cd "$HERE/../../crates/quackhole-web"
+cd "$HERE/../crates/quackhole-web"
 CC="$LLVM/clang" AR="$LLVM/llvm-ar" \
   wasm-pack build --release --target web \
-    --out-dir "$HERE/public/wasm" --out-name quackhole "$@"
+    --out-dir "$HERE/wasm" --out-name quackhole "$@"

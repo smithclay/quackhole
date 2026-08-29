@@ -11,6 +11,11 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { chromium } from 'playwright';
 import * as esbuild from 'esbuild';
+// Side-effect import: assigns globalThis.QH_PROTO. The harness reads the same
+// budget constants the shim uses rather than restating them.
+import '../../web/protocol.js';
+
+const P = globalThis.QH_PROTO;
 import { startServer } from './serve.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -31,11 +36,10 @@ const MODE = process.argv[2] ?? 'direct';
 if (!['direct', 'bridge', 'iroh', 'timeout'].includes(MODE)) {
   throw new Error(`unknown mode ${MODE}`);
 }
-// Short, because the test spends the whole budget on purpose.
-const TIMEOUT_MS = Number(process.env.QH_TIMEOUT_MS ?? (MODE === 'timeout' ? 2000 : 30000));
-// Matches GRACE_MS in shim.js: the shim waits a little past the bridge's own
-// budget so the bridge's more specific error wins when there is one.
-const GRACE_MS = 5000;
+// Short in timeout mode, because that test spends the whole budget on purpose.
+const TIMEOUT_MS = Number(
+  process.env.QH_TIMEOUT_MS ?? (MODE === 'timeout' ? 2000 : P.DEFAULT_TIMEOUT_MS),
+);
 // SharedArrayBuffer, and therefore Atomics.wait, requires cross-origin isolation.
 const COI = MODE !== 'direct' || process.env.QH_COI === '1';
 
@@ -196,7 +200,7 @@ async function main() {
     // The guard is worth nothing if it only exists. Assert that it fired, that
     // it said why, and -- the point of the whole exercise -- that the run ended
     // at all rather than blocking in Atomics.wait forever.
-    const budget = TIMEOUT_MS + GRACE_MS;
+    const budget = TIMEOUT_MS + P.GRACE_MS;
     // Asserted against the shim's own console output rather than the error
     // DuckDB reports, because DuckDB does not carry our message: quack renders
     // HTTPResponse::GetError (quack_client.cpp:63), which is duckdb-wasm's

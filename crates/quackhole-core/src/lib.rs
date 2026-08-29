@@ -6,6 +6,7 @@
 //! implementation and this FFI surface stays small.
 
 mod dial;
+mod http;
 // Native-only: the C ABI exists for DuckDB, and a browser cannot serve --
 // quack_serve itself throws NotImplementedException on wasm.
 #[cfg(not(target_family = "wasm"))]
@@ -14,6 +15,7 @@ mod ffi;
 mod serve;
 
 pub use dial::{request_async, ConnCache};
+pub use http::{build_request, parse_response, Request, Response};
 
 use anyhow::{Context, Result};
 use iroh::EndpointId;
@@ -81,6 +83,24 @@ pub fn parse_endpoint_id(s: &str) -> Result<EndpointId> {
     }
     EndpointId::from_z32(trimmed)
         .with_context(|| format!("'{trimmed}' is not a valid iroh endpoint id"))
+}
+
+/// Resolve an endpoint id, plus an optional relay hint, into a dialable address.
+///
+/// Shared by both clients so "how do you address a peer" has one answer. An
+/// empty `relay_url` means resolve by address lookup; supplying one skips that
+/// round trip, which also makes a peer reachable before it has finished
+/// publishing -- lookup routinely fails for a server that started seconds ago.
+pub fn peer_addr(endpoint_id: &str, relay_url: &str) -> Result<iroh::EndpointAddr> {
+    let mut addr = iroh::EndpointAddr::new(parse_endpoint_id(endpoint_id)?);
+    let relay_url = relay_url.trim();
+    if !relay_url.is_empty() {
+        let url = relay_url
+            .parse()
+            .with_context(|| format!("'{relay_url}' is not a valid relay url"))?;
+        addr = addr.with_relay_url(url);
+    }
+    Ok(addr)
 }
 
 /// Record or refresh a peer. Never overwrites a known path with "unknown".

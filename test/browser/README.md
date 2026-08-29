@@ -1,14 +1,10 @@
 # Browser tests (Phase 2)
 
-Phase 2 is the browser client. The key insight is that **quackhole is not a DuckDB
-extension in the browser**: DuckDB-Wasm loads extensions as raw side modules with no
-JS glue, so a wasm extension cannot reach JavaScript — but it does not need to.
-Its HTTP transport is `new XMLHttpRequest` read off the *worker global at call time*,
-so replacing `globalThis.XMLHttpRequest` inside the DuckDB worker replaces the
-transport, and the native `quackhole_serve` works unmodified on the other end.
+Tests for the browser client, which lives in [`web/`](../../web) — this directory
+is only the harness that drives it.
 
     npm install
-    ./build-wasm.sh              # only needed for iroh mode
+    ../../web/build-wasm.sh     # only needed for iroh mode
     node run.mjs direct         # step 1
     node run.mjs bridge         # step 2
     node run.mjs iroh           # step 3
@@ -50,7 +46,7 @@ Same SQL, same server, still plain HTTP — but every request now goes through
 `shim.js` and the `Atomics.wait` bridge instead of the native XHR. No iroh, so a
 failure here is a failure of the sync/async bridge and nothing else.
 
-The shim is installed by `qh-worker.js`, which `importScripts` it ahead of the
+The shim is installed by `web/qh-worker.js`, which `importScripts` it ahead of the
 stock duckdb worker bundle. That works because the bundle is a classic script and
 its glue resolves `new XMLHttpRequest` off the global at call time. The shim then
 spawns the bridge worker itself, so the page never needs to know it exists and
@@ -72,10 +68,9 @@ The real thing. The server is an unmodified `quackhole_serve` — the same one t
 native cross-network test uses — and the browser reaches it over an iroh relay.
 
 The wasm client is `crates/quackhole-web`, a thin wasm-bindgen wrapper. The
-connection cache, the redial-once policy and the stream framing all come from
-`quackhole-core`, so the bytes on the wire are the ones the native extension
-sends. That is what lets the server be unmodified, and it is the main reason to
-prefer this over a bespoke browser protocol.
+connection cache, the redial-once policy, and the HTTP framing itself all come
+from `quackhole-core`, so the bytes on the wire are the ones the native
+extension sends and the server cannot tell the two clients apart.
 
 Measured over a live n0 relay:
 
@@ -143,7 +138,8 @@ logs failures with `console.error` even when tracing is off.
   `wasm32-unknown-unknown` and `ring` needs a C compiler that can.
 - The bridge worker is a module worker (the wasm glue is an ES module); the DuckDB
   worker above it stays classic, because it needs `importScripts`. `protocol.js`
-  assigns to `globalThis` so one file can be loaded either way.
+  assigns to `globalThis` so one file can be loaded either way — including by
+  `run.mjs`, which reads the same budget constants rather than restating them.
 - Every request is bounded (`QH_TIMEOUT_MS`, default 30s, matching DuckDB's own
   default). This is not a nicety: the DuckDB thread blocks in `Atomics.wait`, so an
   unbounded request would wedge the worker permanently instead of failing. The

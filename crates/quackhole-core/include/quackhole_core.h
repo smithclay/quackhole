@@ -4,8 +4,12 @@
 // Hand-written (no cbindgen) so the borrow and lifetime contracts below can be
 // stated where callers will read them.
 //
-// The core moves opaque bytes over iroh QUIC streams. It has no HTTP awareness:
-// the C++ extension builds request bytes and parses response bytes.
+// The core moves bytes over iroh QUIC streams and owns the HTTP framing that
+// wraps them. Framing lives here rather than in either client because both
+// need it -- the native extension drives it from C++, the browser from
+// JavaScript -- and two implementations would drift on details that are not
+// obvious (Connection: close, chunk extensions, which caller headers are
+// dropped). C++ marshals to and from DuckDB's types; it does not parse.
 //
 // Threading: every function is safe to call from any thread. The blocking calls
 // (qh_core_new, qh_request, qh_serve_stop) must NOT be called from inside a
@@ -104,26 +108,56 @@ bool qh_is_serving(const QhCore *core);
 // Dialing
 //===--------------------------------------------------------------------===//
 
-//! Send `req_len` bytes to `endpoint_id` on a fresh bi-stream and read the
-//! reply to stream end. Blocking; intended to be called from a DuckDB worker
-//! thread that is already blocking on I/O.
+//! Perform one HTTP request against `endpoint_id` and buffer the response.
+//! Blocking; intended to be called from a DuckDB worker thread that is already
+//! blocking on I/O.
+//!
+//! The request head is built here, from `method`/`path`/`host`/`port`, the
+//! `n_headers` caller headers, and the body. Any caller-supplied Host,
+//! Content-Length, Connection or Transfer-Encoding is dropped: framing is ours
+//! end to end, and a caller that reinstates them breaks the end-of-response
+//! signal. CR or LF anywhere in the head is an error rather than a truncated
+//! request block.
+//!
+//! `has_body` distinguishes "no body" from "empty body": only the former omits
+//! Content-Length. `content_type` is used only when the caller supplied none
+//! and there is a body; pass "" for the default.
+//!
+//! `relay_url` may be "" to resolve the peer by address lookup. Supplying it
+//! skips that round trip and works for a peer that has not finished
+//! publishing, which lookup does not.
 //!
 //! The underlying QUIC connection is cached per endpoint id and held open
 //! across calls, so only the first request to a peer pays a handshake. This is
 //! why reuse cannot live in the C++ HTTPClient: DuckDB builds a fresh one for
 //! every request.
 //!
-//! `req` is borrowed for the duration of the call only.
+//! All pointer arguments are borrowed for the duration of the call only.
 //!
 //! Returns NULL on failure and writes to `err`. On success the handle owns the
-//! response bytes and must be released with qh_response_free.
-QhResponse *qh_request(QhCore *core, const char *endpoint_id, const uint8_t *req, size_t req_len,
-                       uint32_t timeout_ms, char *err, size_t err_len);
+//! response and must be released with qh_response_free.
+QhResponse *qh_request(QhCore *core, const char *endpoint_id, const char *relay_url, const char *method,
+                       const char *path, const char *host, const char *port, const char *const *header_names,
+                       const char *const *header_values, size_t n_headers, const uint8_t *body, size_t body_len,
+                       bool has_body, const char *content_type, uint32_t timeout_ms, char *err, size_t err_len);
 
-//! Borrowed pointer to the response bytes; valid until qh_response_free. Never
+//! Status code, or 0 if the status line was unreadable. A 0 here means the peer
+//! answered with something that is not HTTP; it is not a transport failure.
+uint16_t qh_response_status(const QhResponse *response);
+
+//! Reason phrase, NUL-terminated and borrowed until qh_response_free.
+const char *qh_response_reason(const QhResponse *response);
+
+//! Response headers, in the order the peer sent them. Names are as received.
+//! Both accessors return NULL for an out-of-range index.
+size_t qh_response_header_count(const QhResponse *response);
+const char *qh_response_header_name(const QhResponse *response, size_t index);
+const char *qh_response_header_value(const QhResponse *response, size_t index);
+
+//! Borrowed pointer to the decoded body, already de-chunked and framed. Never
 //! NULL for a non-NULL handle, though the length may be zero.
-const uint8_t *qh_response_data(const QhResponse *response);
-size_t qh_response_len(const QhResponse *response);
+const uint8_t *qh_response_body(const QhResponse *response);
+size_t qh_response_body_len(const QhResponse *response);
 
 //! Release a response. Safe on NULL.
 void qh_response_free(QhResponse *response);

@@ -179,13 +179,22 @@ src/                        C++ extension
   quackhole_http.cpp          QuackholeHTTPUtil / QuackholeHTTPClient
   quackhole_state.cpp         per-DatabaseInstance state; shuts the core down on close
 crates/quackhole-core/      Rust static library (iroh + tokio)
+  src/http.rs                 request building and response parsing, shared by both clients
   include/quackhole_core.h    hand-written C ABI
+crates/quackhole-web/       the same core built for browsers (wasm-bindgen, relay-only)
+web/                        browser client: the XHR shim and its bridge worker
 cmake/FindQuackholeCore.cmake
 test/docker/                two peers on unroutable networks; the cross-network test
+test/browser/               drives the browser client through headless Chromium
 ```
 
-The Rust core moves opaque bytes and knows nothing about HTTP; the C++ side builds request
-bytes and parses response bytes. One HTTP implementation, one small FFI surface.
+**HTTP framing lives in the core**, not in either client. It has to: the native extension
+drives it from C++ and the browser from JavaScript, and neither can share the other's code.
+Two implementations would have to agree about things that are not obvious — the
+`Connection: close` framing below, chunk extensions, which caller headers get dropped — and
+would drift the moment one was edited alone. C++ marshals to and from DuckDB's types; it does
+not parse. The FFI is correspondingly a little wider than opaque bytes would be, which is the
+price of having one parser instead of three.
 
 ### One constraint worth knowing
 
@@ -210,7 +219,7 @@ never reach JavaScript, which is where an iroh endpoint has to live in a browser
 Browsers are supported anyway, by not being an extension. duckdb-wasm's HTTP transport is
 `new XMLHttpRequest` resolved off the worker global at call time, so replacing
 `globalThis.XMLHttpRequest` inside the DuckDB worker replaces the transport. See
-`test/browser/` for a working client that queries an unmodified `quackhole_serve`.
+[`web/`](web) for a working client that queries an unmodified `quackhole_serve`.
 
 Two consequences worth knowing. A browser can only ever be a *client* — `quack_serve` itself
 throws `NotImplementedException` on wasm. And a browser can only ever *relay*: iroh compiles

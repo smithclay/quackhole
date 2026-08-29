@@ -41,9 +41,20 @@ fn spawn_http_server() -> String {
     addr
 }
 
-fn request(dialer: &Core, peer: &str) -> anyhow::Result<Vec<u8>> {
-    let req = format!("GET / HTTP/1.1\r\nHost: {peer}.iroh:9494\r\nConnection: close\r\n\r\n");
-    dialer.request(peer, req.as_bytes(), Duration::from_secs(20))
+/// Framing comes from the core, so this asserts on a parsed body rather than
+/// on the tail of a byte string it had to build itself.
+fn request(dialer: &Core, peer: &str) -> anyhow::Result<quackhole_core::Response> {
+    let host = format!("{peer}.iroh");
+    let req = quackhole_core::Request {
+        method: "GET",
+        path: "/",
+        host: &host,
+        port: "9494",
+        headers: Vec::new(),
+        body: None,
+        content_type: "",
+    };
+    dialer.request(peer, "", &req, Duration::from_secs(20))
 }
 
 #[test]
@@ -65,9 +76,9 @@ fn allow_list_admits_the_listed_peer_and_rejects_others() {
     // Retry only here: this loop absorbs address-lookup propagation, so a
     // failure in the denied case below cannot be blamed on timing.
     let deadline = Instant::now() + Duration::from_secs(60);
-    let body = loop {
+    let response = loop {
         match request(&dialer, &permitted_id) {
-            Ok(body) => break body,
+            Ok(response) => break response,
             Err(err) if Instant::now() < deadline => {
                 eprintln!("retrying after: {err:#}");
                 std::thread::sleep(Duration::from_secs(2));
@@ -75,10 +86,8 @@ fn allow_list_admits_the_listed_peer_and_rejects_others() {
             Err(err) => panic!("allowed peer was refused: {err:#}"),
         }
     };
-    assert!(
-        String::from_utf8_lossy(&body).ends_with(BODY),
-        "allowed peer did not get the response"
-    );
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body, BODY.as_bytes(), "allowed peer did not get the response");
 
     // --- denied ----------------------------------------------------------
     // A different endpoint id, so the dialer is definitively not on the list.
@@ -124,14 +133,14 @@ fn empty_allow_list_admits_anyone() {
 
     let dialer = Core::new(None, true).expect("dialer");
     let deadline = Instant::now() + Duration::from_secs(60);
-    let body = loop {
+    let response = loop {
         match request(&dialer, &peer) {
-            Ok(body) => break body,
+            Ok(response) => break response,
             Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_secs(2)),
             Err(err) => panic!("no allow list should mean no restriction: {err:#}"),
         }
     };
-    assert!(String::from_utf8_lossy(&body).ends_with(BODY));
+    assert_eq!(response.body, BODY.as_bytes());
 
     serving.serve_stop(Duration::from_secs(5)).expect("stop");
 }

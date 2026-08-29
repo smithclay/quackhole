@@ -318,6 +318,13 @@ static void LoadInternal(ExtensionLoader &loader) {
 	                             LogicalType::VARCHAR);
 	db.config.AddExtensionOption("quackhole_ephemeral", "Use a throwaway endpoint key instead of the persisted one",
 	                             LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	// Address lookup is a round trip to a third party that must also have seen
+	// the peer publish, and a server that started seconds ago routinely has not.
+	// The relay URL is printed by quackhole_status() next to the endpoint id, so
+	// whoever hands out the id can hand out this too.
+	db.config.AddExtensionOption("quackhole_relay_url",
+	                             "Relay to reach peers through, skipping address lookup (default: look up)",
+	                             LogicalType::VARCHAR);
 
 	TableFunction serve("quackhole_serve", {}, QuackholeServeFunction, QuackholeServeBind);
 	serve.named_parameters["token"] = LogicalType::VARCHAR;

@@ -19,13 +19,10 @@
   // Per-request tracing. Off by default; the harness only needs the intercept
   // announcements below, and the rest is noise until something is wrong.
   const DEBUG = params.get('debug') === '1';
-  // Matches DuckDB's own default HTTP timeout. Bounding this is not a nicety:
-  // this thread blocks in Atomics.wait, so an unbounded request does not fail
-  // slowly, it wedges the DuckDB worker forever with nothing logged anywhere.
-  const TIMEOUT_MS = Number(params.get('timeout')) || 30000;
-  // The bridge is given the shorter budget so its error -- which says what
-  // actually failed -- arrives before this blunter one fires.
-  const GRACE_MS = 5000;
+  // Bounding this is not a nicety: this thread blocks in Atomics.wait, so an
+  // unbounded request does not fail slowly, it wedges the DuckDB worker
+  // forever with nothing logged anywhere.
+  const TIMEOUT_MS = Number(params.get('timeout')) || P.DEFAULT_TIMEOUT_MS;
   function shouldIntercept(url) {
     try {
       const u = new URL(url, self.location.href);
@@ -80,14 +77,14 @@
     Atomics.store(ctl, P.STATE, P.IDLE);
     bridge.postMessage({ ...request, timeoutMs: TIMEOUT_MS });
 
-    const deadline = Date.now() + TIMEOUT_MS + GRACE_MS;
+    const deadline = Date.now() + TIMEOUT_MS + P.GRACE_MS;
     let meta = null;
     const chunks = [];
     for (;;) {
       while (Atomics.load(ctl, P.STATE) === P.IDLE) {
         const remaining = deadline - Date.now();
         if (remaining <= 0) {
-          throw new Error(`quackhole bridge did not respond within ${TIMEOUT_MS + GRACE_MS}ms`);
+          throw new Error(`quackhole bridge did not respond within ${TIMEOUT_MS + P.GRACE_MS}ms`);
         }
         // Capped so the deadline is re-checked even if no notify ever arrives,
         // which is the case that matters: a bridge that died notifies nothing.

@@ -11,6 +11,8 @@ import { dirname, join, normalize, extname } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(HERE, 'public');
+// The browser client is not part of this harness -- it is the shipped thing.
+const WEB = join(HERE, '..', '..', 'web');
 const DIST = join(HERE, 'node_modules', '@duckdb', 'duckdb-wasm', 'dist');
 
 const TYPES = {
@@ -25,9 +27,11 @@ export function startServer(port, { coi = false } = {}) {
   const server = createServer(async (req, res) => {
     // Strip the query string: duckdb-wasm appends cache-busting params.
     const path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname));
-    const [root, rel] = path.startsWith('/duckdb/')
-      ? [DIST, path.slice('/duckdb/'.length)]
-      : [PUBLIC, path === '/' ? 'index.html' : path.slice(1)];
+    // duckdb's bundles, then the client, then the harness page. Ordered rather
+    // than merged so a name collision resolves predictably.
+    const [roots, rel] = path.startsWith('/duckdb/')
+      ? [[DIST], path.slice('/duckdb/'.length)]
+      : [[WEB, PUBLIC], path === '/' ? 'index.html' : path.slice(1)];
 
     // normalize() has already collapsed '..', so a leading '..' is the only
     // way out of the root and rejecting it is enough.
@@ -37,7 +41,16 @@ export function startServer(port, { coi = false } = {}) {
     }
 
     try {
-      const body = await readFile(join(root, rel));
+      let body;
+      for (const root of roots) {
+        try {
+          body = await readFile(join(root, rel));
+          break;
+        } catch {
+          // try the next root
+        }
+      }
+      if (body === undefined) throw new Error('not found');
       const headers = { 'Content-Type': TYPES[extname(rel)] ?? 'application/octet-stream' };
       if (coi) {
         headers['Cross-Origin-Opener-Policy'] = 'same-origin';

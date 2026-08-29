@@ -5,7 +5,7 @@
 //! returns instead.
 
 use crate::Core;
-use std::ffi::{c_char, CStr};
+use std::ffi::{c_char, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -14,8 +14,29 @@ pub const QH_OK: i32 = 0;
 pub const QH_ERR: i32 = -1;
 
 /// Buffered response handle handed back to C++.
+///
+/// Holds C strings rather than Rust ones so the accessors can hand out
+/// borrowed pointers without allocating per call.
 pub struct QhResponse {
+    status: u16,
+    reason_c: CString,
+    headers_c: Vec<(CString, CString)>,
     body: Vec<u8>,
+}
+
+impl From<crate::Response> for QhResponse {
+    fn from(response: crate::Response) -> Self {
+        // A header parsed from a text line cannot contain an interior NUL, but
+        // CString::new rejects rather than truncates, so degrade to empty
+        // instead of unwrapping on something a hostile peer controls.
+        let c = |s: String| CString::new(s).unwrap_or_default();
+        Self {
+            status: response.status,
+            reason_c: c(response.reason),
+            headers_c: response.headers.into_iter().map(|(k, v)| (c(k), c(v))).collect(),
+            body: response.body,
+        }
+    }
 }
 
 /// Write a NUL-terminated message into a caller-supplied buffer, truncating.
@@ -186,8 +207,18 @@ pub unsafe extern "C" fn qh_is_serving(core: *const Core) -> bool {
 pub unsafe extern "C" fn qh_request(
     core: *mut Core,
     endpoint_id: *const c_char,
-    req: *const u8,
-    req_len: usize,
+    relay_url: *const c_char,
+    method: *const c_char,
+    path: *const c_char,
+    host: *const c_char,
+    port: *const c_char,
+    header_names: *const *const c_char,
+    header_values: *const *const c_char,
+    n_headers: usize,
+    body: *const u8,
+    body_len: usize,
+    has_body: bool,
+    content_type: *const c_char,
     timeout_ms: u32,
     err: *mut c_char,
     err_len: usize,
@@ -200,27 +231,104 @@ pub unsafe extern "C" fn qh_request(
         write_err(err, err_len, "endpoint id must not be null");
         return std::ptr::null_mut();
     };
-    if req.is_null() && req_len != 0 {
-        write_err(err, err_len, "request buffer must not be null");
+    if body.is_null() && body_len != 0 {
+        write_err(err, err_len, "request body must not be null");
         return std::ptr::null_mut();
     }
-    let request = std::slice::from_raw_parts(req, req_len);
+    let Some(headers) = collect_headers(header_names, header_values, n_headers) else {
+        write_err(err, err_len, "header arrays must not be null");
+        return std::ptr::null_mut();
+    };
+
+    let body_slice = if body.is_null() {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(body, body_len)
+    };
+    let request = crate::Request {
+        method: cstr(method).unwrap_or("POST"),
+        path: cstr(path).unwrap_or("/"),
+        host: cstr(host).unwrap_or(""),
+        port: cstr(port).unwrap_or("9494"),
+        headers,
+        body: has_body.then_some(body_slice),
+        content_type: cstr(content_type).unwrap_or(""),
+    };
 
     let result = guard(err, err_len, || {
         core.request(
             endpoint_id,
-            request,
+            cstr(relay_url).unwrap_or(""),
+            &request,
             Duration::from_millis(timeout_ms as u64),
         )
     });
     match result {
-        Some(body) => Box::into_raw(Box::new(QhResponse { body })),
+        Some(response) => Box::into_raw(Box::new(QhResponse::from(response))),
         None => std::ptr::null_mut(),
     }
 }
 
+/// Borrow `n` NUL-terminated strings from each array. None if either is null.
+unsafe fn collect_headers(
+    names: *const *const c_char,
+    values: *const *const c_char,
+    n: usize,
+) -> Option<Vec<(String, String)>> {
+    if n == 0 {
+        return Some(Vec::new());
+    }
+    if names.is_null() || values.is_null() {
+        return None;
+    }
+    let names = std::slice::from_raw_parts(names, n);
+    let values = std::slice::from_raw_parts(values, n);
+    Some(
+        names
+            .iter()
+            .zip(values)
+            .filter_map(|(n, v)| Some((cstr(*n)?.to_string(), cstr(*v)?.to_string())))
+            .collect(),
+    )
+}
+
 #[no_mangle]
-pub unsafe extern "C" fn qh_response_data(response: *const QhResponse) -> *const u8 {
+pub unsafe extern "C" fn qh_response_status(response: *const QhResponse) -> u16 {
+    response.as_ref().map(|r| r.status).unwrap_or(0)
+}
+
+/// Borrowed, NUL-terminated. Valid until qh_response_free.
+#[no_mangle]
+pub unsafe extern "C" fn qh_response_reason(response: *const QhResponse) -> *const c_char {
+    match response.as_ref() {
+        Some(r) => r.reason_c.as_ptr(),
+        None => std::ptr::null(),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn qh_response_header_count(response: *const QhResponse) -> usize {
+    response.as_ref().map(|r| r.headers_c.len()).unwrap_or(0)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn qh_response_header_name(response: *const QhResponse, index: usize) -> *const c_char {
+    match response.as_ref().and_then(|r| r.headers_c.get(index)) {
+        Some((name, _)) => name.as_ptr(),
+        None => std::ptr::null(),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn qh_response_header_value(response: *const QhResponse, index: usize) -> *const c_char {
+    match response.as_ref().and_then(|r| r.headers_c.get(index)) {
+        Some((_, value)) => value.as_ptr(),
+        None => std::ptr::null(),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn qh_response_body(response: *const QhResponse) -> *const u8 {
     match response.as_ref() {
         // Never hand back null for a live handle: C++ passes this straight to
         // memcpy, which is UB on null even with length 0.
@@ -230,7 +338,7 @@ pub unsafe extern "C" fn qh_response_data(response: *const QhResponse) -> *const
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn qh_response_len(response: *const QhResponse) -> usize {
+pub unsafe extern "C" fn qh_response_body_len(response: *const QhResponse) -> usize {
     response.as_ref().map(|r| r.body.len()).unwrap_or(0)
 }
 

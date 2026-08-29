@@ -28,4 +28,10 @@ globalThis.QH_PROTO = {
   // FLAGS, bitwise.
   MORE: 1,
   META: 2,
+
+  // Matches DuckDB's own default HTTP timeout.
+  DEFAULT_TIMEOUT_MS: 30000,
+  // How much longer the shim waits than the budget it gave the bridge, so
+  // the bridge's error -- which names the actual cause -- arrives first.
+  GRACE_MS: 5000,
 };

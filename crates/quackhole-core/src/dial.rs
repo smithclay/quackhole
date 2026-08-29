@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 #[cfg(not(target_family = "wasm"))]
-use crate::{parse_endpoint_id, Core};
+use crate::Core;
 #[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
 
@@ -176,20 +176,33 @@ pub async fn request_async(
 
 #[cfg(not(target_family = "wasm"))]
 impl Core {
-    /// Blocking request/response over iroh. Called from a DuckDB worker thread.
-    pub fn request(&self, endpoint_id: &str, req: &[u8], timeout: Duration) -> Result<Vec<u8>> {
-        let id = parse_endpoint_id(endpoint_id)?;
+    /// Blocking HTTP request/response over iroh, from a DuckDB worker thread.
+    ///
+    /// Framing lives in `crate::http` rather than in the caller because the
+    /// browser client needs the identical bytes; see the note there.
+    ///
+    /// `relay_url` may be empty, in which case the peer is resolved by address
+    /// lookup. Supplying it skips that round trip -- and works for a peer that
+    /// has not finished publishing, which lookup does not.
+    pub fn request(
+        &self,
+        endpoint_id: &str,
+        relay_url: &str,
+        req: &crate::http::Request,
+        timeout: Duration,
+    ) -> Result<crate::http::Response> {
+        let addr = crate::peer_addr(endpoint_id, relay_url)?;
+        let bytes = crate::http::build_request(req)?;
         let endpoint = self.endpoint.clone();
         let cache = self.conns.clone();
         let peers = self.peers.clone();
 
-        self.runtime()?.block_on(async move {
-            // No relay hint: the native side has always resolved by lookup and
-            // there is no reason to change that.
-            let addr = EndpointAddr::new(id);
-            tokio::time::timeout(timeout, request_async(&endpoint, &cache, &peers, addr, req))
+        let raw = self.runtime()?.block_on(async move {
+            tokio::time::timeout(timeout, request_async(&endpoint, &cache, &peers, addr, &bytes))
                 .await
                 .context("request timed out")?
-        })
+        })?;
+        // HEAD carries a Content-Length it does not honour.
+        crate::http::parse_response(&raw, req.method != "HEAD")
     }
 }

@@ -22,4 +22,4 @@ crates/*/target/
 # Browser test dependencies (duckdb-wasm bundles + playwright)
 test/browser/node_modules/
 test/browser/public/bundle.js
-test/browser/public/wasm/
+web/wasm/
