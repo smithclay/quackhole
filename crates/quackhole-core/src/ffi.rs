@@ -3,6 +3,14 @@
 //! Every entry point is wrapped in `catch_unwind`: a Rust panic unwinding across
 //! `extern "C"` into DuckDB is undefined behaviour, so panics become error
 //! returns instead.
+//!
+//! `unsafe` blocks are kept as small as the code allows, so that what is
+//! actually being trusted is visible rather than blanketed over a whole
+//! function. Two exceptions -- `qh_serve_start` and `qh_request` -- read a
+//! dozen-odd pointers each, and threading a block around every one of them
+//! obscures more than it reveals; those carry a single block with the contract
+//! stated above it. The contract itself lives in `include/quackhole_core.h`:
+//! every pointer argument is either null or valid for the duration of the call.
 
 use crate::Core;
 use std::ffi::{CStr, CString, c_char};
@@ -45,12 +53,14 @@ impl From<crate::Response> for QhResponse {
 
 /// Write a NUL-terminated message into a caller-supplied buffer, truncating.
 unsafe fn write_err(err: *mut c_char, err_len: usize, msg: &str) {
+    if err.is_null() || err_len == 0 {
+        return;
+    }
+    let bytes = msg.as_bytes();
+    let n = bytes.len().min(err_len - 1);
+    // SAFETY: err is non-null and the caller promises err_len writable bytes;
+    // n is clamped to err_len - 1 so the terminator fits.
     unsafe {
-        if err.is_null() || err_len == 0 {
-            return;
-        }
-        let bytes = msg.as_bytes();
-        let n = bytes.len().min(err_len - 1);
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), err as *mut u8, n);
         *err.add(n) = 0;
     }
@@ -58,24 +68,25 @@ unsafe fn write_err(err: *mut c_char, err_len: usize, msg: &str) {
 
 /// Write a NUL-terminated string into a caller buffer. QH_ERR if it will not fit.
 unsafe fn write_str(out: *mut c_char, out_len: usize, value: &str) -> i32 {
+    if out.is_null() || value.len() + 1 > out_len {
+        return QH_ERR;
+    }
+    // SAFETY: out is non-null and holds out_len bytes, which the check above
+    // proves is more than value plus its terminator.
     unsafe {
-        if out.is_null() || value.len() + 1 > out_len {
-            return QH_ERR;
-        }
         std::ptr::copy_nonoverlapping(value.as_ptr(), out as *mut u8, value.len());
         *out.add(value.len()) = 0;
-        QH_OK
     }
+    QH_OK
 }
 
 unsafe fn cstr<'a>(ptr: *const c_char) -> Option<&'a str> {
-    unsafe {
-        if ptr.is_null() {
-            None
-        } else {
-            CStr::from_ptr(ptr).to_str().ok()
-        }
+    if ptr.is_null() {
+        return None;
     }
+    // SAFETY: non-null, and the caller guarantees a NUL-terminated string that
+    // outlives the call. The unbounded 'a is why this function is unsafe.
+    unsafe { CStr::from_ptr(ptr) }.to_str().ok()
 }
 
 /// Run `f`, converting both panics and `Err` into an error message.
@@ -84,17 +95,17 @@ unsafe fn guard<T>(
     err_len: usize,
     f: impl FnOnce() -> anyhow::Result<T>,
 ) -> Option<T> {
-    unsafe {
-        match catch_unwind(AssertUnwindSafe(f)) {
-            Ok(Ok(value)) => Some(value),
-            Ok(Err(e)) => {
-                write_err(err, err_len, &format!("{e:#}"));
-                None
-            }
-            Err(_) => {
-                write_err(err, err_len, "quackhole core panicked");
-                None
-            }
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(Ok(value)) => Some(value),
+        Ok(Err(e)) => {
+            // SAFETY: err and err_len are the caller's, passed through unchanged.
+            unsafe { write_err(err, err_len, &format!("{e:#}")) };
+            None
+        }
+        Err(_) => {
+            // SAFETY: as above.
+            unsafe { write_err(err, err_len, "quackhole core panicked") };
+            None
         }
     }
 }
@@ -110,28 +121,27 @@ pub unsafe extern "C" fn qh_core_new(
     err: *mut c_char,
     err_len: usize,
 ) -> *mut Core {
-    unsafe {
-        let path = cstr(key_path).map(PathBuf::from);
-        match guard(err, err_len, || Core::new(path.as_deref(), ephemeral)) {
-            Some(core) => Box::into_raw(Box::new(core)),
-            None => std::ptr::null_mut(),
-        }
+    // SAFETY: key_path is null or a NUL-terminated path; err holds err_len bytes.
+    let path = unsafe { cstr(key_path) }.map(PathBuf::from);
+    match unsafe { guard(err, err_len, || Core::new(path.as_deref(), ephemeral)) } {
+        Some(core) => Box::into_raw(Box::new(core)),
+        None => std::ptr::null_mut(),
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qh_core_free(core: *mut Core, deadline_ms: u64) {
-    unsafe {
-        if core.is_null() {
-            return;
-        }
-        let mut core = Box::from_raw(core);
-        let _ = catch_unwind(AssertUnwindSafe(|| {
-            let _ = core.serve_stop(Duration::from_millis(deadline_ms));
-            core.conns.close_all();
-            core.shutdown(Duration::from_millis(deadline_ms));
-        }));
+    if core.is_null() {
+        return;
     }
+    // SAFETY: the handle came from Box::into_raw in qh_core_new, and the header
+    // says it is freed exactly once.
+    let mut core = unsafe { Box::from_raw(core) };
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let _ = core.serve_stop(Duration::from_millis(deadline_ms));
+        core.conns.close_all();
+        core.shutdown(Duration::from_millis(deadline_ms));
+    }));
 }
 
 //===--------------------------------------------------------------------===//
@@ -145,17 +155,17 @@ pub unsafe extern "C" fn qh_endpoint_id(
     out: *mut c_char,
     out_len: usize,
 ) -> i32 {
-    unsafe {
-        let Some(core) = core.as_ref() else {
-            return QH_ERR;
-        };
-        let id = if z32 {
-            core.endpoint_id_z32()
-        } else {
-            core.endpoint_id_hex()
-        };
-        write_str(out, out_len, id)
-    }
+    // SAFETY: null or a live handle from this library, per quackhole_core.h.
+    let Some(core) = (unsafe { core.as_ref() }) else {
+        return QH_ERR;
+    };
+    let id = if z32 {
+        core.endpoint_id_z32()
+    } else {
+        core.endpoint_id_hex()
+    };
+    // SAFETY: out holds out_len bytes; write_str refuses to overrun it.
+    unsafe { write_str(out, out_len, id) }
 }
 
 //===--------------------------------------------------------------------===//
@@ -171,6 +181,11 @@ pub unsafe extern "C" fn qh_serve_start(
     err: *mut c_char,
     err_len: usize,
 ) -> i32 {
+    // SAFETY: one block rather than seven, because every statement below reads
+    // a caller pointer and threading a block around each obscures more than it
+    // reveals. The contract is the one in quackhole_core.h: core is null or a
+    // live handle, target is null or NUL-terminated, allow is null or n_allow
+    // NUL-terminated strings, and err holds err_len bytes.
     unsafe {
         let Some(core) = core.as_ref() else {
             write_err(err, err_len, "null quackhole core");
@@ -203,22 +218,24 @@ pub unsafe extern "C" fn qh_serve_start(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qh_serve_stop(core: *mut Core, deadline_ms: u64) -> i32 {
-    unsafe {
-        let Some(core) = core.as_ref() else {
-            return QH_ERR;
-        };
-        match catch_unwind(AssertUnwindSafe(|| {
-            core.serve_stop(Duration::from_millis(deadline_ms))
-        })) {
-            Ok(Ok(())) => QH_OK,
-            _ => QH_ERR,
-        }
+    // SAFETY: null or a live handle from this library, per quackhole_core.h.
+    let Some(core) = (unsafe { core.as_ref() }) else {
+        return QH_ERR;
+    };
+    match catch_unwind(AssertUnwindSafe(|| {
+        core.serve_stop(Duration::from_millis(deadline_ms))
+    })) {
+        Ok(Ok(())) => QH_OK,
+        _ => QH_ERR,
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qh_is_serving(core: *const Core) -> bool {
-    unsafe { core.as_ref().map(|c| c.is_serving()).unwrap_or(false) }
+    // SAFETY: null or a live handle from this library, per quackhole_core.h.
+    unsafe { core.as_ref() }
+        .map(|c| c.is_serving())
+        .unwrap_or(false)
 }
 
 //===--------------------------------------------------------------------===//
@@ -245,6 +262,11 @@ pub unsafe extern "C" fn qh_request(
     err: *mut c_char,
     err_len: usize,
 ) -> *mut QhResponse {
+    // SAFETY: one block rather than fourteen, for the reason given on
+    // qh_serve_start. Per quackhole_core.h: core is null or a live handle, each
+    // string pointer is null or NUL-terminated, the header arrays are null or
+    // hold n_headers entries each, body is null or holds body_len bytes, and
+    // err holds err_len bytes. All are read here and nowhere else.
     unsafe {
         let Some(core) = core.as_ref() else {
             write_err(err, err_len, "null quackhole core");
@@ -299,13 +321,15 @@ unsafe fn collect_headers(
     values: *const *const c_char,
     n: usize,
 ) -> Option<Vec<(String, String)>> {
+    if n == 0 {
+        return Some(Vec::new());
+    }
+    if names.is_null() || values.is_null() {
+        return None;
+    }
+    // SAFETY: both arrays are non-null and the caller promises n entries in
+    // each, every one either null or a NUL-terminated string.
     unsafe {
-        if n == 0 {
-            return Some(Vec::new());
-        }
-        if names.is_null() || values.is_null() {
-            return None;
-        }
         let names = std::slice::from_raw_parts(names, n);
         let values = std::slice::from_raw_parts(values, n);
         Some(
@@ -320,23 +344,26 @@ unsafe fn collect_headers(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qh_response_status(response: *const QhResponse) -> u16 {
-    unsafe { response.as_ref().map(|r| r.status).unwrap_or(0) }
+    // SAFETY: null or a live handle from this library, per quackhole_core.h.
+    unsafe { response.as_ref() }.map(|r| r.status).unwrap_or(0)
 }
 
 /// Borrowed, NUL-terminated. Valid until qh_response_free.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qh_response_reason(response: *const QhResponse) -> *const c_char {
-    unsafe {
-        match response.as_ref() {
-            Some(r) => r.reason_c.as_ptr(),
-            None => std::ptr::null(),
-        }
+    // SAFETY: null or a live handle from this library, per quackhole_core.h.
+    match unsafe { response.as_ref() } {
+        Some(r) => r.reason_c.as_ptr(),
+        None => std::ptr::null(),
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qh_response_header_count(response: *const QhResponse) -> usize {
-    unsafe { response.as_ref().map(|r| r.headers_c.len()).unwrap_or(0) }
+    // SAFETY: null or a live handle from this library, per quackhole_core.h.
+    unsafe { response.as_ref() }
+        .map(|r| r.headers_c.len())
+        .unwrap_or(0)
 }
 
 #[unsafe(no_mangle)]
@@ -344,11 +371,10 @@ pub unsafe extern "C" fn qh_response_header_name(
     response: *const QhResponse,
     index: usize,
 ) -> *const c_char {
-    unsafe {
-        match response.as_ref().and_then(|r| r.headers_c.get(index)) {
-            Some((name, _)) => name.as_ptr(),
-            None => std::ptr::null(),
-        }
+    // SAFETY: null or a live handle from this library, per quackhole_core.h.
+    match unsafe { response.as_ref() }.and_then(|r| r.headers_c.get(index)) {
+        Some((name, _)) => name.as_ptr(),
+        None => std::ptr::null(),
     }
 }
 
@@ -357,38 +383,40 @@ pub unsafe extern "C" fn qh_response_header_value(
     response: *const QhResponse,
     index: usize,
 ) -> *const c_char {
-    unsafe {
-        match response.as_ref().and_then(|r| r.headers_c.get(index)) {
-            Some((_, value)) => value.as_ptr(),
-            None => std::ptr::null(),
-        }
+    // SAFETY: null or a live handle from this library, per quackhole_core.h.
+    match unsafe { response.as_ref() }.and_then(|r| r.headers_c.get(index)) {
+        Some((_, value)) => value.as_ptr(),
+        None => std::ptr::null(),
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qh_response_body(response: *const QhResponse) -> *const u8 {
-    unsafe {
-        match response.as_ref() {
-            // Never hand back null for a live handle: C++ passes this straight to
-            // memcpy, which is UB on null even with length 0.
-            Some(r) => r.body.as_ptr(),
-            None => std::ptr::null(),
-        }
+    // SAFETY: null or a live handle from this library, per quackhole_core.h.
+    match unsafe { response.as_ref() } {
+        // Never hand back null for a live handle: C++ passes this straight to
+        // memcpy, which is UB on null even with length 0.
+        Some(r) => r.body.as_ptr(),
+        None => std::ptr::null(),
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qh_response_body_len(response: *const QhResponse) -> usize {
-    unsafe { response.as_ref().map(|r| r.body.len()).unwrap_or(0) }
+    // SAFETY: null or a live handle from this library, per quackhole_core.h.
+    unsafe { response.as_ref() }
+        .map(|r| r.body.len())
+        .unwrap_or(0)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qh_response_free(response: *mut QhResponse) {
-    unsafe {
-        if !response.is_null() {
-            drop(Box::from_raw(response));
-        }
+    if response.is_null() {
+        return;
     }
+    // SAFETY: the handle came from Box::into_raw in qh_request, and the header
+    // says it is released exactly once.
+    drop(unsafe { Box::from_raw(response) });
 }
 
 //===--------------------------------------------------------------------===//
@@ -397,7 +425,10 @@ pub unsafe extern "C" fn qh_response_free(response: *mut QhResponse) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qh_peer_count(core: *const Core) -> usize {
-    unsafe { core.as_ref().map(|c| c.peer_snapshot().len()).unwrap_or(0) }
+    // SAFETY: null or a live handle from this library, per quackhole_core.h.
+    unsafe { core.as_ref() }
+        .map(|c| c.peer_snapshot().len())
+        .unwrap_or(0)
 }
 
 #[unsafe(no_mangle)]
@@ -411,14 +442,17 @@ pub unsafe extern "C" fn qh_peer_info(
     dir_out: *mut c_char,
     dir_len: usize,
 ) -> i32 {
+    // SAFETY: null or a live handle from this library, per quackhole_core.h.
+    let Some(core) = (unsafe { core.as_ref() }) else {
+        return QH_ERR;
+    };
+    let peers = core.peer_snapshot();
+    let Some((id, entry)) = peers.get(index) else {
+        return QH_ERR;
+    };
+    // SAFETY: each output buffer holds the length given alongside it, and
+    // write_str refuses to overrun.
     unsafe {
-        let Some(core) = core.as_ref() else {
-            return QH_ERR;
-        };
-        let peers = core.peer_snapshot();
-        let Some((id, entry)) = peers.get(index) else {
-            return QH_ERR;
-        };
         if write_str(id_out, id_len, &id.to_z32()) != QH_OK {
             return QH_ERR;
         }
@@ -431,10 +465,10 @@ pub unsafe extern "C" fn qh_peer_info(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qh_relay_url(core: *const Core, out: *mut c_char, out_len: usize) -> i32 {
-    unsafe {
-        let Some(core) = core.as_ref() else {
-            return QH_ERR;
-        };
-        write_str(out, out_len, &core.relay_url())
-    }
+    // SAFETY: null or a live handle from this library, per quackhole_core.h.
+    let Some(core) = (unsafe { core.as_ref() }) else {
+        return QH_ERR;
+    };
+    // SAFETY: out holds out_len bytes; write_str refuses to overrun it.
+    unsafe { write_str(out, out_len, &core.relay_url()) }
 }

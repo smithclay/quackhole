@@ -63,10 +63,26 @@ set(QUACKHOLE_LIB_PATH "${QUACKHOLE_PROFILE_DIR}/${QUACKHOLE_LIB_NAME}")
 file(GLOB_RECURSE QUACKHOLE_RUST_SOURCES CONFIGURE_DEPENDS
      "${QUACKHOLE_CORE_DIR}/src/*.rs")
 
+# ring compiles its assembly with `cc`, which picks up the host SDK, so without
+# an explicit floor the staticlib's objects demand whatever macOS the build
+# machine runs. The linker says so ("built for newer 'macOS' version ... than
+# being linked"), and for a shipped extension it is worse than a warning: the
+# artifact would refuse to load on an older macOS than the CI runner. DuckDB
+# uses 11.0 for its own distribution builds, so match that when nothing else is
+# configured.
+set(QUACKHOLE_CARGO_ENV)
+if(APPLE)
+  set(QUACKHOLE_MACOS_TARGET "11.0")
+  if(CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(QUACKHOLE_MACOS_TARGET "${CMAKE_OSX_DEPLOYMENT_TARGET}")
+  endif()
+  set(QUACKHOLE_CARGO_ENV "MACOSX_DEPLOYMENT_TARGET=${QUACKHOLE_MACOS_TARGET}")
+endif()
+
 add_custom_command(
   OUTPUT ${QUACKHOLE_LIB_PATH}
-  COMMAND ${CARGO_EXECUTABLE} build ${QUACKHOLE_CARGO_FLAGS} --target
-          ${QUACKHOLE_RUST_TARGET}
+  COMMAND ${CMAKE_COMMAND} -E env ${QUACKHOLE_CARGO_ENV} ${CARGO_EXECUTABLE} build
+          ${QUACKHOLE_CARGO_FLAGS} --target ${QUACKHOLE_RUST_TARGET}
   DEPENDS ${QUACKHOLE_RUST_SOURCES} "${QUACKHOLE_CORE_DIR}/Cargo.toml"
           "${QUACKHOLE_WORKSPACE_DIR}/Cargo.lock"
   WORKING_DIRECTORY ${QUACKHOLE_CORE_DIR}
