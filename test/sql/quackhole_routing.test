@@ -1,6 +1,7 @@
 # name: test/sql/quackhole_routing.test
 # description: .iroh hosts route through quackhole, and keep doing so after httpfs loads
-# group: [quackhole]
+# group: [sql]
+
 #
 # Binding an iroh endpoint opens a UDP socket and publishes an address, so this
 # file is gated on QUACKHOLE_NET_TESTS to keep the default suite hermetic.

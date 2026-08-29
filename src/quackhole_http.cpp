@@ -52,8 +52,7 @@ void RejectHeaderInjection(const string &what, const string &value) {
 //! Request line + headers. Any caller-supplied Host/Content-Length/Connection/
 //! Transfer-Encoding is dropped so we own framing end to end.
 string BuildRequestHead(const string &method, const string &path, const string &host, const string &port,
-                        const HTTPHeaders &headers, idx_t content_length, bool has_body,
-                        const string &content_type) {
+                        const HTTPHeaders &headers, idx_t content_length, bool has_body, const string &content_type) {
 	RejectHeaderInjection("request path", path);
 	RejectHeaderInjection("host", host);
 	RejectHeaderInjection("port", port);
@@ -186,9 +185,8 @@ void ParseHead(const string &head, int32_t &status_out, string &reason_out, HTTP
 	auto first_space = status_line.find(' ');
 	if (first_space != string::npos) {
 		auto second_space = status_line.find(' ', first_space + 1);
-		auto code = status_line.substr(first_space + 1, second_space == string::npos
-		                                                   ? string::npos
-		                                                   : second_space - first_space - 1);
+		auto code = status_line.substr(first_space + 1,
+		                               second_space == string::npos ? string::npos : second_space - first_space - 1);
 		status_out = std::atoi(code.c_str());
 		if (second_space != string::npos) {
 			reason_out = status_line.substr(second_space + 1);
@@ -376,8 +374,8 @@ unique_ptr<HTTPResponse> QuackholeHTTPClient::RoundTrip(const string &method, co
 				// The stream ended early -- the serving side's bridge died, or the
 				// peer was killed mid-response. Silently clamping here would hand
 				// DuckDB a truncated Parquet/Quack payload as a successful read.
-				return TransportError(StringUtil::Format(
-				    "quackhole: peer promised %llu body bytes but sent %llu", content_length, body_len_in));
+				return TransportError(StringUtil::Format("quackhole: peer promised %llu body bytes but sent %llu",
+				                                         content_length, body_len_in));
 			}
 			body_out.assign(body_data, content_length);
 		} else {

@@ -150,6 +150,18 @@ test/docker/run.sh                         # two DuckDBs on networks that cannot
 Tests that need the network are gated on `QUACKHOLE_NET_TESTS=1` so the default suite stays
 hermetic.
 
+CI also runs two quality gates, which are worth reproducing before pushing because the
+formatter is pinned to a version nothing installs by default:
+
+```sh
+pip install "black>=24" cmake-format "clang_format==11.0.1"   # exactly 11.0.1; newer disagrees
+make format-check
+TIDY_BINARY=$(brew --prefix llvm)/bin/clang-tidy make tidy-check
+```
+
+`format.py` rewrites a sqllogictest's `# group:` to match its directory, so a hand-written
+group is a CI failure rather than a preference.
+
 `test/docker/run.sh` is the one that tests the actual claim. Both peers run in containers on
 separate Docker networks with no route between them, and the client refuses to proceed until
 it has confirmed it cannot reach the server by ICMP or TCP. A second scenario drops outbound

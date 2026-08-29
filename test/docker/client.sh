@@ -9,6 +9,8 @@ source /opt/qh/lib.sh
 
 BUDGET_MS=${QH_BUDGET_MS:-1000}
 EXPECT_PATH=${QH_EXPECT_PATH:-}
+# Seconds to hold the session open and untouched before querying again.
+IDLE=${QH_IDLE_SECONDS:-0}
 
 isolate_from "${QH_PEER_SUBNET:-}"
 block_udp
@@ -55,7 +57,7 @@ fi
 # ---------------------------------------------------------------------------
 # The actual test.
 # ---------------------------------------------------------------------------
-cat > /tmp/client.sql <<SQL
+cat > /tmp/head.sql <<SQL
 .mode list
 .headers off
 LOAD quack;
@@ -75,13 +77,39 @@ SELECT 'MARK:point_lookup';
 SELECT 'VAL:point', name FROM remote.logs WHERE id = 42;
 SELECT 'MARK:big_scan';
 SELECT 'VAL:wide_bytes', sum(length(payload)) FROM remote.wide;
+SQL
+
+: > /tmp/tail.sql
+if [[ "$IDLE" -gt 0 ]]; then
+  # A read alone would not settle anything: if quack served it from a local
+  # cache the session could be dead and the answer still correct. A write has to
+  # reach the server, so it is the part that actually proves the tunnel survived.
+  cat >> /tmp/tail.sql <<'SQL'
+SELECT 'MARK:after_idle_read';
+SELECT 'VAL:logs_count_after_idle', count(*) FROM remote.logs;
+SELECT 'MARK:after_idle_write';
+CREATE TABLE remote.idle_probe AS SELECT 42 AS n;
+SELECT 'VAL:idle_probe', n FROM remote.idle_probe;
+SQL
+fi
+cat >> /tmp/tail.sql <<'SQL'
 .timer off
 SELECT 'PEER', endpoint_id, peer_id, peer_path, peer_direction, relay_url FROM quackhole_status();
 SQL
 
 log "attaching quack:$ENDPOINT_ID.iroh:$QUACK_PORT"
 START=$(date +%s)
-if ! duckdb < /tmp/client.sql > /tmp/client.out 2>&1; then
+# Fed down a pipe rather than from a file so the idle wait happens *inside* one
+# DuckDB session. Reopening the CLI would prove nothing: the question is whether
+# an ATTACH that has sat untouched still works, not whether a fresh one does.
+if ! {
+      cat /tmp/head.sql
+      if [[ "$IDLE" -gt 0 ]]; then
+        log "holding the session open and idle for ${IDLE}s"
+        sleep "$IDLE"
+      fi
+      cat /tmp/tail.sql
+     } | duckdb > /tmp/client.out 2>&1; then
   cat /tmp/client.out >&2
   die "the client session failed"
 fi
@@ -124,6 +152,10 @@ check logs_count_again 1000
 check logs_sum         499500
 check point            evt_42
 check wide_bytes       1600000
+if [[ "$IDLE" -gt 0 ]]; then
+  check logs_count_after_idle 1000
+  check idle_probe 42
+fi
 
 echo
 echo "latency (seconds, as reported by the DuckDB CLI timer):"

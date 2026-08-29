@@ -90,3 +90,30 @@ bridge and nothing else" framing, so it is a scope decision, not a bug fix.
 wall — yet its README advertises `read_csv('http://my-laptop.ts.net:8000/sales.csv')` as
 working. Either that claim is untested, or it works via their loopback proxy/forwarder rather
 than the HTTPUtil route. Worth confirming before treating it as prior art.
+
+---
+
+## Idle sessions hold a relay open
+
+**Status:** measured, not a problem yet. Worth knowing before anyone runs this at scale.
+
+An attached session that is doing nothing is not free. iroh configures the QUIC connection
+with a 5-second keep-alive against a 15-second path idle timeout — 30 seconds for a relay
+path (`iroh/src/socket.rs:109,117,129`). Keep-alive is well inside the timeout, so a cached
+connection survives indefinitely rather than dying and being redialled.
+
+That is the behaviour we want (see the idle scenario in `test/docker/`: a session sat idle
+15 minutes and then took a write with no reconnect). It also means **every idle ATTACH costs
+n0's relay a packet every 5 seconds**, indefinitely, whether or not anyone is querying.
+
+Two things follow:
+
+- The cost of an abandoned browser tab or a forgotten `ATTACH` is not zero, and it lands on
+  infrastructure that is not ours. This is the concrete version of the deferred "relay
+  economics" question.
+- Our `ConnCache` never evicts. Nothing currently closes an idle connection, so the process
+  keeps it — and the relay traffic — alive for the life of the `DatabaseInstance`.
+
+Neither is worth acting on at this scale. If it becomes one, the fix is an idle eviction in
+`ConnCache` rather than anything in the transport: dropping a cached connection is already
+safe, because `Attempt::BeforeSend` redials.

@@ -47,6 +47,7 @@ services:
       QH_BUDGET_MS: ${QH_BUDGET_MS:-1000}
       QH_ENFORCE_BUDGET: ${QH_ENFORCE_BUDGET:-0}
       QH_EXPECT_PATH: ${QH_EXPECT_PATH:-}
+      QH_IDLE_SECONDS: ${QH_IDLE_SECONDS:-0}
 
 networks:
   cafe:

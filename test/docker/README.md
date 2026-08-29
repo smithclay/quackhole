@@ -8,6 +8,7 @@ path between them is the thing under test.
 test/docker/run.sh                 # both scenarios
 test/docker/run.sh open            # normal egress
 test/docker/run.sh relay-only      # UDP blocked at both ends
+test/docker/run.sh idle            # attach, sit idle 15 min, then write
 test/docker/run.sh --no-build open
 ```
 
@@ -42,6 +43,17 @@ while. Everything after that hits the layer cache.
   rewrites the port *before* the filter chain sees the packet, so a port-53 rule
   never matches it and every name lookup fails. That failure looks exactly like
   "the relay is unreachable" and is worth recognising quickly.
+- **An idle session survives.** The `idle` scenario attaches, holds the session
+  open and untouched for 15 minutes (`QH_IDLE_SECONDS`), then queries again.
+  Quack has no client heartbeat and no server-side session reaper, so this was
+  an open question; iroh's own 5-second QUIC keep-alive against a 15-second path
+  idle timeout is what keeps it alive.
+
+  The post-idle probe is a **write** (`CREATE TABLE remote.idle_probe`), not a
+  read, and that distinction is the whole point: a repeated `count(*)` comes
+  back from quack's local cache in ~70ms without touching the network, so a
+  read-only probe would pass against a session that was completely dead.
+
 - **Query latency over a real relay.** Attach, cold query, warm queries, a point
   lookup and a 200k-row scan are each timed and printed. `QH_BUDGET_MS`
   (default 1000) is compared against the warm query; set `QH_ENFORCE_BUDGET=1`
@@ -79,6 +91,9 @@ One run of each scenario, 2026-08-29, macOS/arm64 host, home NAT, relay
 | point lookup | 0.24 | 0.39 |
 | 200k-row scan (~9 fetch round trips) | 1.79 | 1.40 |
 | `peer_path` | relay | relay |
+
+The `idle` scenario, 900s: after idle, a `count(*)` returned in 0.20s and a
+`CREATE TABLE` through the tunnel in 0.67s. No reconnect, no error.
 
 Interactive queries land around 200-400 ms, inside the one-second budget, and
 blocking UDP costs nothing measurable — both scenarios were relaying anyway.

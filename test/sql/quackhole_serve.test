@@ -1,6 +1,7 @@
 # name: test/sql/quackhole_serve.test
 # description: serve/stop lifecycle, key_path persistence, and the ephemeral guard
-# group: [quackhole]
+# group: [sql]
+
 #
 # Binding an iroh endpoint opens a UDP socket and publishes an address, so this
 # file is gated like the other live tests.

@@ -5,6 +5,7 @@
 #   test/docker/run.sh                 # both scenarios
 #   test/docker/run.sh open            # normal egress; reports whichever path iroh picked
 #   test/docker/run.sh relay-only      # UDP blocked both ends; the relay is the only way through
+#   test/docker/run.sh idle            # attach, sit idle 15 min, query again
 #   test/docker/run.sh --no-build open
 #
 set -euo pipefail
@@ -15,11 +16,12 @@ SCENARIOS=()
 for arg in "$@"; do
   case "$arg" in
     --no-build) BUILD=0 ;;
-    open|relay-only) SCENARIOS+=("$arg") ;;
+    open|relay-only|idle) SCENARIOS+=("$arg") ;;
     -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
+# `idle` is not in the default set -- it takes a quarter of an hour.
 [[ ${#SCENARIOS[@]} -eq 0 ]] && SCENARIOS=(open relay-only)
 
 command -v docker >/dev/null || { echo "docker is not installed" >&2; exit 1; }
@@ -41,8 +43,9 @@ run_scenario() {
   echo "############################################################"
 
   case "$name" in
-    open)       export QH_BLOCK_UDP=0 QH_EXPECT_PATH= ;;
-    relay-only) export QH_BLOCK_UDP=1 QH_EXPECT_PATH=relay ;;
+    open)       export QH_BLOCK_UDP=0 QH_EXPECT_PATH=  QH_IDLE_SECONDS=0 ;;
+    relay-only) export QH_BLOCK_UDP=1 QH_EXPECT_PATH=relay QH_IDLE_SECONDS=0 ;;
+    idle)       export QH_BLOCK_UDP=0 QH_EXPECT_PATH=  QH_IDLE_SECONDS="${QH_IDLE_SECONDS:-900}" ;;
   esac
 
   # A stale handoff volume would let the client read a previous run's endpoint

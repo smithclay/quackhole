@@ -316,8 +316,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	db.config.AddExtensionOption("quackhole_key_path",
 	                             "Path to the persisted iroh endpoint key (default: ~/.quackhole/key)",
 	                             LogicalType::VARCHAR);
-	db.config.AddExtensionOption("quackhole_ephemeral",
-	                             "Use a throwaway endpoint key instead of the persisted one",
+	db.config.AddExtensionOption("quackhole_ephemeral", "Use a throwaway endpoint key instead of the persisted one",
 	                             LogicalType::BOOLEAN, Value::BOOLEAN(false));
 
 	TableFunction serve("quackhole_serve", {}, QuackholeServeFunction, QuackholeServeBind);

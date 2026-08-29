@@ -1,6 +1,6 @@
 # name: test/sql/quackhole.test
 # description: Load, catalog surface, and the not-yet-bound status/stop paths
-# group: [quackhole]
+# group: [sql]
 
 # Before loading, none of the functions exist.
 statement error
