@@ -16,6 +16,7 @@ use std::rc::Rc;
 use std::time::Duration;
 use wasm_bindgen::prelude::*;
 
+#[derive(Debug)]
 struct Inner {
     endpoint: Endpoint,
     cache: ConnCache,
@@ -23,6 +24,7 @@ struct Inner {
 }
 
 #[wasm_bindgen]
+#[derive(Debug)]
 pub struct QuackholeClient {
     inner: Rc<Inner>,
 }

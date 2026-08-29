@@ -22,7 +22,7 @@ const MAX_RESPONSE_BYTES: usize = 512 * 1024 * 1024;
 /// This has to live here rather than in the C++ `HTTPClient`, because DuckDB
 /// constructs a fresh `HTTPClient` for every single request and closes it
 /// afterwards -- there is no C++-side object with a long enough life.
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct ConnCache {
     inner: Arc<Mutex<HashMap<EndpointId, Connection>>>,
 }

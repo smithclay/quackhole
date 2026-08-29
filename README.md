@@ -154,14 +154,17 @@ Formatting and lints run as pre-commit hooks, so they fail on your machine rathe
 the CI matrix:
 
 ```sh
-pip install pre-commit && pre-commit install
-pre-commit run --all-files      # first time, or after changing the config
+brew install prek && prek install
+prek run --all-files            # first time, or after changing the config
 ```
+
+`prek` is a drop-in for `pre-commit` and reads the same `.pre-commit-config.yaml`.
 
 `.pre-commit-config.yaml` pins clang-format to **exactly 11.0.1**, which is what DuckDB's
 `format.py` expects; newer releases disagree about line breaking and CI rejects the result.
 It also runs `cargo fmt` and `cargo clippy -D warnings`, which nothing else did — the C++
-side had two gates and the side containing every unsafe block had none.
+side had two gates and the side containing every unsafe block had none. The same checks are
+available as `make rust-check`.
 
 CI's own gates can still be run directly, and cover a slightly different set (`format.py`
 reaches into `test/`; the hooks reach the C ABI header it does not):

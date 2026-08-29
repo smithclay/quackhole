@@ -1,8 +1,9 @@
 [package]
 name = "quackhole-core"
-version = "0.1.0"
-edition = "2021"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
 description = "iroh transport core for the quackhole DuckDB extension"
 
 [lib]
@@ -24,3 +25,6 @@ tokio-util = { version = "0.7", features = ["rt"] }
 # compiles the preset away and the build fails on a missing `N0`.
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 iroh = { version = "1.1", default-features = false, features = ["tls-ring"] }
+
+[lints]
+workspace = true

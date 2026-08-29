@@ -13,6 +13,32 @@
 members = ["quackhole-core", "quackhole-web"]
 resolver = "2"
 
+# Stated once so a bump cannot be applied inconsistently.
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.85"
+
+# No [workspace.dependencies]. The obvious candidate is iroh, whose version is
+# stated in three places, but it cannot be inherited: the native build needs
+# iroh's default features (portmapper, which does UPnP/NAT-PMP and is directly
+# useful to us, plus fast-apple-datapath and metrics) while the wasm build needs
+# them off. Cargo ignores a member's `default-features` when the dependency is
+# inherited -- it warns "this could become a hard error in the future" -- so
+# inheriting would silently hand the browser build the native feature set.
+# Stated per target instead, which is longer but says what is true.
+
+# Inherited by both crates via `[lints] workspace = true`.
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+# Not style: these mark work that was never finished, and should not reach a
+# release build of a transport.
+todo = "warn"
+unimplemented = "warn"
+
 # Profiles only take effect at the workspace root, so both crates' settings live
 # here. They differ on purpose: the static library is linked into DuckDB and
 # wants speed, while the wasm module is downloaded by a browser and wants size.

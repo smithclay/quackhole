@@ -1,8 +1,9 @@
 [package]
 name = "quackhole-web"
-version = "0.1.0"
-edition = "2021"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
 description = "Browser build of the quackhole iroh transport, for DuckDB-Wasm"
 
 [lib]
@@ -21,3 +22,6 @@ wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 getrandom = { version = "0.3", features = ["wasm_js"] }
 console_error_panic_hook = "0.1"
+
+[lints]
+workspace = true

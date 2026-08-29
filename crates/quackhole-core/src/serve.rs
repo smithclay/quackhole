@@ -13,6 +13,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
+#[derive(Debug)]
 pub struct ServeHandle {
     cancel: CancellationToken,
     tracker: TaskTracker,

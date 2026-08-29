@@ -44,6 +44,7 @@ pub const ALPN: &[u8] = b"quackhole/quack/1";
 ///
 /// The runtime is owned by this struct rather than living in a lazy `static`, so
 /// that dropping the handle on database close actually stops the reactor.
+#[derive(Debug)]
 pub struct Core {
     /// `Option` so `shutdown()` can take and time-bound the runtime teardown.
     runtime: Option<Runtime>,
@@ -56,7 +57,7 @@ pub struct Core {
 }
 
 /// What `quackhole_status()` knows about one peer.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PeerEntry {
     /// "direct" or "relay", or "unknown" before any path is open.
     ///

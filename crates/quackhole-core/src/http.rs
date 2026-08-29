@@ -13,6 +13,7 @@
 use anyhow::{bail, Result};
 
 /// A request to build. Headers are the caller's; framing headers are ours.
+#[derive(Debug)]
 pub struct Request<'a> {
     pub method: &'a str,
     pub path: &'a str,
