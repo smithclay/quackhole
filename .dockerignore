@@ -1,0 +1,9 @@
+# The build context is the repo root (the image compiles DuckDB + the Rust core
+# from this tree), so everything heavy and host-specific has to be kept out.
+**/.git
+**/target/
+build/
+.cache/
+duckdb_unittest_tempdir/
+**/__pycache__/
+*.duckdb_extension

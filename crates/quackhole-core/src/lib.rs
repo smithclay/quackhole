@@ -41,12 +41,11 @@ pub struct Core {
 /// What `quackhole_status()` knows about one peer.
 #[derive(Clone)]
 pub struct PeerEntry {
-    /// "direct" or "relay" when iroh tells us, else "unknown".
+    /// "direct" or "relay", or "unknown" before any path is open.
     ///
-    /// iroh 1.1 exposes the transport address on `Incoming` (the accept side)
-    /// but not on an established outbound `Connection`, so an outbound peer
-    /// stays "unknown". The serving laptop -- where "did hole punching work?"
-    /// actually matters -- gets the real answer.
+    /// Both directions report it. The accept side reads it off `IncomingAddr`;
+    /// the dial side samples `Connection::paths()` after each round trip, which
+    /// is also how an upgrade from relay to direct becomes visible.
     pub path: &'static str,
     /// "in" if the peer dialed us, "out" if we dialed it.
     pub direction: &'static str,

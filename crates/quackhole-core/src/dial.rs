@@ -76,6 +76,22 @@ enum Attempt {
     Response(Vec<u8>),
 }
 
+/// Which transport the connection is using right now.
+///
+/// A sample, not a property: iroh starts on the relay and switches to a direct
+/// path once hole punching succeeds, so the answer can change mid-connection.
+/// The selected path is the one carrying application data; if nothing is
+/// selected yet, any open path is a better answer than none.
+fn observed_path(conn: &Connection) -> &'static str {
+    let paths = conn.paths();
+    let path = paths.iter().find(|p| p.is_selected()).or_else(|| paths.iter().next());
+    match path {
+        Some(p) if p.is_ip() => "direct",
+        Some(p) if p.is_relay() => "relay",
+        _ => "unknown",
+    }
+}
+
 /// Write `req` on a fresh bi-stream and read the reply to stream end.
 async fn round_trip(conn: &Connection, req: &[u8]) -> Attempt {
     let (mut send, mut recv) = match conn.open_bi().await {
@@ -118,8 +134,8 @@ impl Core {
             tokio::time::timeout(timeout, async move {
                 let reused = cache.get(&id).is_some();
                 let conn = cache.get_or_connect(&endpoint, id, &peers).await?;
-                match round_trip(&conn, req).await {
-                    Attempt::Response(body) => Ok(body),
+                let (conn, body) = match round_trip(&conn, req).await {
+                    Attempt::Response(body) => (conn, body),
                     // A cached connection can be dead (peer restarted, idle
                     // timeout). Redial once -- but only when the request cannot
                     // have reached the peer, because Quack carries INSERTs and
@@ -128,15 +144,19 @@ impl Core {
                         cache.invalidate(&id);
                         let conn = cache.get_or_connect(&endpoint, id, &peers).await?;
                         match round_trip(&conn, req).await {
-                            Attempt::Response(body) => Ok(body),
-                            Attempt::BeforeSend(err) | Attempt::AfterSend(err) => Err(err),
+                            Attempt::Response(body) => (conn, body),
+                            Attempt::BeforeSend(err) | Attempt::AfterSend(err) => return Err(err),
                         }
                     }
                     Attempt::BeforeSend(err) | Attempt::AfterSend(err) => {
                         cache.invalidate(&id);
-                        Err(err)
+                        return Err(err);
                     }
-                }
+                };
+                // Sampled after every round trip rather than once at connect, so
+                // an upgrade from relay to direct shows up in quackhole_status().
+                record_peer(&peers, id, observed_path(&conn), "out");
+                Ok(body)
             })
             .await
             .context("request timed out")?

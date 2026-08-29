@@ -143,10 +143,21 @@ QUACKHOLE_LOADABLE=1 scripts/demo_two_process.sh   # same, via the loadable exte
 
 cd crates/quackhole-core && cargo test     # transport unit tests
 QUACKHOLE_NET_TESTS=1 cargo test           # ... including the live-network round trip
+
+test/docker/run.sh                         # two DuckDBs on networks that cannot reach each other
 ```
 
 Tests that need the network are gated on `QUACKHOLE_NET_TESTS=1` so the default suite stays
 hermetic.
+
+`test/docker/run.sh` is the one that tests the actual claim. Both peers run in containers on
+separate Docker networks with no route between them, and the client refuses to proceed until
+it has confirmed it cannot reach the server by ICMP or TCP. A second scenario drops outbound
+UDP at both ends, so iroh has to tunnel QUIC over the relay's HTTPS connection -- the
+captive-portal case -- and the run fails unless `peer_path` comes back `relay`. It also prints
+per-query latency. See [test/docker/README.md](test/docker/README.md), which is explicit about
+what this does *not* prove: Docker's NAT is friendly, so it says nothing about hole-punching
+through CGNAT or a symmetric NAT.
 
 ## Layout
 
@@ -158,6 +169,7 @@ src/                        C++ extension
 crates/quackhole-core/      Rust static library (iroh + tokio)
   include/quackhole_core.h    hand-written C ABI
 cmake/FindQuackholeCore.cmake
+test/docker/                two peers on unroutable networks; the cross-network test
 ```
 
 The Rust core moves opaque bytes and knows nothing about HTTP; the C++ side builds request
