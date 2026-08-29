@@ -239,3 +239,88 @@ fn create_private(path: &Path) -> std::io::Result<std::fs::File> {
     std::fs::OpenOptions::new().write(true).create_new(true).open(path)
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// A throwaway directory that cleans itself up.
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "quackhole-test-{tag}-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn key_is_created_private_and_is_stable() {
+        let dir = temp_dir("key");
+        let path = dir.join("nested").join("key");
+
+        // Creates the parent directory as well as the key.
+        let first = load_or_create_key(&path).expect("create");
+        assert!(path.exists());
+
+        // The key IS the address, so a second load must return the same bytes --
+        // otherwise an endpoint id would not survive a restart.
+        let second = load_or_create_key(&path).expect("reload");
+        assert_eq!(first.to_bytes(), second.to_bytes());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn key_is_never_world_readable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("perm");
+        let path = dir.join("key");
+        load_or_create_key(&path).expect("create");
+
+        // 0600 must come from the create call itself. Writing first and chmod-ing
+        // after leaves a window where the private key is world-readable.
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "key mode was {mode:o}");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn corrupt_key_file_is_an_error_not_a_new_identity() {
+        let dir = temp_dir("corrupt");
+        let path = dir.join("key");
+        std::fs::write(&path, "not hex at all").unwrap();
+
+        // Silently generating a fresh key here would change the endpoint id --
+        // the address -- without telling anyone.
+        assert!(load_or_create_key(&path).is_err());
+
+        std::fs::write(&path, hex::encode([0u8; 16])).unwrap();
+        assert!(load_or_create_key(&path).is_err(), "16 bytes is not a key");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn endpoint_ids_parse_in_every_form_iroh_prints() {
+        let secret = SecretKey::generate();
+        let id = secret.public();
+
+        // Display is hex; to_z32 is a different alphabet with its own parser.
+        // Accepting only FromStr would reject our own printed output.
+        assert_eq!(parse_endpoint_id(&id.to_string()).unwrap(), id);
+        assert_eq!(parse_endpoint_id(&id.to_z32()).unwrap(), id);
+        assert_eq!(parse_endpoint_id(&format!("  {}  ", id.to_z32())).unwrap(), id);
+        assert_eq!(id.to_z32().len(), 52, "z-base-32 must fit a DNS label");
+
+        assert!(parse_endpoint_id("not-an-endpoint-id").is_err());
+        assert!(parse_endpoint_id("").is_err());
+    }
+}
