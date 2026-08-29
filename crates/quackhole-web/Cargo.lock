@@ -2371,6 +2371,7 @@ dependencies = [
  "getrandom 0.3.4",
  "iroh",
  "js-sys",
+ "n0-future",
  "quackhole-core",
  "wasm-bindgen",
  "wasm-bindgen-futures",

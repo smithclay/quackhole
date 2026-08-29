@@ -12,6 +12,7 @@ transport, and the native `quackhole_serve` works unmodified on the other end.
     node run.mjs direct         # step 1
     node run.mjs bridge         # step 2
     node run.mjs iroh           # step 3
+    node run.mjs timeout        # fault injection
 
 ## Steps
 
@@ -22,6 +23,7 @@ Each step can only fail for one reason, which is the point of splitting them.
 | 1. plain HTTP | wasm quack's client path works at all | **PASS** |
 | 2. blocking bridge | `Atomics.wait` can serve a synchronous XHR | **PASS** |
 | 3. iroh | the bridge's far end can be an iroh endpoint | **PASS** |
+| timeout | a bridge that stops answering fails instead of wedging | **PASS** |
 
 ### Step 1 — `npm test`
 
@@ -102,6 +104,28 @@ address lookup services failed". Since the relay URL travels with the endpoint i
 in the connection string a user pastes, the browser already has it. This is what
 iroh tickets do.
 
+### `node run.mjs timeout` — fault injection
+
+The bridge is told to drop every request. Nothing else about the run changes.
+
+This exists because the request deadline is otherwise unexercised code: every
+healthy path answers in milliseconds, so the guard could be broken for months
+without a test noticing. The failure it guards against is the worst one this
+design has — the DuckDB thread is blocked in `Atomics.wait`, so a request that
+never resolves does not fail, it freezes the page with nothing logged.
+
+It also documents something worth knowing: **our error message never reaches
+DuckDB.** The run reports
+
+    shim     [qh-shim] failed quackhole bridge did not respond within 7000ms
+    duckdb   IO Error: Failed to send message: Please consult the browser console…
+
+because quack renders `HTTPResponse::GetError` (`quack_client.cpp:63`), which is
+duckdb-wasm's generic text, not our response body. So the assertion is made
+against the shim's own console output — that is what distinguishes "our deadline
+fired" from "something else failed within the budget". It is also why the shim
+logs failures with `console.error` even when tracing is off.
+
 ## Notes
 
 - The page is bundled with esbuild because duckdb-wasm's ESM entry point imports
@@ -118,4 +142,12 @@ iroh tickets do.
 - `build-wasm.sh` needs Homebrew LLVM: Apple clang cannot target
   `wasm32-unknown-unknown` and `ring` needs a C compiler that can.
 - The bridge worker is a module worker (the wasm glue is an ES module); the DuckDB
-  worker above it stays classic, because it needs `importScripts`.
+  worker above it stays classic, because it needs `importScripts`. `protocol.js`
+  assigns to `globalThis` so one file can be loaded either way.
+- Every request is bounded (`QH_TIMEOUT_MS`, default 30s, matching DuckDB's own
+  default). This is not a nicety: the DuckDB thread blocks in `Atomics.wait`, so an
+  unbounded request would wedge the worker permanently instead of failing. The
+  bridge gets the shorter budget so its error, which names the actual cause,
+  arrives before the shim's blunter one.
+- `intercept=<host>` is a test hook: it is what lets step 2 exercise the bridge
+  against plain HTTP. Real use matches on the trailing `.iroh` label alone.

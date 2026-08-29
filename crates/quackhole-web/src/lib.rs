@@ -13,6 +13,7 @@ use iroh::endpoint::presets;
 use iroh::{Endpoint, EndpointAddr, RelayUrl};
 use quackhole_core::{parse_endpoint_id, request_async, ConnCache, PeerMap};
 use std::rc::Rc;
+use std::time::Duration;
 use wasm_bindgen::prelude::*;
 
 struct Inner {
@@ -66,7 +67,18 @@ impl QuackholeClient {
     ///
     /// Returns a Promise rather than being an `async fn` method because the
     /// future has to own everything it touches: it outlives this call.
-    pub fn request(&self, peer: String, relay: Option<String>, req: Vec<u8>) -> js_sys::Promise {
+    /// `timeout_ms` is not optional in practice. The caller is a thread blocked
+    /// in `Atomics.wait`, so a request that never resolves does not fail slowly
+    /// -- it wedges the DuckDB worker permanently, with nothing logged anywhere.
+    /// The native side bounds the identical call with `tokio::time::timeout`;
+    /// this is the same guard for a target that has no tokio.
+    pub fn request(
+        &self,
+        peer: String,
+        relay: Option<String>,
+        req: Vec<u8>,
+        timeout_ms: u32,
+    ) -> js_sys::Promise {
         let inner = self.inner.clone();
         wasm_bindgen_futures::future_to_promise(async move {
             let id = parse_endpoint_id(&peer)
@@ -78,9 +90,13 @@ impl QuackholeClient {
                     .map_err(|e| JsValue::from_str(&format!("bad relay url {url}: {e}")))?;
                 addr = addr.with_relay_url(url);
             }
-            let body = request_async(&inner.endpoint, &inner.cache, &inner.peers, addr, &req)
-                .await
-                .map_err(|e| JsValue::from_str(&format!("{e:#}")))?;
+            let body = n0_future::time::timeout(
+                Duration::from_millis(u64::from(timeout_ms)),
+                request_async(&inner.endpoint, &inner.cache, &inner.peers, addr, &req),
+            )
+            .await
+            .map_err(|_| JsValue::from_str(&format!("request timed out after {timeout_ms}ms")))?
+            .map_err(|e| JsValue::from_str(&format!("{e:#}")))?;
             Ok(js_sys::Uint8Array::from(body.as_slice()).into())
         })
     }

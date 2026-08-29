@@ -43,7 +43,7 @@ async function main() {
   // duckdb, quack, the SQL -- is identical either way; only the transport moves.
   const workerUrl =
     window.__mode !== 'direct'
-      ? `/qh-worker.js?target=${encodeURIComponent(bundle.mainWorker)}&intercept=${encodeURIComponent(window.__intercept)}&chunk=${window.__chunk}&mode=${window.__bridgeMode}&relay=${encodeURIComponent(window.__relay ?? '')}&debug=${window.__debug}`
+      ? `/qh-worker.js?target=${encodeURIComponent(bundle.mainWorker)}&intercept=${encodeURIComponent(window.__intercept)}&chunk=${window.__chunk}&mode=${window.__bridgeMode}&relay=${encodeURIComponent(window.__relay ?? '')}&debug=${window.__debug}&timeout=${window.__timeout}&fault=${window.__fault ?? ''}`
       : bundle.mainWorker;
   say(`mode: ${window.__mode}, crossOriginIsolated=${self.crossOriginIsolated}`);
 
@@ -88,6 +88,7 @@ async function main() {
   return { version, count, name, wide, attachMs, countMs, pointMs, wideMs };
 }
 
+const started = performance.now();
 main().then(
   (result) => {
     window.__result = { ok: true, ...result, log: lines };
@@ -95,7 +96,12 @@ main().then(
   },
   (err) => {
     say(`ERROR: ${err?.stack || err}`);
-    window.__result = { ok: false, error: String(err?.stack || err), log: lines };
+    window.__result = {
+      ok: false,
+      error: String(err?.stack || err),
+      elapsedMs: performance.now() - started,
+      log: lines,
+    };
     window.__done = true;
   },
 );

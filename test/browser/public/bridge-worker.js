@@ -6,30 +6,41 @@
 //
 // A module worker rather than a classic one, because the wasm glue is an ES
 // module. The DuckDB worker above it stays classic, since it needs importScripts.
-const CTL_BYTES = 32;
-const MORE = 1;
-const META = 2;
+// Side-effect import: protocol.js assigns to globalThis, so one file serves
+// both this module and the shim's classic script.
+import '/protocol.js';
+
+const P = globalThis.QH_PROTO;
 
 let ctl = null;
 let data = null;
 let mode = 'fetch';
 let client = null;
 let relay = null;
+let fault = null;
 
 /// Hands one chunk to the blocked thread and waits for it to be consumed.
-function writeChunk(bytes, flags, state = 1) {
-  while (Atomics.load(ctl, 0) !== 0) {
-    Atomics.wait(ctl, 0, Atomics.load(ctl, 0), 1000);
+///
+/// Blocking here is safe and blocking in the shim is not: this worker exists so
+/// the DuckDB thread has something to wait on.
+function writeChunk(bytes, flags, state = P.CHUNK) {
+  // Only the shim writes IDLE, so this waits for it to finish copying the
+  // previous chunk out before the buffer is reused.
+  let seen;
+  while ((seen = Atomics.load(ctl, P.STATE)) !== P.IDLE) {
+    Atomics.wait(ctl, P.STATE, seen, 1000);
   }
   data.set(bytes, 0);
-  Atomics.store(ctl, 1, bytes.length);
-  Atomics.store(ctl, 3, flags);
-  Atomics.store(ctl, 0, state);
-  Atomics.notify(ctl, 0);
+  Atomics.store(ctl, P.LEN, bytes.length);
+  Atomics.store(ctl, P.FLAGS, flags);
+  // Written last: the shim reads LEN and FLAGS only after seeing STATE change,
+  // and Atomics are sequentially consistent, so this publishes the whole chunk.
+  Atomics.store(ctl, P.STATE, state);
+  Atomics.notify(ctl, P.STATE);
 }
 
 function fail(message) {
-  writeChunk(new TextEncoder().encode(message), 0, 2);
+  writeChunk(new TextEncoder().encode(message), 0, P.ERROR);
 }
 
 // --- HTTP over an iroh stream ----------------------------------------------
@@ -129,7 +140,7 @@ async function performIroh(req) {
   const peer = host.slice(0, -'.iroh'.length);
 
   const raw = buildRequest(req.method, req.url, req.headers, req.body);
-  const bytes = new Uint8Array(await client.request(peer, relay, raw));
+  const bytes = new Uint8Array(await client.request(peer, relay, raw, req.timeoutMs));
   return parseResponse(bytes);
 }
 
@@ -147,6 +158,7 @@ async function performFetch(req) {
     method: req.method,
     headers,
     body: req.body && req.body.length ? req.body : undefined,
+    signal: AbortSignal.timeout(req.timeoutMs),
   });
   const buf = new Uint8Array(await res.arrayBuffer());
   const out = {};
@@ -161,9 +173,10 @@ self.onmessage = async (ev) => {
 
   if (msg && msg.__qh === 'init') {
     ctl = new Int32Array(msg.sab, 0, 8);
-    data = new Uint8Array(msg.sab, CTL_BYTES);
+    data = new Uint8Array(msg.sab, P.CTL_BYTES);
     mode = msg.mode || 'fetch';
     relay = msg.relay || null;
+    fault = msg.fault || null;
     try {
       if (mode === 'iroh') {
         const wasm = await import('/wasm/quackhole.js');
@@ -173,21 +186,26 @@ self.onmessage = async (ev) => {
       }
       // Only now is the bridge usable. The shim blocks on this flag, so setting
       // it before the endpoint exists would let the first request race the bind.
-      Atomics.store(ctl, 4, 1);
-      Atomics.notify(ctl, 4);
+      Atomics.store(ctl, P.READY, P.READY_OK);
+      Atomics.notify(ctl, P.READY);
     } catch (err) {
       console.error(`[qh-bridge] init failed: ${err}`);
-      Atomics.store(ctl, 4, 2);
-      Atomics.notify(ctl, 4);
+      Atomics.store(ctl, P.READY, P.READY_FAILED);
+      Atomics.notify(ctl, P.READY);
     }
     return;
   }
+
+  // A bridge that has died notifies nothing, which is precisely the case the
+  // shim's deadline exists for. Simulating it is the only way to know the
+  // deadline works, since every healthy path answers long before it.
+  if (fault === 'blackhole') return;
 
   try {
     const res = mode === 'iroh' ? await performIroh(msg) : await performFetch(msg);
     writeChunk(
       new TextEncoder().encode(JSON.stringify({ status: res.status, headers: res.headers })),
-      META,
+      P.META,
     );
 
     const limit = data.length;
@@ -197,7 +215,7 @@ self.onmessage = async (ev) => {
     }
     for (let at = 0; at < res.body.length; at += limit) {
       const end = Math.min(at + limit, res.body.length);
-      writeChunk(res.body.subarray(at, end), end < res.body.length ? MORE : 0);
+      writeChunk(res.body.subarray(at, end), end < res.body.length ? P.MORE : 0);
     }
   } catch (err) {
     fail(String(err && err.message ? err.message : err));

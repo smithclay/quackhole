@@ -25,8 +25,17 @@ const QUACK_PORT = 9494;
 //              over plain HTTP. Proves the sync/async bridge in isolation.
 // 'iroh'    -- the real thing: the bridge's far end is an iroh endpoint and
 //              the server is an unmodified quackhole_serve.
+// 'timeout' -- fault injection: the bridge stops answering, and the run must
+//              fail promptly rather than wedging the DuckDB worker forever.
 const MODE = process.argv[2] ?? 'direct';
-if (!['direct', 'bridge', 'iroh'].includes(MODE)) throw new Error(`unknown mode ${MODE}`);
+if (!['direct', 'bridge', 'iroh', 'timeout'].includes(MODE)) {
+  throw new Error(`unknown mode ${MODE}`);
+}
+// Short, because the test spends the whole budget on purpose.
+const TIMEOUT_MS = Number(process.env.QH_TIMEOUT_MS ?? (MODE === 'timeout' ? 2000 : 30000));
+// Matches GRACE_MS in shim.js: the shim waits a little past the bridge's own
+// budget so the bridge's more specific error wins when there is one.
+const GRACE_MS = 5000;
 // SharedArrayBuffer, and therefore Atomics.wait, requires cross-origin isolation.
 const COI = MODE !== 'direct' || process.env.QH_COI === '1';
 
@@ -76,8 +85,12 @@ ${serve}
     throw new Error(`server never became ready:\n${out.join('')}`);
   })();
 
-  /// Runs more SQL down the still-open stdin and waits for a marker line.
-  const ask = async (sql, marker, timeoutMs) => {
+  /// Re-runs `sql` down the still-open stdin until `marker` carries a value.
+  ///
+  /// Polling rather than asking once because some answers appear late: the
+  /// home relay is not known the instant an endpoint binds, and a peer has no
+  /// path until the first request crosses it.
+  const poll = async (sql, marker, timeoutMs) => {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       proc.stdin.write(sql + '\n');
@@ -90,7 +103,7 @@ ${serve}
     return null;
   };
 
-  return { proc, ready, ask, output: out };
+  return { proc, ready, poll, output: out };
 }
 
 // The duckdb-wasm ESM entry point imports 'apache-arrow' by bare specifier,
@@ -123,7 +136,7 @@ async function main() {
   // lookup, which a freshly published endpoint routinely fails.
   let relay = '';
   if (MODE === 'iroh') {
-    relay = await server.ask("SELECT 'SERVER_RELAY', relay_url FROM quackhole_status();", 'SERVER_RELAY', 30_000);
+    relay = await server.poll("SELECT 'SERVER_RELAY', relay_url FROM quackhole_status();", 'SERVER_RELAY', 30_000);
     if (!relay) throw new Error('server never reported a home relay');
     log(`home relay ${relay}`);
   }
@@ -134,9 +147,11 @@ async function main() {
   const browser = await chromium.launch();
   const page = await browser.newPage();
   const intercepted = [];
+  const shimErrors = [];
   page.on('console', (m) => {
     const text = m.text();
     if (text.startsWith('[qh-shim] intercept')) intercepted.push(text);
+    else if (text.startsWith('[qh-shim] failed')) shimErrors.push(text);
     else log(`  browser: ${text}`);
   });
   page.on('pageerror', (e) => log(`  browser error: ${e.message}`));
@@ -149,7 +164,9 @@ async function main() {
      window.__bridgeMode = ${JSON.stringify(MODE === 'iroh' ? 'iroh' : 'fetch')};
      window.__attach = ${JSON.stringify(attach)};
      window.__relay = ${JSON.stringify(relay)};
-     window.__debug = ${JSON.stringify(process.env.QH_DEBUG === '1' ? '1' : '0')};`,
+     window.__debug = ${JSON.stringify(MODE === 'direct' && process.env.QH_DEBUG !== '1' ? '0' : '1')};
+     window.__timeout = ${JSON.stringify(String(TIMEOUT_MS))};
+     window.__fault = ${JSON.stringify(MODE === 'timeout' ? 'blackhole' : '')};`,
   );
   await page.goto(`http://127.0.0.1:${port}/`);
   await page.waitForFunction('window.__done === true', null, { timeout: 120_000 });
@@ -161,7 +178,7 @@ async function main() {
   // than on reading the cfg.
   let peerPath = null;
   if (MODE === 'iroh') {
-    peerPath = await server.ask(
+    peerPath = await server.poll(
       "SELECT 'SERVER_PEER', peer_path FROM quackhole_status();",
       'SERVER_PEER',
       10_000,
@@ -174,6 +191,37 @@ async function main() {
   server.proc.kill();
 
   console.log(`\n=== result (mode: ${MODE}) ===`);
+
+  if (MODE === 'timeout') {
+    // The guard is worth nothing if it only exists. Assert that it fired, that
+    // it said why, and -- the point of the whole exercise -- that the run ended
+    // at all rather than blocking in Atomics.wait forever.
+    const budget = TIMEOUT_MS + GRACE_MS;
+    // Asserted against the shim's own console output rather than the error
+    // DuckDB reports, because DuckDB does not carry our message: quack renders
+    // HTTPResponse::GetError (quack_client.cpp:63), which is duckdb-wasm's
+    // generic text. Checking the console is what distinguishes "our deadline
+    // fired" from "something else failed to happen within the budget".
+    const timeoutChecks = [
+      ['query failed', !result.ok, true],
+      ['our deadline fired', shimErrors.some((e) => /did not respond/.test(e)), true],
+      ['gave up in time', result.elapsedMs < budget * 3, true],
+    ];
+    let bad = false;
+    for (const [name, got, want] of timeoutChecks) {
+      const ok = got === want;
+      bad ||= !ok;
+      console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name} = ${got}${ok ? '' : ` (want ${want})`}`);
+    }
+    console.log(`\n  budget   ${budget}ms`);
+    console.log(`  gave up  ${result.elapsedMs?.toFixed(0)}ms`);
+    console.log(`  shim     ${shimErrors[0] ?? '<none>'}`);
+    console.log(`  duckdb   ${(result.error ?? '').split('\n')[0]}`);
+    console.log(`\n==> ${bad ? 'FAIL' : 'PASS'}`);
+    process.exitCode = bad ? 1 : 0;
+    return;
+  }
+
   if (!result.ok) {
     console.log(`requests through the shim: ${intercepted.length}`);
     console.log(result.error);
