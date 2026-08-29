@@ -38,7 +38,16 @@ async function main() {
   const bundle = await duckdb.selectBundle(BUNDLES);
   say(`bundle: ${bundle.mainModule}`);
 
-  const worker = new Worker(bundle.mainWorker);
+  // In bridge mode the DuckDB worker is started through our own bootstrap,
+  // which installs the XHR shim before duckdb loads. Everything downstream --
+  // duckdb, quack, the SQL -- is identical either way; only the transport moves.
+  const workerUrl =
+    window.__mode === 'bridge'
+      ? `/qh-worker.js?target=${encodeURIComponent(bundle.mainWorker)}&intercept=${encodeURIComponent(window.__intercept)}&chunk=${window.__chunk}`
+      : bundle.mainWorker;
+  say(`mode: ${window.__mode}, crossOriginIsolated=${self.crossOriginIsolated}`);
+
+  const worker = new Worker(workerUrl);
   const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING), worker);
   await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
   const conn = await db.connect();
@@ -66,13 +75,17 @@ async function main() {
   const name = scalar(await conn.query('SELECT name FROM remote.logs WHERE id = 42'));
   const pointMs = performance.now() - t2;
 
-  say(`count=${count} (${countMs.toFixed(0)}ms), point=${name} (${pointMs.toFixed(0)}ms)`);
+  const t3 = performance.now();
+  const wide = scalar(await conn.query('SELECT sum(length(payload))::BIGINT FROM remote.wide'));
+  const wideMs = performance.now() - t3;
+
+  say(`count=${count} (${countMs.toFixed(0)}ms), point=${name} (${pointMs.toFixed(0)}ms), wide=${wide} (${wideMs.toFixed(0)}ms)`);
 
   await conn.close();
   await db.terminate();
   await worker.terminate();
 
-  return { version, count, name, attachMs, countMs, pointMs };
+  return { version, count, name, wide, attachMs, countMs, pointMs, wideMs };
 }
 
 main().then(

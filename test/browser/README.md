@@ -8,7 +8,8 @@ so replacing `globalThis.XMLHttpRequest` inside the DuckDB worker replaces the
 transport, and the native `quackhole_serve` works unmodified on the other end.
 
     npm install
-    npm test
+    node run.mjs direct    # step 1
+    node run.mjs bridge    # step 2
 
 ## Steps
 
@@ -17,7 +18,7 @@ Each step can only fail for one reason, which is the point of splitting them.
 | Step | What it proves | Status |
 |---|---|---|
 | 1. plain HTTP | wasm quack's client path works at all | **PASS** |
-| 2. blocking bridge | `Atomics.wait` can serve a synchronous XHR | pending |
+| 2. blocking bridge | `Atomics.wait` can serve a synchronous XHR | **PASS** |
 | 3. iroh | the bridge's far end can be an iroh endpoint | pending |
 
 ### Step 1 — `npm test`
@@ -38,6 +39,28 @@ Two things this depends on that are easy to miss:
   (`quack_http_server.cpp:77-80`). Without that the cross-origin XHR would be blocked.
 - `extensions.duckdb.org` also sends `Access-Control-Allow-Origin: *`, so
   `INSTALL quack` works from a page.
+
+### Step 2 — `node run.mjs bridge`
+
+Same SQL, same server, still plain HTTP — but every request now goes through
+`shim.js` and the `Atomics.wait` bridge instead of the native XHR. No iroh, so a
+failure here is a failure of the sync/async bridge and nothing else.
+
+The shim is installed by `qh-worker.js`, which `importScripts` it ahead of the
+stock duckdb worker bundle. That works because the bundle is a classic script and
+its glue resolves `new XMLHttpRequest` off the global at call time. The shim then
+spawns the bridge worker itself, so the page never needs to know it exists and
+there is no handshake racing duckdb's own `onmessage`.
+
+Two things the harness checks that are easy to get wrong:
+
+- **That the shim was actually used.** The correctness assertions pass identically
+  whether or not it ran, so bridge mode requires a non-zero intercept count and
+  direct mode requires zero. Without that a mis-scoped predicate would fall
+  through to the native transport and the test would prove nothing.
+- **That reassembly runs.** The data region is shrunk to 64 KiB (`QH_CHUNK`) so
+  the 200k-row scan spans many chunks. At the default 8 MiB nothing would ever
+  chunk and that code would be dead.
 
 ## Notes
 

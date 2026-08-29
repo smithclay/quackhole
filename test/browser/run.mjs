@@ -20,6 +20,14 @@ const TOKEN = 'browser-test-token';
 const PORT = Number(process.env.QH_PORT ?? 0);
 const QUACK_PORT = 9494;
 
+// 'direct'  -- stock duckdb-wasm, plain HTTP. Proves the quack client path.
+// 'bridge'  -- same SQL through the XHR shim and the Atomics bridge, still
+//              over plain HTTP. Proves the sync/async bridge in isolation.
+const MODE = process.argv[2] ?? 'direct';
+if (!['direct', 'bridge'].includes(MODE)) throw new Error(`unknown mode ${MODE}`);
+// SharedArrayBuffer, and therefore Atomics.wait, requires cross-origin isolation.
+const COI = MODE === 'bridge' || process.env.QH_COI === '1';
+
 const log = (msg) => console.log(`[run] ${msg}`);
 
 function startQuackServer() {
@@ -38,6 +46,7 @@ function startQuackServer() {
 .headers off
 INSTALL quack; LOAD quack;
 CREATE TABLE logs AS SELECT range AS id, 'evt_' || range AS name FROM range(1000);
+CREATE TABLE wide AS SELECT range AS id, repeat('x', 8) AS payload FROM range(200000);
 CALL quack_serve('quack:localhost:${QUACK_PORT}', token := '${TOKEN}');
 SELECT 'SERVER_READY';
 `);
@@ -76,15 +85,25 @@ async function main() {
   await server.ready;
   log(`quack serving on 127.0.0.1:${QUACK_PORT}`);
 
-  const { server: http, port } = await startServer(PORT, { coi: process.env.QH_COI === '1' });
+  const { server: http, port } = await startServer(PORT, { coi: COI });
   log(`page on http://127.0.0.1:${port}`);
 
   const browser = await chromium.launch();
   const page = await browser.newPage();
-  page.on('console', (m) => log(`  browser: ${m.text()}`));
+  const intercepted = [];
+  page.on('console', (m) => {
+    const text = m.text();
+    if (text.startsWith('[qh-shim] intercept')) intercepted.push(text);
+    else log(`  browser: ${text}`);
+  });
   page.on('pageerror', (e) => log(`  browser error: ${e.message}`));
 
-  await page.addInitScript(`window.__token = ${JSON.stringify(TOKEN)};`);
+  await page.addInitScript(
+    `window.__token = ${JSON.stringify(TOKEN)};
+     window.__mode = ${JSON.stringify(MODE)};
+     window.__intercept = ${JSON.stringify(`localhost:${QUACK_PORT}`)};
+     window.__chunk = ${JSON.stringify(process.env.QH_CHUNK ?? '65536')};`,
+  );
   await page.goto(`http://127.0.0.1:${port}/`);
   await page.waitForFunction('window.__done === true', null, { timeout: 120_000 });
   const result = await page.evaluate('window.__result');
@@ -94,7 +113,7 @@ async function main() {
   server.proc.stdin.end();
   server.proc.kill();
 
-  console.log('\n=== result ===');
+  console.log(`\n=== result (mode: ${MODE}) ===`);
   if (!result.ok) {
     console.log(result.error);
     console.log('\n==> FAIL');
@@ -105,17 +124,24 @@ async function main() {
   const checks = [
     ['count', result.count, 1000],
     ['point', result.name, 'evt_42'],
+    ['wide', result.wide, 1600000],
   ];
+  // The correctness checks above pass identically whether or not the shim ran,
+  // so bridge mode has to prove the requests actually went through it.
+  if (MODE === 'bridge') checks.push(['shim used', intercepted.length > 0, true]);
+  if (MODE === 'direct') checks.push(['shim absent', intercepted.length === 0, true]);
   let failed = false;
   for (const [name, got, want] of checks) {
     const ok = got === want;
     failed ||= !ok;
     console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name} = ${got}${ok ? '' : ` (want ${want})`}`);
   }
+  console.log(`\n  requests through the shim: ${intercepted.length}`);
   console.log(`\n  engine   ${result.version}`);
   console.log(`  attach   ${result.attachMs.toFixed(0)}ms`);
   console.log(`  count    ${result.countMs.toFixed(0)}ms`);
   console.log(`  point    ${result.pointMs.toFixed(0)}ms`);
+  console.log(`  wide     ${result.wideMs.toFixed(0)}ms`);
   console.log(`\n==> ${failed ? 'FAIL' : 'PASS'}`);
   process.exitCode = failed ? 1 : 0;
 }
