@@ -38,12 +38,12 @@ async function main() {
   const bundle = await duckdb.selectBundle(BUNDLES);
   say(`bundle: ${bundle.mainModule}`);
 
-  // In bridge mode the DuckDB worker is started through our own bootstrap,
+  // In shimmed modes the DuckDB worker is started through our own bootstrap,
   // which installs the XHR shim before duckdb loads. Everything downstream --
   // duckdb, quack, the SQL -- is identical either way; only the transport moves.
   const workerUrl =
-    window.__mode === 'bridge'
-      ? `/qh-worker.js?target=${encodeURIComponent(bundle.mainWorker)}&intercept=${encodeURIComponent(window.__intercept)}&chunk=${window.__chunk}`
+    window.__mode !== 'direct'
+      ? `/qh-worker.js?target=${encodeURIComponent(bundle.mainWorker)}&intercept=${encodeURIComponent(window.__intercept)}&chunk=${window.__chunk}&mode=${window.__bridgeMode}&relay=${encodeURIComponent(window.__relay ?? '')}&debug=${window.__debug}`
       : bundle.mainWorker;
   say(`mode: ${window.__mode}, crossOriginIsolated=${self.crossOriginIsolated}`);
 
@@ -63,7 +63,7 @@ async function main() {
 
   await conn.query(`CREATE SECRET (TYPE quack, TOKEN '${window.__token}')`);
   const t0 = performance.now();
-  await conn.query("ATTACH 'quack:localhost:9494' AS remote");
+  await conn.query(`ATTACH '${window.__attach}' AS remote`);
   const attachMs = performance.now() - t0;
   say(`attached in ${attachMs.toFixed(0)}ms`);
 

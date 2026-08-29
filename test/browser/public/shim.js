@@ -16,6 +16,9 @@
   // Hosts to intercept. `.iroh` is the real target; the extra pattern lets the
   // bridge be tested against an ordinary HTTP server, with no iroh involved.
   const EXTRA = params.get('intercept') || '';
+  // Per-request tracing. Off by default; the harness only needs the intercept
+  // announcements below, and the rest is noise until something is wrong.
+  const DEBUG = params.get('debug') === '1';
   function shouldIntercept(url) {
     try {
       const u = new URL(url, self.location.href);
@@ -45,8 +48,14 @@
 
   // Nested worker: the shim owns the bridge, so the page does not have to know
   // it exists and there is no handshake to race against duckdb's own onmessage.
-  const bridge = new Worker(params.get('bridge') || '/bridge-worker.js');
-  bridge.postMessage({ __qh: 'init', sab });
+  // A module worker, because the wasm glue is an ES module.
+  const bridge = new Worker(params.get('bridge') || '/bridge-worker.js', { type: 'module' });
+  bridge.postMessage({
+    __qh: 'init',
+    sab,
+    mode: params.get('mode') || 'fetch',
+    relay: params.get('relay') || null,
+  });
 
   function waitForBridge() {
     const deadline = Date.now() + 30000;
@@ -54,6 +63,10 @@
       if (Date.now() > deadline) throw new Error('quackhole bridge never became ready');
       Atomics.wait(ctl, 4, 0, 1000);
     }
+    // 2 means the bridge failed to start -- binding an iroh endpoint, most
+    // likely. Distinguishing that from a timeout matters: one is a broken
+    // environment, the other is a slow one.
+    if (Atomics.load(ctl, 4) === 2) throw new Error('quackhole bridge failed to initialise');
   }
 
   /// Blocks until the bridge has delivered every chunk of the response.
@@ -107,6 +120,7 @@
   class QuackholeXHR extends NativeXHR {
     open(method, url, isAsync) {
       this.__qh = shouldIntercept(url) ? { method, url, headers: {}, done: false } : null;
+      if (DEBUG) console.log(`[qh-shim] open ${method} ${url} intercept=${!!this.__qh}`);
       if (!this.__qh) return super.open(method, url, isAsync);
     }
 
@@ -129,7 +143,9 @@
           body: body ? new Uint8Array(body) : null,
         });
         Object.assign(this.__qh, { done: true, ...res });
+        if (DEBUG) console.log(`[qh-shim] done status=${res.status} bytes=${res.body.length}`);
       } catch (err) {
+        console.log(`[qh-shim] failed ${err && err.message ? err.message : err}`);
         // The glue treats status 0 as an unexplained failure, so surface a real
         // HTTP status instead: DuckDB then reports something a user can act on.
         Object.assign(this.__qh, {

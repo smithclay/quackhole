@@ -6,22 +6,37 @@
 //! implementation and this FFI surface stays small.
 
 mod dial;
+// Native-only: the C ABI exists for DuckDB, and a browser cannot serve --
+// quack_serve itself throws NotImplementedException on wasm.
+#[cfg(not(target_family = "wasm"))]
 mod ffi;
+#[cfg(not(target_family = "wasm"))]
 mod serve;
 
+pub use dial::{request_async, ConnCache};
+
 use anyhow::{Context, Result};
-use iroh::endpoint::presets;
-use iroh::{Endpoint, EndpointId, SecretKey};
+use iroh::EndpointId;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+#[cfg(not(target_family = "wasm"))]
+use iroh::endpoint::presets;
+#[cfg(not(target_family = "wasm"))]
+use iroh::{Endpoint, SecretKey};
+#[cfg(not(target_family = "wasm"))]
 use std::path::Path;
+#[cfg(not(target_family = "wasm"))]
 use std::sync::Mutex;
+#[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
+#[cfg(not(target_family = "wasm"))]
 use tokio::runtime::Runtime;
 
 /// ALPN for the Quack-over-iroh bridge. Bumping this is a wire break.
 pub const ALPN: &[u8] = b"quackhole/quack/1";
 
+#[cfg(not(target_family = "wasm"))]
 /// Owns the tokio runtime, the iroh endpoint, the accept loop (when serving),
 /// and the outbound connection cache.
 ///
@@ -80,6 +95,7 @@ pub(crate) fn record_peer(peers: &PeerMap, id: EndpointId, path: &'static str, d
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl Core {
     pub fn new(key_path: Option<&Path>, ephemeral: bool) -> Result<Self> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -172,6 +188,7 @@ impl Core {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn worker_threads() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
@@ -179,6 +196,7 @@ fn worker_threads() -> usize {
         .clamp(1, 4)
 }
 
+#[cfg(not(target_family = "wasm"))]
 /// Read the endpoint key from `path`, creating it (mode 0600) if absent.
 ///
 /// The key *is* the address, so persisting it is what lets `quack:<id>.iroh`
@@ -210,6 +228,7 @@ fn load_or_create_key(path: &Path) -> Result<SecretKey> {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 /// Read and decode an existing key file.
 fn load_key(path: &Path) -> Result<SecretKey> {
     let text = std::fs::read_to_string(path)
@@ -223,6 +242,7 @@ fn load_key(path: &Path) -> Result<SecretKey> {
     Ok(SecretKey::from_bytes(&bytes))
 }
 
+#[cfg(not(target_family = "wasm"))]
 #[cfg(unix)]
 fn create_private(path: &Path) -> std::io::Result<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
@@ -233,12 +253,14 @@ fn create_private(path: &Path) -> std::io::Result<std::fs::File> {
         .open(path)
 }
 
+#[cfg(not(target_family = "wasm"))]
 #[cfg(not(unix))]
 fn create_private(path: &Path) -> std::io::Result<std::fs::File> {
     std::fs::OpenOptions::new().write(true).create_new(true).open(path)
 }
 
 
+#[cfg(not(target_family = "wasm"))]
 #[cfg(test)]
 mod tests {
     use super::*;

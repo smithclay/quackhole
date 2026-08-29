@@ -203,9 +203,20 @@ when present.
 
 ## Platforms
 
-Native macOS, Linux and Windows. Not WebAssembly: iroh needs UDP sockets and a real async
-reactor. A browser client is possible today with an XHR shim plus an iroh worker (iroh in the
-browser is relay-only but still end-to-end encrypted); that is not part of this extension yet.
+The *extension* is native macOS, Linux and Windows only, and always will be: DuckDB-Wasm
+loads extensions as raw side modules with no accompanying JS glue, so a wasm build could
+never reach JavaScript, which is where an iroh endpoint has to live in a browser.
+
+Browsers are supported anyway, by not being an extension. duckdb-wasm's HTTP transport is
+`new XMLHttpRequest` resolved off the worker global at call time, so replacing
+`globalThis.XMLHttpRequest` inside the DuckDB worker replaces the transport. See
+`test/browser/` for a working client that queries an unmodified `quackhole_serve`.
+
+Two consequences worth knowing. A browser can only ever be a *client* — `quack_serve` itself
+throws `NotImplementedException` on wasm. And a browser can only ever *relay*: iroh compiles
+its IP transport out entirely under `cfg(wasm_browser)` because a browser cannot open a UDP
+socket, so there is no hole punching and no direct path. Traffic stays end-to-end encrypted
+regardless; the relay forwards ciphertext it cannot read.
 
 ## License
 

@@ -1,11 +1,15 @@
 //! Outbound side: one cached QUIC connection per peer, one bi-stream per request.
 
-use crate::{parse_endpoint_id, record_peer, Core, PeerMap, ALPN};
+use crate::{record_peer, PeerMap, ALPN};
 use anyhow::{Context, Result};
 use iroh::endpoint::Connection;
-use iroh::{Endpoint, EndpointId};
+use iroh::{Endpoint, EndpointAddr, EndpointId};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
+#[cfg(not(target_family = "wasm"))]
+use crate::{parse_endpoint_id, Core};
+#[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
 
 /// Cap on a single buffered response. Quack's fetch loop is bounded by
@@ -48,17 +52,25 @@ impl ConnCache {
         }
     }
 
+    /// Connect to `addr`, reusing a cached connection when there is one.
+    ///
+    /// Takes a full `EndpointAddr` rather than a bare id so a caller that
+    /// already knows the peer's relay can say so. Address lookup is a network
+    /// round trip to a third party that also has to have seen the peer publish
+    /// -- fine on a laptop that can wait, but a browser handed a paste-ready
+    /// connection string already has the answer.
     async fn get_or_connect(
         &self,
         endpoint: &Endpoint,
-        id: EndpointId,
+        addr: EndpointAddr,
         peers: &PeerMap,
     ) -> Result<Connection> {
+        let id = addr.id;
         if let Some(conn) = self.get(&id) {
             return Ok(conn);
         }
         let conn = endpoint
-            .connect(id, ALPN)
+            .connect(addr, ALPN)
             .await
             .with_context(|| format!("failed to connect to endpoint {id}"))?;
         self.put(id, conn.clone());
@@ -122,6 +134,47 @@ async fn round_trip(conn: &Connection, req: &[u8]) -> Attempt {
     }
 }
 
+/// One request/response exchange, including the redial-once policy.
+///
+/// Target-agnostic on purpose: native DuckDB drives this from a tokio runtime
+/// and the browser drives it from the JS event loop, but the wire behaviour --
+/// and therefore what a server has to understand -- is identical.
+pub async fn request_async(
+    endpoint: &Endpoint,
+    cache: &ConnCache,
+    peers: &PeerMap,
+    addr: EndpointAddr,
+    req: &[u8],
+) -> Result<Vec<u8>> {
+    let id = addr.id;
+    let reused = cache.get(&id).is_some();
+    let conn = cache.get_or_connect(endpoint, addr.clone(), peers).await?;
+    let (conn, body) = match round_trip(&conn, req).await {
+        Attempt::Response(body) => (conn, body),
+        // A cached connection can be dead (peer restarted, idle timeout).
+        // Redial once -- but only when the request cannot have reached the
+        // peer, because Quack carries INSERTs and DDL, and replaying those
+        // would apply them twice.
+        Attempt::BeforeSend(_) if reused => {
+            cache.invalidate(&id);
+            let conn = cache.get_or_connect(endpoint, addr, peers).await?;
+            match round_trip(&conn, req).await {
+                Attempt::Response(body) => (conn, body),
+                Attempt::BeforeSend(err) | Attempt::AfterSend(err) => return Err(err),
+            }
+        }
+        Attempt::BeforeSend(err) | Attempt::AfterSend(err) => {
+            cache.invalidate(&id);
+            return Err(err);
+        }
+    };
+    // Sampled after every round trip rather than once at connect, so an upgrade
+    // from relay to direct shows up in quackhole_status().
+    record_peer(peers, id, observed_path(&conn), "out");
+    Ok(body)
+}
+
+#[cfg(not(target_family = "wasm"))]
 impl Core {
     /// Blocking request/response over iroh. Called from a DuckDB worker thread.
     pub fn request(&self, endpoint_id: &str, req: &[u8], timeout: Duration) -> Result<Vec<u8>> {
@@ -131,35 +184,12 @@ impl Core {
         let peers = self.peers.clone();
 
         self.runtime()?.block_on(async move {
-            tokio::time::timeout(timeout, async move {
-                let reused = cache.get(&id).is_some();
-                let conn = cache.get_or_connect(&endpoint, id, &peers).await?;
-                let (conn, body) = match round_trip(&conn, req).await {
-                    Attempt::Response(body) => (conn, body),
-                    // A cached connection can be dead (peer restarted, idle
-                    // timeout). Redial once -- but only when the request cannot
-                    // have reached the peer, because Quack carries INSERTs and
-                    // DDL, and replaying those would apply them twice.
-                    Attempt::BeforeSend(_) if reused => {
-                        cache.invalidate(&id);
-                        let conn = cache.get_or_connect(&endpoint, id, &peers).await?;
-                        match round_trip(&conn, req).await {
-                            Attempt::Response(body) => (conn, body),
-                            Attempt::BeforeSend(err) | Attempt::AfterSend(err) => return Err(err),
-                        }
-                    }
-                    Attempt::BeforeSend(err) | Attempt::AfterSend(err) => {
-                        cache.invalidate(&id);
-                        return Err(err);
-                    }
-                };
-                // Sampled after every round trip rather than once at connect, so
-                // an upgrade from relay to direct shows up in quackhole_status().
-                record_peer(&peers, id, observed_path(&conn), "out");
-                Ok(body)
-            })
-            .await
-            .context("request timed out")?
+            // No relay hint: the native side has always resolved by lookup and
+            // there is no reason to change that.
+            let addr = EndpointAddr::new(id);
+            tokio::time::timeout(timeout, request_async(&endpoint, &cache, &peers, addr, req))
+                .await
+                .context("request timed out")?
         })
     }
 }

@@ -8,8 +8,10 @@ so replacing `globalThis.XMLHttpRequest` inside the DuckDB worker replaces the
 transport, and the native `quackhole_serve` works unmodified on the other end.
 
     npm install
-    node run.mjs direct    # step 1
-    node run.mjs bridge    # step 2
+    ./build-wasm.sh              # only needed for iroh mode
+    node run.mjs direct         # step 1
+    node run.mjs bridge         # step 2
+    node run.mjs iroh           # step 3
 
 ## Steps
 
@@ -19,7 +21,7 @@ Each step can only fail for one reason, which is the point of splitting them.
 |---|---|---|
 | 1. plain HTTP | wasm quack's client path works at all | **PASS** |
 | 2. blocking bridge | `Atomics.wait` can serve a synchronous XHR | **PASS** |
-| 3. iroh | the bridge's far end can be an iroh endpoint | pending |
+| 3. iroh | the bridge's far end can be an iroh endpoint | **PASS** |
 
 ### Step 1 — `npm test`
 
@@ -62,6 +64,44 @@ Two things the harness checks that are easy to get wrong:
   the 200k-row scan spans many chunks. At the default 8 MiB nothing would ever
   chunk and that code would be dead.
 
+### Step 3 — `node run.mjs iroh`
+
+The real thing. The server is an unmodified `quackhole_serve` — the same one the
+native cross-network test uses — and the browser reaches it over an iroh relay.
+
+The wasm client is `crates/quackhole-web`, a thin wasm-bindgen wrapper. The
+connection cache, the redial-once policy and the stream framing all come from
+`quackhole-core`, so the bytes on the wire are the ones the native extension
+sends. That is what lets the server be unmodified, and it is the main reason to
+prefer this over a bespoke browser protocol.
+
+Measured over a live n0 relay:
+
+| | direct (loopback) | iroh (relay) |
+|---|---|---|
+| ATTACH (3 POSTs) | 22ms | ~570ms |
+| `count(*)` | 7ms | ~110ms |
+| point lookup | 5ms | ~180ms |
+| 200k-row scan (10 fetches) | 23ms | ~2.5s |
+
+Comparable to the native relay numbers in `test/docker`, which is the expected
+result: the transport is the same, only the client language differs.
+
+**Browsers can only ever relay.** iroh compiles its entire IP transport out under
+`cfg(wasm_browser)` (`socket/transports.rs:31`) because a browser cannot open a
+UDP socket. Traffic stays end-to-end encrypted — the relay forwards ciphertext it
+cannot read — but there is no hole punching and no direct path, ever. The harness
+asserts `peer_path = relay` from the *server's* `quackhole_status()` rather than
+inferring it from the cfg.
+
+**The relay URL is passed explicitly**, alongside the endpoint id. Without it iroh
+must resolve the peer through pkarr over HTTPS, which is a round trip to a third
+party that also has to have seen the peer publish — a server that started seconds
+ago routinely has not propagated yet, and the first attempt fails with "All
+address lookup services failed". Since the relay URL travels with the endpoint id
+in the connection string a user pastes, the browser already has it. This is what
+iroh tickets do.
+
 ## Notes
 
 - The page is bundled with esbuild because duckdb-wasm's ESM entry point imports
@@ -75,3 +115,7 @@ Two things the harness checks that are easy to get wrong:
 - `quack_serve` throws `NotImplementedException` on wasm
   (`quack_start_stop.cpp:19`), so a browser can only ever be a client. That matches
   the topology we want anyway.
+- `build-wasm.sh` needs Homebrew LLVM: Apple clang cannot target
+  `wasm32-unknown-unknown` and `ring` needs a C compiler that can.
+- The bridge worker is a module worker (the wasm glue is an ES module); the DuckDB
+  worker above it stays classic, because it needs `importScripts`.
