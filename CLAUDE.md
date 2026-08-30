@@ -30,9 +30,9 @@ what those cannot; see the READMEs.
 
 ## Things that are easy to get wrong
 
-- **`.clang-format` and `.clang-tidy` are committed symlinks** into the duckdb
-  submodule. CI's format-check never builds, so nothing recreates them there;
-  un-ignoring them is what makes local and CI agree.
+- **`.clang-format`, `.clang-tidy` and `.editorconfig` are committed symlinks**
+  into the duckdb submodule. CI's format-check never builds, so nothing
+  recreates them there; un-ignoring them is what makes local and CI agree.
 - **clang-format must be exactly 11.0.1.** Newer releases disagree about line
   breaking and CI rejects the result. `prek` pins it.
 - **HTTP framing lives in `crates/quackhole-core/src/http.rs`**, not in the C++

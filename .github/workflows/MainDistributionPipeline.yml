@@ -3,9 +3,21 @@
 #
 name: Main Extension Distribution Pipeline
 on:
+  # Prose-only changes skip the five-platform matrix, which otherwise spends
+  # ~5 minutes per arch rebuilding DuckDB to prove a README still parses.
+  # web/ and test/ are deliberately absent: both are code the matrix covers.
   push:
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' && github.sha || '' }}
