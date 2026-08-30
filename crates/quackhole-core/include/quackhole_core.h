@@ -35,6 +35,16 @@ extern "C" {
 //! Buffer size that always fits an endpoint id in either encoding, plus NUL.
 //! z-base-32 is 52 chars, hex is 64.
 #define QH_ENDPOINT_ID_LEN 80
+//! Fits "quack:<z-base-32>.iroh:9494" and "qh_<z-base-32>", plus NUL.
+#define QH_ADDRESS_LEN     96
+#define QH_SECRET_NAME_LEN 64
+//! A relay URL, and a token as long as anyone sensibly passes to `token :=`.
+#define QH_RELAY_URL_LEN 512
+#define QH_TOKEN_LEN     512
+//! A ticket carrying all three of the above, base64'd. Generous on purpose:
+//! these calls refuse rather than truncate, and a truncated ticket would be a
+//! valid-looking one that dials nowhere.
+#define QH_TICKET_LEN 2048
 
 //! Return codes. Negative values are failures.
 #define QH_OK  0
@@ -79,6 +89,81 @@ void qh_core_free(QhCore *core, uint64_t deadline_ms);
 //!
 //! Returns QH_OK, or QH_ERR if `out_len` is too small.
 int qh_endpoint_id(const QhCore *core, bool z32, char *out, size_t out_len);
+
+//===--------------------------------------------------------------------===//
+// Peer identity
+//===--------------------------------------------------------------------===//
+//
+// Endpoint id, relay and token, and every spelling derived from them. None of
+// these take a core: peer identity is arithmetic on strings, and the caller
+// needs it in places where no endpoint is bound and binding one as a side
+// effect would be a surprise.
+//
+// These exist here for the same reason the HTTP framing does. Both clients
+// link this library, so a shape defined here cannot drift; the same shapes
+// written out in C++ and again in JavaScript already had.
+//
+// All of them refuse rather than truncate. A short endpoint id is a different,
+// valid-looking address.
+
+//! Mint a ticket: `qh1_` + base64url of {"e": id, "r": relay, "t": token}.
+//!
+//! One token with no spaces, so it survives a copy out of a terminal and a
+//! paste into an input without a half-selection truncating it quietly.
+//!
+//! Fails when `relay_url` is empty or NULL. A ticket without a relay sends its
+//! holder to pkarr -- a round trip to a third party that must also have seen
+//! this endpoint publish, which a server started seconds ago routinely has not
+//! -- so it fails on the first click. No ticket beats a broken one.
+//!
+//! `out` should be QH_TICKET_LEN bytes. Returns QH_OK, or QH_ERR with `err`.
+int qh_ticket_mint(const char *endpoint_id, const char *relay_url, const char *token, char *out, size_t out_len,
+                   char *err, size_t err_len);
+
+//! Read a ticket back into its three parts.
+//!
+//! Generous about what arrives -- people paste the surrounding quotes, the
+//! shell prompt, or the whole line -- so the first `qh1_…` in the text is used.
+//! Errors are written for the person holding the ticket, because that is who
+//! reads them, in a browser's error slot and in a DuckDB error alike.
+//!
+//! Buffers should be QH_ENDPOINT_ID_LEN, QH_RELAY_URL_LEN and QH_TOKEN_LEN.
+//! Writes all three or none: an id without its token would attach and then fail
+//! authentication, which reads as a server problem rather than a short buffer.
+int qh_ticket_parse(const char *ticket, char *id_out, size_t id_len, char *relay_out, size_t relay_len, char *token_out,
+                    size_t token_len, char *err, size_t err_len);
+
+//! The address a client dials: `quack:<endpoint-id>.iroh:9494`.
+//!
+//! ATTACH and the secret's SCOPE have to agree on this string exactly, or the
+//! token is filed under a path nothing attaches to and the failure reads
+//! `Could not find a Quack authentication token` rather than as a typo. One
+//! function is what makes them unable to disagree.
+//!
+//! The id is normalised to z-base-32 whatever form it arrives in -- hex is 64
+//! characters where a DNS label allows 63. `out` should be QH_ADDRESS_LEN.
+int qh_peer_address(const char *endpoint_id, char *out, size_t out_len, char *err, size_t err_len);
+
+//! A DuckDB identifier naming this peer's secret: `qh_<endpoint-id>`.
+//!
+//! Derived rather than fixed, because an unnamed quack secret is really
+//! `__default_quack`: a second CREATE SECRET fails on the name whatever its
+//! scope says. The prefix is not decoration -- z-base-32 includes digits, so a
+//! bare id is not always a valid unquoted identifier.
+//!
+//! `out` should be QH_SECRET_NAME_LEN bytes.
+int qh_peer_secret_name(const char *endpoint_id, char *out, size_t out_len, char *err, size_t err_len);
+
+//! The endpoint id in an `<id>.iroh` address, or QH_ERR if it is not one.
+//!
+//! Accepts a bare hostname, a host:port, or a full URL with a scheme and path.
+//! Deliberately lexical: it does not check that the id is a real key, because a
+//! `.iroh` host with a broken id must still be recognised as ours -- otherwise
+//! it falls through to httpfs and fails at getaddrinfo instead of saying what
+//! is wrong. Validation happens at dial time, in qh_request.
+//!
+//! `out` should be QH_ENDPOINT_ID_LEN bytes.
+int qh_address_endpoint_id(const char *address, char *out, size_t out_len);
 
 //===--------------------------------------------------------------------===//
 // Serving

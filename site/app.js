@@ -10,7 +10,6 @@
 // because they are the same files.
 import * as duckdb from '@duckdb/duckdb-wasm';
 import { createWire } from './wire.js';
-import { decodeTicket } from './ticket.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -37,10 +36,16 @@ function setRestingStatus() {
 
 const sqlString = (s) => `'${String(s).replaceAll("'", "''")}'`;
 
-// The one place the quack URL shape is written. ATTACH and the secret's SCOPE
-// have to agree on it exactly or the token is looked up under a path nothing
-// attaches to, and the failure reads as "no token" rather than as a typo.
-const quackUrl = (endpointId) => `quack:${endpointId}.iroh:9494`;
+/// Read a ticket, using the transport's own decoder.
+///
+/// Imported at runtime rather than bundled: `web/` is copied in verbatim, and
+/// this is the page reaching into the client it ships rather than keeping a
+/// second copy of it. The address, the secret name and the ticket format are
+/// all the extension's, so there is nothing here for them to drift against.
+const decodeTicket = async (input) => {
+  const { parseTicket } = await import(/* @vite-ignore */ asset('peer.js'));
+  return parseTicket(input);
+};
 
 // --- what to run on the other machine ---------------------------------------
 
@@ -165,7 +170,7 @@ async function bootLocal() {
 // page's real beginning.
 const connections = [{ name: 'memory', kind: 'local', detail: 'duckdb-wasm, this tab' }];
 
-/// The catalog name a remote gets attached as, and the name of its secret.
+/// The catalog name a remote gets attached as.
 ///
 /// Auto-named rather than asked for, because the link from `quackhole_serve`
 /// carries no name and a dialog that demands one before it will connect is a
@@ -303,8 +308,8 @@ function addWire(conn) {
 }
 
 /// Attach a remote described by a ticket, into the session that already exists.
-async function addRemote(ticket) {
-  const { endpointId, relayUrl, token } = ticket;
+async function addRemote(peer) {
+  const { endpointId, relayUrl, token } = peer;
 
   // Attaching the same laptop twice would work and would be a lie: two catalog
   // names over one connection, listed as if they were two machines.
@@ -313,6 +318,9 @@ async function addRemote(ticket) {
 
   const conn = {
     name: uniqueName('laptop'),
+    // Named after the peer, not after the catalog: that is the name the
+    // extension prints too, so the two sides of the demo spell one thing once.
+    secretName: peer.secretName,
     kind: 'remote',
     endpointId,
     relayUrl,
@@ -330,19 +338,23 @@ async function addRemote(ticket) {
     // hand the first remote's token to a different machine. Quack resolves the
     // secret by the ATTACH path, so the scope is what routes the right token to
     // the right laptop -- a secret scoped elsewhere is not found at all.
+    //
+    // Both strings come off the peer, which is what makes them the same string:
+    // a scope that disagrees with the ATTACH path by one character fails as
+    // "Could not find a Quack authentication token".
     if (token) {
       await session.conn.query(
-        `CREATE SECRET ${conn.name} (TYPE quack, TOKEN ${sqlString(token)}, SCOPE ${sqlString(quackUrl(endpointId))})`,
+        `CREATE SECRET ${conn.secretName} (TYPE quack, TOKEN ${sqlString(token)}, SCOPE ${sqlString(peer.address)})`,
       );
     }
     const t0 = performance.now();
-    await session.conn.query(`ATTACH ${sqlString(quackUrl(endpointId))} AS ${conn.name}`);
+    await session.conn.query(`ATTACH ${sqlString(peer.address)} AS ${conn.name}`);
     conn.attachMs = performance.now() - t0;
   } catch (err) {
     conn.wire.setState('failed');
     conn.el.remove();
     if (!$('#wire-list').children.length) $('#wire-panel').hidden = true;
-    await session.conn.query(`DROP SECRET IF EXISTS ${conn.name}`).catch(() => {});
+    await session.conn.query(`DROP SECRET IF EXISTS ${conn.secretName}`).catch(() => {});
     throw err;
   }
 
@@ -355,8 +367,8 @@ async function addRemote(ticket) {
 
 /// Detach a remote and give its name back.
 ///
-/// The secret goes with it, so the name is free to be reused -- otherwise the
-/// next `CREATE SECRET laptop` fails on a laptop that is no longer here.
+/// The secret goes with it, so re-attaching the same laptop later works --
+/// otherwise its `CREATE SECRET` would collide with the one left behind.
 ///
 /// The rail is not edited here: refreshSchema reconciles it against
 /// duckdb_databases(), which is the same path a hand-typed DETACH takes. Two
@@ -366,7 +378,7 @@ async function dropRemote(conn) {
   // should keep saying so -- which is better feedback than an exception nobody
   // sees.
   await session.conn.query(`DETACH ${conn.name}`).catch(() => {});
-  await session.conn.query(`DROP SECRET IF EXISTS ${conn.name}`).catch(() => {});
+  await session.conn.query(`DROP SECRET IF EXISTS ${conn.secretName}`).catch(() => {});
   await refreshSchema();
 }
 
@@ -553,7 +565,7 @@ $('#paste-form').addEventListener('submit', async (e) => {
   const btn = $('#paste-go');
   btn.disabled = true;
   try {
-    const conn = await addRemote(decodeTicket($('#ticket').value));
+    const conn = await addRemote(await decodeTicket($('#ticket').value));
     pasteNote.textContent =
       `Attached in ${Math.round(conn.attachMs)}ms as "${conn.name}".` +
       ' That is three round trips through the relay.';

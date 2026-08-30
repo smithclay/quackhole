@@ -33,8 +33,6 @@ void ParseProtoHostPort(const string &proto_host_port, string &host_out, string 
 	}
 }
 
-constexpr const char *IROH_SUFFIX = ".iroh";
-
 //! Owns a QhResponse for the duration of a round trip.
 //!
 //! The core parses; this borrows the result only long enough to marshal it into
@@ -82,21 +80,17 @@ unique_ptr<HTTPResponse> BuildResponse(uint16_t status, string reason, HTTPHeade
 } // namespace
 
 bool IsIrohHost(const string &proto_host_port) {
-	string host, port;
-	ParseProtoHostPort(proto_host_port, host, port);
-	if (host.empty()) {
-		return false;
-	}
-	return StringUtil::EndsWith(StringUtil::Lower(host), IROH_SUFFIX);
+	return !ExtractEndpointId(proto_host_port).empty();
 }
 
 string ExtractEndpointId(const string &proto_host_port) {
-	string host, port;
-	ParseProtoHostPort(proto_host_port, host, port);
-	if (!StringUtil::EndsWith(StringUtil::Lower(host), IROH_SUFFIX)) {
+	// The core reads the address, here and in the browser both -- it strips the
+	// scheme, the path and the port itself, so this hands over the whole string.
+	char buffer[QH_ENDPOINT_ID_LEN] = {0};
+	if (qh_address_endpoint_id(proto_host_port.c_str(), buffer, sizeof(buffer)) != QH_OK) {
 		return string();
 	}
-	return host.substr(0, host.size() - strlen(IROH_SUFFIX));
+	return string(buffer);
 }
 
 //===--------------------------------------------------------------------===//

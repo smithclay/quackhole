@@ -19,6 +19,11 @@ bool IsIrohHost(const string &proto_host_port);
 
 //! The endpoint id from a .iroh host -- everything before the final ".iroh".
 //! Empty if `proto_host_port` is not an iroh host.
+//!
+//! Both of these are `qh_address_endpoint_id` in the core, which is also what
+//! the browser bridge resolves a peer with. The convention was written out here
+//! and again in JavaScript before, which is one place too many for a shape that
+//! decides where a query goes.
 string ExtractEndpointId(const string &proto_host_port);
 
 //! Install QuackholeHTTPUtil as the database's HTTP util, wrapping whatever is

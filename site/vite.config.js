@@ -98,11 +98,14 @@ function serveGenerated(server, body) {
 // to assets/ and silently stop it controlling the page. That one lives in
 // public/ for the same reason.
 const VERBATIM = {
-  // The browser client. These four are what web/README.md documents.
+  // The browser client. These five are what web/README.md documents.
   'protocol.js': join(WEB, 'protocol.js'),
   'shim.js': join(WEB, 'shim.js'),
   'qh-worker.js': join(WEB, 'qh-worker.js'),
   'bridge-worker.js': join(WEB, 'bridge-worker.js'),
+  // Imported by the bridge, and at runtime by app.js -- which is what keeps
+  // the page from carrying its own copy of the ticket format.
+  'peer.js': join(WEB, 'peer.js'),
 
   // The iroh transport, from web/build-wasm.sh. Gitignored, so a fresh
   // checkout never has it.

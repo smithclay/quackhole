@@ -20,7 +20,16 @@ resolved off the worker global *at call time*, so replacing
 | `shim.js` | The `XMLHttpRequest` replacement, and the blocking half of the bridge. |
 | `bridge-worker.js` | The async half: owns the iroh endpoint, answers over shared memory. |
 | `protocol.js` | The shared-memory layout and budgets. Loaded by both halves. |
-| `wasm/` | Built from `crates/quackhole-web` — iroh, plus the framing from the core. |
+| `peer.js` | Ticket, address and secret name, from the core. Loads `wasm/` on demand. |
+| `wasm/` | Built from `crates/quackhole-web` — iroh, plus the framing and peer identity from the core. |
+
+`peer.js` exists for the same reason `protocol.js` does, one level up. A ticket,
+the `quack:<id>.iroh:9494` address and the name of the secret that authenticates
+against it are all derived from one endpoint id, and none of those shapes is
+obvious — which fields a ticket may omit, what a missing relay means, that
+`ATTACH` and the secret's `SCOPE` have to be character-for-character the same
+string. They were written out here as well as in the extension's C++, so this
+now asks the core, which is also what mints them.
 
 `crates/` is a Cargo workspace, so the browser and native builds resolve their
 dependencies together. That is the point of it: independent lockfiles would let

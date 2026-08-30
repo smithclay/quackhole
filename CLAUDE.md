@@ -49,12 +49,19 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
 - **Paths inside `web/` must stay relative.** `site/` is a *project* Pages site
   served under `/quackhole/`, so a leading `/` resolves to github.io itself.
   `test/browser` serves from the root and hides this, so it passes either way.
-- **The extension is the only thing that mints a ticket.** `MintTicket` in
-  `src/quackhole_extension.cpp` builds it; `site/ticket.js` decodes it; nothing
-  else may encode one. It exists because `attach_sql` omits the relay URL,
-  which a browser cannot do without. The shell script and the page's by-hand
-  SQL each used to hand-roll the format, which meant three encoders agreeing on
-  a shape none of them owned.
+- **Peer identity lives in `crates/quackhole-core/src/peer.rs`**, and is bound
+  twice: over the C ABI (`qh_ticket_mint`, `qh_ticket_parse`, `qh_peer_address`,
+  `qh_peer_secret_name`, `qh_address_endpoint_id`) and over wasm-bindgen as
+  `Peer`, reached from JavaScript through `web/peer.js`. The ticket format, the
+  `quack:<id>.iroh:9494` address and the `qh_<id>` secret name are all derived
+  from one endpoint id, and all three used to be spelled out in the C++ and
+  again in the browser. Same trade as the HTTP framing above: both clients link
+  the crate, so a shape defined there cannot drift.
+- **The ticket exists because a browser needs the relay URL.** `attach_sql`
+  carries the endpoint id and the token but not the relay, and without it iroh
+  resolves through pkarr, which routinely has not seen a server this new. The
+  shell script and the page's by-hand SQL each used to hand-roll the format,
+  which meant three encoders agreeing on a shape none of them owned.
 - **`quackhole_serve` blocks until the endpoint learns its home relay**, up to
   `quackhole_relay_wait_ms` (default 10s), because a ticket minted before then
   omits the relay and sends the browser to pkarr, which routinely has not seen

@@ -7,6 +7,7 @@
 
 mod dial;
 mod http;
+mod peer;
 // Native-only: the C ABI exists for DuckDB, and a browser cannot serve --
 // quack_serve itself throws NotImplementedException on wasm.
 #[cfg(not(target_family = "wasm"))]
@@ -16,6 +17,7 @@ mod serve;
 
 pub use dial::{ConnCache, request_async};
 pub use http::{Request, Response, build_request, parse_response};
+pub use peer::{Peer, QUACK_PORT};
 
 use anyhow::{Context, Result};
 use iroh::EndpointId;

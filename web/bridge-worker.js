@@ -9,6 +9,7 @@
 // Side-effect import: protocol.js assigns to globalThis, so one file serves
 // both this module and the shim's classic script.
 import './protocol.js';
+import { transport } from './peer.js';
 
 const P = globalThis.QH_PROTO;
 
@@ -17,6 +18,10 @@ let data = null;
 let mode = 'fetch';
 let client = null;
 let fault = null;
+// The transport module, in iroh mode. It owns the address shape as well as the
+// dial, so the peer a request names is read out of the hostname by the same
+// code the extension uses -- this file used to slice the label off itself.
+let wasm = null;
 
 // The relay to use when a peer is not in the map below. `?relay=` on the worker
 // URL sets it, which is all a single-remote page needs -- test/browser has only
@@ -64,8 +69,8 @@ function fail(message) {
 
 async function performIroh(req) {
   const u = new URL(req.url);
-  if (!u.hostname.endsWith('.iroh')) throw new Error(`not an iroh host: ${u.hostname}`);
-  const peer = u.hostname.slice(0, -'.iroh'.length);
+  const peer = wasm.Peer.parseAddress(u.hostname);
+  if (!peer) throw new Error(`not an iroh host: ${u.hostname}`);
 
   // duckdb-wasm renames Host to X-Host-Override, because a browser may not set
   // Host on an XHR. Drop it rather than translating it back: the core builds the
@@ -148,8 +153,7 @@ self.onmessage = async (ev) => {
     }
     try {
       if (mode === 'iroh') {
-        const wasm = await import('./wasm/quackhole.js');
-        await wasm.default();
+        wasm = await transport();
         client = await wasm.connect();
         console.log(`[qh-bridge] iroh endpoint ${client.endpointId()}`);
       }

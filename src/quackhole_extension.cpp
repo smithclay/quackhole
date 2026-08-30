@@ -4,7 +4,6 @@
 
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
-#include "duckdb/common/types/blob.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/database.hpp"
@@ -116,71 +115,29 @@ string RelayUrlWait(DatabaseInstance &db, QhCore *core) {
 	return string(buffer);
 }
 
-//! base64url, as the ticket carries it: the two non-URL-safe alphabet
-//! characters swapped and the padding dropped, so the whole ticket survives a
-//! URL fragment untouched. site/ticket.js decodes exactly this.
-string Base64Url(const string &input) {
-	auto encoded = Blob::ToBase64(string_t(input));
-	string result;
-	result.reserve(encoded.size());
-	for (auto c : encoded) {
-		if (c == '+') {
-			result += '-';
-		} else if (c == '/') {
-			result += '_';
-		} else if (c != '=') {
-			result += c;
-		}
+//! `quack:<endpoint-id>.iroh:9494`, from the core.
+//!
+//! ATTACH and the secret's SCOPE have to agree on this string exactly or the
+//! token is filed under a path nothing attaches to, and the failure reads as
+//! "Could not find a Quack authentication token" rather than as a typo. Neither
+//! is spelled here, or in `site/app.js`, or in the bridge: one function owns it.
+string PeerAddress(const string &endpoint_id) {
+	char buffer[QH_ADDRESS_LEN] = {0};
+	char err[QH_ERR_LEN] = {0};
+	if (qh_peer_address(endpoint_id.c_str(), buffer, sizeof(buffer), err, sizeof(err)) != QH_OK) {
+		throw InternalException("quackhole: %s", err);
 	}
-	return result;
+	return string(buffer);
 }
 
-//! `qh1_` + base64url of {"e": endpoint id, "r": relay, "t": token}.
-//!
-//! This is the only place the ticket is minted. It used to be spelled out in
-//! the demo script and again in the page's by-hand SQL, which meant three
-//! encoders that had to agree on a format none of them owned.
-//!
-//! Returns "" when there is no relay to put in it: a ticket without one sends
-//! the browser to pkarr and fails on the first click, so no ticket beats a
-//! broken one.
-//! The address a client dials, written once.
-//!
-//! ATTACH and the secret's SCOPE below have to agree on this string exactly or
-//! the token is filed under a path nothing attaches to, and the failure reads
-//! as "Could not find a Quack authentication token" rather than as a typo.
-//! `site/app.js` has the same one-liner for the same reason.
-string QuackUrl(const string &endpoint_id) {
-	return "quack:" + endpoint_id + ".iroh:9494";
-}
-
-//! A DuckDB identifier naming the secret for one peer.
-//!
-//! Derived from the endpoint id rather than fixed, so two of these strings
-//! pasted into one DuckDB do not collide: an unnamed quack secret is really
-//! `__default_quack`, and a second CREATE SECRET fails on the name whatever its
-//! scope says. The prefix is not decoration -- z-base-32 includes digits, so a
-//! bare endpoint id is not always a valid unquoted identifier.
-string SecretName(const string &endpoint_id) {
-	return "qh_" + endpoint_id;
-}
-
-string MintTicket(const string &endpoint_id, const string &relay_url, const string &token) {
-	if (relay_url.empty()) {
-		return string();
+//! The DuckDB identifier naming one peer's secret, from the core.
+string PeerSecretName(const string &endpoint_id) {
+	char buffer[QH_SECRET_NAME_LEN] = {0};
+	char err[QH_ERR_LEN] = {0};
+	if (qh_peer_secret_name(endpoint_id.c_str(), buffer, sizeof(buffer), err, sizeof(err)) != QH_OK) {
+		throw InternalException("quackhole: %s", err);
 	}
-	// endpoint ids are z-base-32 and relays are URLs, but the token is whatever
-	// the caller passed to token :=, so it is the one field that can carry a
-	// quote or a backslash into the JSON.
-	string escaped;
-	escaped.reserve(token.size());
-	for (auto c : token) {
-		if (c == '"' || c == '\\') {
-			escaped += '\\';
-		}
-		escaped += c;
-	}
-	return "qh1_" + Base64Url("{\"e\":\"" + endpoint_id + "\",\"r\":\"" + relay_url + "\",\"t\":\"" + escaped + "\"}");
+	return string(buffer);
 }
 
 //===--------------------------------------------------------------------===//
@@ -293,14 +250,23 @@ void QuackholeServeFunction(ClientContext &context, TableFunctionInput &data_p, 
 	// remote` alias is still fixed, and a second one collides loudly on the
 	// catalog name rather than quietly on the token; renaming it is a one-word
 	// edit that the scope survives.
-	auto quack_url = QuackUrl(endpoint_id);
-	auto attach_sql = "CREATE SECRET " + SecretName(endpoint_id) + " (TYPE quack, TOKEN '" + effective_token +
+	auto quack_url = PeerAddress(endpoint_id);
+	auto attach_sql = "CREATE SECRET " + PeerSecretName(endpoint_id) + " (TYPE quack, TOKEN '" + effective_token +
 	                  "', SCOPE '" + quack_url + "'); ATTACH '" + quack_url + "' AS remote;";
 
 	// Wait, rather than read once: a link is the whole point of this function's
 	// output now, and a link minted before the relay is known does not work.
 	auto relay = RelayUrlWait(db, core);
-	auto ticket = MintTicket(endpoint_id, relay, effective_token);
+	// Left empty when no relay arrived: a ticket without one sends the browser to
+	// pkarr and fails on the first click, so ticket and url go NULL below rather
+	// than carrying a link that cannot work.
+	string ticket;
+	char ticket_buffer[QH_TICKET_LEN] = {0};
+	char ticket_err[QH_ERR_LEN] = {0};
+	if (qh_ticket_mint(endpoint_id.c_str(), relay.c_str(), effective_token.c_str(), ticket_buffer,
+	                   sizeof(ticket_buffer), ticket_err, sizeof(ticket_err)) == QH_OK) {
+		ticket = string(ticket_buffer);
+	}
 
 	string url;
 	if (!ticket.empty()) {

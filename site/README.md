@@ -22,7 +22,7 @@ Three things make this a usable loop rather than a fast one:
 
 - **Editing `styles.css` does not restart DuckDB.** The stylesheet is swapped in
   place, so an attached remote and a notebook full of results survive it. Only
-  `app.js`, `wire.js`, `ticket.js` and the files under `web/` force a reload —
+  `app.js`, `wire.js` and the files under `web/` force a reload —
   they own workers and a wasm session, and hot-swapping a module that spawned a
   worker leaves the old one running.
 - **The ticket lives in the fragment, and the fragment survives a reload.** Open
@@ -88,19 +88,19 @@ So `quackhole_serve` waits for the home relay and mints a ticket:
 no spaces, so a half-selected copy fails loudly rather than truncating quietly.
 Its `url` column wraps that in a link to this page.
 
-**The extension is the only encoder.** `MintTicket` in
-`src/quackhole_extension.cpp` builds it and [`ticket.js`](ticket.js) decodes it.
-The shell script and the by-hand SQL used to hand-roll the format too, which
-meant three encoders agreeing on a shape none of them owned.
+**`crates/quackhole-core` is the only implementation.** It mints the ticket for
+the extension and reads it back for this page, over `web/peer.js`. Both clients
+link the same crate, so there is nothing here to drift: the address this page
+ATTACHes and the scope it files the token under are one function call, not two
+strings that have to match.
 
 ## Files
 
 | | |
 |---|---|
 | `index.html` | The workbench shell, plus the onboarding and notes dialogs |
-| `app.js` | The DuckDB-Wasm boot, the connection list, the notebook, the dialogs |
+| `app.js` | The DuckDB-Wasm boot, the connection list, the notebook, the dialogs. Reads tickets through `web/peer.js` |
 | `wire.js` | The topology diagram, one per remote. Opens broken; pulses per query at the measured latency |
-| `ticket.js` | Ticket decode. The only encoder is `MintTicket` in the extension |
 | `styles.css` | Yellow is DuckDB, periwinkle is iroh. Nothing else is coloured |
 | `public/coi-serviceworker.js` | See below. In `public/` so it ships unhashed at the root — it registers itself by its own URL, so a move into `assets/` would scope it there |
 | `vite.config.js` | The build. Vite owns `index.html`, `styles.css` and `app.js`; two plugins own the verbatim copies and the fonts |
