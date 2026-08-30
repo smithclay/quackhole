@@ -112,33 +112,16 @@ const DUCKDB_BUNDLES = {
   eh: { mainModule: asset('duckdb/duckdb-eh.wasm'), mainWorker: asset('duckdb/duckdb-browser-eh.worker.js') },
 };
 
-// Named per session so two tabs do not update each other's peer map. The bridge
-// joins the same channel and answers peer registrations on it.
-const CHANNEL = `qh-${crypto.randomUUID()}`;
-const channel = new BroadcastChannel(CHANNEL);
-
 let session = null;
 
-/// Register a peer's relay with the bridge, and wait for it to say so.
+/// Tell the transport which relay reaches a peer.
 ///
-/// The ATTACH that follows travels a different path -- DuckDB worker, shim,
-/// SharedArrayBuffer -- so without waiting for the ack the dial can overtake the
-/// registration and be made on whatever relay the bridge had before.
+/// Sent to the DuckDB worker, where the shim picks it off and forwards it to
+/// the bridge -- the same channel the ATTACH below travels, so no ack is
+/// needed. Two messages on one port arrive in the order they were sent, which
+/// is the only ordering guarantee this needs.
 function registerPeer(endpointId, relayUrl) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      channel.removeEventListener('message', onAck);
-      reject(new Error('The transport bridge did not acknowledge the relay. Reload and try again.'));
-    }, 10_000);
-    function onAck(e) {
-      if (e.data?.__qh !== 'peer-ack' || e.data.endpointId !== endpointId) return;
-      clearTimeout(timer);
-      channel.removeEventListener('message', onAck);
-      resolve();
-    }
-    channel.addEventListener('message', onAck);
-    channel.postMessage({ __qh: 'peer', endpointId, relay: relayUrl });
-  });
+  session.worker.postMessage({ __qh: 'peer', endpointId, relay: relayUrl });
 }
 
 async function bootLocal() {
@@ -147,10 +130,8 @@ async function bootLocal() {
 
   // qh-worker installs the XHR shim into the worker global and only then loads
   // duckdb's own worker bundle, so duckdb is entirely unmodified underneath.
-  // No `relay=` here: relays are per-peer now and arrive over the channel.
-  const workerUrl =
-    `${asset('qh-worker.js')}?target=${encodeURIComponent(bundle.mainWorker)}` +
-    `&mode=iroh&channel=${encodeURIComponent(CHANNEL)}`;
+  // No `relay=` here: relays are per-peer, and each arrives with its remote.
+  const workerUrl = `${asset('qh-worker.js')}?target=${encodeURIComponent(bundle.mainWorker)}&mode=iroh`;
 
   const worker = new Worker(workerUrl);
   const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING), worker);
@@ -331,7 +312,9 @@ async function addRemote(peer) {
   Object.assign(conn, addWire(conn));
 
   try {
-    await registerPeer(endpointId, relayUrl);
+    // Before the ATTACH, and on the same path it takes, so the dial cannot be
+    // made before the bridge knows which relay reaches this laptop.
+    registerPeer(endpointId, relayUrl);
 
     // Named and scoped to this one endpoint. An unnamed secret is a single
     // global, so the second remote would either collide on the name or quietly

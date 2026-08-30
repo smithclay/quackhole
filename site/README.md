@@ -59,9 +59,11 @@ Three things make that work, and each is a place a single-remote shortcut used
 to sit:
 
 - **The bridge keys relays by endpoint id.** `web/bridge-worker.js` holds a map
-  the page fills over a `BroadcastChannel`; `?relay=` survives only as the
-  fallback for a caller with one remote. Two remotes on two relays would
-  otherwise both be dialled through whichever relay arrived first.
+  the page fills with a `peer` control frame per remote; `?relay=` survives only
+  as the fallback for a caller with one. Two remotes on two relays would
+  otherwise both be dialled through whichever relay arrived first. The frame
+  goes down the same channel as the ATTACH that follows it, so there is no ack
+  to wait for and no way for the dial to arrive first.
 - **Secrets are named and scoped.** `CREATE SECRET laptop2 (TYPE quack, TOKEN
   …, SCOPE 'quack:<endpoint-id>.iroh:9494')`. An unnamed secret is a single
   global, so the second remote would collide on the name or be handed the first

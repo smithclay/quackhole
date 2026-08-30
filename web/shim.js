@@ -54,16 +54,32 @@
   // A module worker, because the wasm glue is an ES module.
   const bridge = new Worker(params.get('bridge') || './bridge-worker.js', { type: 'module' });
   bridge.postMessage({
-    __qh: 'init',
+    [P.TAG]: P.INIT,
     sab,
     mode: params.get('mode') || 'fetch',
+    // The relay for peers that have none registered. All a caller with one
+    // remote needs; a caller with several sends a `peer` frame per remote.
     relay: params.get('relay') || null,
-    // Named by the page, which uses the same name to register peer relays with
-    // the bridge directly. Absent for callers that only ever have one remote.
-    channel: params.get('channel') || null,
     // Test-only: makes the bridge stop answering, so the deadline above can
     // be shown to fire rather than merely existing.
     fault: params.get('fault') || null,
+  });
+
+  // Control frames from the page, forwarded onto the same channel as requests.
+  //
+  // This listener is added before duckdb's own -- qh-worker.js loads this file
+  // first -- so it sees the message first and can stop it there. Without
+  // stopImmediatePropagation, duckdb's handler would get a message with no
+  // `type` and reject inside its own dispatch.
+  //
+  // Ordering is the whole point, and it holds end to end: the page posts the
+  // frame and then the ATTACH on one port, this listener runs before duckdb
+  // handles the ATTACH, and both come out here on one more port. A relay
+  // registered before a dial cannot be overtaken by it.
+  self.addEventListener('message', (event) => {
+    if (event.data?.[P.TAG] !== P.PEER) return;
+    event.stopImmediatePropagation();
+    bridge.postMessage(event.data);
   });
 
   function waitForBridge() {

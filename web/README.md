@@ -54,6 +54,22 @@ Query parameters: `target` (required, the real duckdb worker), `mode`
 (`iroh`|`fetch`), `relay`, `timeout` (ms), `chunk` (shared buffer bytes),
 `intercept` (extra host to capture, for testing), `debug`.
 
+### More than one remote
+
+`?relay=` is one relay for the whole worker, which is all a caller with a single
+remote needs. A relay actually belongs to a peer, so for several, register each
+one instead — the shim picks these off the worker's message port and forwards
+them to the bridge:
+
+```js
+worker.postMessage({ __qh: 'peer', endpointId, relay: relayUrl });
+await conn.query(`ATTACH 'quack:${endpointId}.iroh:9494' AS laptop`);
+```
+
+No acknowledgement to wait for. The frame and the `ATTACH` travel the same two
+ports in that order, and postMessage preserves it, so the dial cannot be made
+before the bridge knows where to make it.
+
 ## Constraints
 
 - **Requires cross-origin isolation** (COOP/COEP). The DuckDB thread blocks in

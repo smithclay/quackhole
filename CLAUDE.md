@@ -91,12 +91,20 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
   the fallback for peers with none registered, not an override -- one relay per
   process is what could not describe two remotes.
 - **The bridge's relay is per-peer, keyed by endpoint id.** `web/bridge-worker.js`
-  keeps a map the page fills over a `BroadcastChannel`, because the bridge is
-  nested inside the DuckDB worker and cannot be reached by postMessage. The
-  `?relay=` query param is only the fallback for a caller with one remote --
-  `test/browser` still uses it. Register a peer and wait for the ack *before*
-  ATTACH: the dial travels the SharedArrayBuffer path and will otherwise
-  overtake the registration.
+  keeps a map the page fills with `peer` control frames (`web/protocol.js`).
+  They travel the same shim-to-bridge channel as the dial, which is the whole
+  reason they are frames and not a channel of the page's own: two messages on
+  one port arrive in the order they were sent, so a registration cannot be
+  overtaken by the ATTACH it precedes and there is nothing to acknowledge.
+  `?relay=` is the fallback for a caller with one remote -- `test/browser`
+  still uses it.
+- **`web/shim.js` intercepts the page's control frames with a `message`
+  listener, and that depends on load order.** `qh-worker.js` loads the shim
+  before duckdb's bundle, so the shim's listener is registered before duckdb
+  assigns `globalThis.onmessage` and therefore runs first --
+  `stopImmediatePropagation` is what keeps duckdb from being handed a message
+  with no `type`. Reorder those `importScripts` and the frames reach duckdb
+  instead, which rejects inside its own dispatch.
 - **A browser client that omits an optional query param takes a different code
   path.** `test/browser` always passes `timeout`, which is why a
   temporal-dead-zone bug in `shim.js` survived until `site/` left it out.
