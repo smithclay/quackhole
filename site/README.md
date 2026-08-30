@@ -1,7 +1,7 @@
 # The demo site
 
-The page at **https://smithclay.github.io/quackhole/** — walks a visitor from
-nothing to a browser querying a DuckDB on their own laptop.
+The page at **https://smithclay.github.io/quackhole/** — a DuckDB workbench that
+runs entirely in the browser and attaches DuckDBs that have no address.
 
 The interesting part is not the page. It is that the page uses
 [`web/`](../web) unmodified: the same shim, the same bridge, the same wasm
@@ -16,40 +16,71 @@ does too, because they are the same files.
 
 | Where | What |
 |---|---|
-| laptop | `sh quackhole-demo.sh` — fetch the extension, seed a table, serve, print a ticket |
-| browser | paste the ticket, which boots DuckDB-Wasm and `ATTACH`es over iroh |
-| browser | four probes with real timings, then a free SQL console |
+| browser | DuckDB-Wasm boots on arrival; the notebook works before any remote exists |
+| laptop | `curl -fsSL .../start.sh \| sh` — fetch DuckDB and the extension, seed a table, serve, print a link |
+| browser | opening that link `ATTACH`es the laptop into the session already running |
+
+Onboarding is a dialog, not a page: adding a remote is a task you finish once,
+and after that the page is a notebook. Arriving with `#qh1_...` skips the form
+entirely and shows the dialog already connecting.
+
+## More than one remote
+
+Repeat the flow and the second machine attaches beside the first, as `laptop2`,
+with its own route drawn in the rail. One statement can then read both — which
+is the point, and is the thing a single DuckDB behind NAT cannot do for you.
+
+Three things make that work, and each is a place a single-remote shortcut used
+to sit:
+
+- **The bridge keys relays by endpoint id.** `web/bridge-worker.js` holds a map
+  the page fills over a `BroadcastChannel`; `?relay=` survives only as the
+  fallback for a caller with one remote. Two remotes on two relays would
+  otherwise both be dialled through whichever relay arrived first.
+- **Secrets are named and scoped.** `CREATE SECRET laptop2 (TYPE quack, TOKEN
+  …, SCOPE 'quack:<endpoint-id>.iroh:9494')`. An unnamed secret is a single
+  global, so the second remote would collide on the name or be handed the first
+  one's token. Quack resolves the secret by the ATTACH path, so the scope is
+  what routes the right token to the right laptop — a secret scoped anywhere
+  else is not found at all, and the failure reads `Could not find a Quack
+  authentication token`.
+- **The rail is reconciled, not bookkept.** `duckdb_databases()` answers
+  locally, with no round trip, and it is what the connection list is redrawn
+  from — so typing `DETACH laptop2` into a cell removes it from the rail exactly
+  the way the × does.
 
 ## The ticket
 
-`quackhole_serve` already prints an `attach_sql`, and it is the wrong string to
+`quackhole_serve` also returns an `attach_sql`, and it is the wrong string to
 hand a browser: it carries the endpoint id and the token but **not the relay
 URL**. Without the relay, iroh resolves the peer through pkarr over HTTPS — a
 round trip to a third party that must also have seen the peer publish, which a
 server started seconds ago routinely has not. Native clients survive that
-because they can retry later. A person watching a demo page will not.
+because they can retry later. A person clicking a link will not.
 
-So the laptop mints a ticket instead: `qh1_` + base64url of
-`{"e": endpoint_id, "r": relay_url, "t": token}`. One word, no spaces, so a
-half-selected copy fails loudly rather than silently truncating.
+So `quackhole_serve` waits for the home relay and mints a ticket:
+`qh1_` + base64url of `{"e": endpoint_id, "r": relay_url, "t": token}`. One word,
+no spaces, so a half-selected copy fails loudly rather than truncating quietly.
+Its `url` column wraps that in a link to this page.
 
-It is minted in two places that must agree — [`ticket.js`](ticket.js) decodes,
-[`scripts/quackhole-demo.sh`](../scripts/quackhole-demo.sh) and the page's
-by-hand SQL encode. Changing the shape means changing all three.
+**The extension is the only encoder.** `MintTicket` in
+`src/quackhole_extension.cpp` builds it and [`ticket.js`](ticket.js) decodes it.
+The shell script and the by-hand SQL used to hand-roll the format too, which
+meant three encoders agreeing on a shape none of them owned.
 
 ## Files
 
 | | |
 |---|---|
-| `index.html` | Structure. Steps are labelled by *which machine* they happen on, not numbered |
-| `app.js` | Onboarding, the DuckDB-Wasm boot through the shim, the tour, the console |
-| `wire.js` | The topology diagram. Opens broken; pulses per query at the measured latency |
-| `ticket.js` | Ticket decode. The two encoders live on the laptop |
+| `index.html` | The workbench shell, plus the onboarding and notes dialogs |
+| `app.js` | The DuckDB-Wasm boot, the connection list, the notebook, the dialogs |
+| `wire.js` | The topology diagram, one per remote. Opens broken; pulses per query at the measured latency |
+| `ticket.js` | Ticket decode. The only encoder is `MintTicket` in the extension |
 | `styles.css` | Yellow is DuckDB, periwinkle is iroh. Nothing else is coloured |
 | `coi-serviceworker.js` | See below |
 | `build.mjs` | Assembles `dist/` from here, `web/`, `web/wasm/` and duckdb-wasm |
 | `serve.mjs` | The static server `npm run dev` and `verify.mjs` share |
-| `verify.mjs` | Drives the built page against a real laptop, headless |
+| `verify.mjs` | Drives the built page against a real laptop, headless. `QH_URL` points it at a deployment instead of `dist/`; `QH_TICKET2` adds a second laptop |
 
 ## Cross-origin isolation, on a host that cannot send headers
 
@@ -82,6 +113,10 @@ querying the machine that minted it. That path crosses duckdb-wasm, the XHR
 shim, a `SharedArrayBuffer`, an iroh relay and a native DuckDB, and any of them
 can break without the page looking broken.
 
+Set `QH_URL=https://smithclay.github.io/quackhole/` to run the same assertions
+against what is actually deployed. A passing local `dist/` says nothing about
+whether Pages is serving it.
+
     # terminal 1 -- the laptop
     QH_EXT=build/release/extension/quackhole/quackhole.duckdb_extension \
     QH_DUCKDB=build/release/duckdb \
@@ -90,6 +125,12 @@ can break without the page looking broken.
     # terminal 2 -- the browser
     node build.mjs
     QH_TICKET=qh1_… node verify.mjs
+
+Give it `QH_TICKET2` as well and it attaches a second laptop, queries both in
+one statement, refuses a duplicate ticket, and detaches one of them — the four
+things one remote cannot exercise. A second server needs a second machine, or a
+different Quack port locally: `quackhole_serve` binds `127.0.0.1:9494` by
+default and the script refuses to start on top of an existing one.
 
 It needs a live n0 relay and a native server, so it is not a CI test — it sits
 alongside `test/docker` and `test/browser` as something a human runs.

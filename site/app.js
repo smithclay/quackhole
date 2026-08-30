@@ -1,44 +1,55 @@
-// Drives the whole page: renders the laptop instructions, takes the ticket,
-// boots DuckDB-Wasm through the quackhole transport, then runs the tour and
-// the console.
+// The workbench.
 //
-// The DuckDB half is deliberately the same sequence test/browser/app.mjs runs,
-// because that is the path with a passing cross-network test behind it. What
-// is new here is everything around it.
+// A DuckDB-Wasm session that boots on arrival and is useful immediately, plus a
+// list of remote DuckDBs attached into it over iroh. Adding a remote is a
+// dialog, not a page: it is a task you finish once, and after that the page is
+// a notebook.
+//
+// The transport is unmodified `web/` -- the same shim, bridge and wasm client
+// anyone would vendor into their own app. If this page works, that does too,
+// because they are the same files.
 import * as duckdb from '@duckdb/duckdb-wasm';
-import { decodeTicket } from './ticket.js';
 import { createWire } from './wire.js';
+import { decodeTicket } from './ticket.js';
 
 const $ = (sel) => document.querySelector(sel);
-// Every asset is addressed relative to the page, never from the root: this is
-// a project Pages site served under /quackhole/, so a leading slash would
-// resolve to github.io itself.
+
+// Every asset is resolved against <base>, because this is served from a project
+// Pages site under /quackhole/ where a leading slash means github.io itself.
 const asset = (path) => new URL(path, document.baseURI).href;
 
-const wire = createWire($('#wire'));
 const statusEl = $('#status');
 const statusText = $('#status-text');
 
 function setStatus(state, text) {
   statusEl.dataset.state = state;
   statusText.textContent = text;
-  wire.setState(state);
 }
 
-// --- step 1: what to run on the laptop ------------------------------------
+// The pill's resting state, recomputed rather than set at each call site: with
+// more than one remote, "live" is a property of the list, not of whichever
+// attach happened last.
+function setRestingStatus() {
+  const n = connections.filter((c) => c.kind === 'remote').length;
+  if (n === 0) setStatus('local', 'local only');
+  else setStatus('live', `${n} remote${n === 1 ? '' : 's'} · relay`);
+}
 
-// The script mints its own token and puts it in the ticket, so nothing secret
-// has to travel through an argv or this page's URL. The token below exists
-// only for the hand-rolled path, where the user has to name one themselves.
+const sqlString = (s) => `'${String(s).replaceAll("'", "''")}'`;
+
+// The one place the quack URL shape is written. ATTACH and the secret's SCOPE
+// have to agree on it exactly or the token is looked up under a path nothing
+// attaches to, and the failure reads as "no token" rather than as a typo.
+const quackUrl = (endpointId) => `quack:${endpointId}.iroh:9494`;
+
+// --- what to run on the other machine ---------------------------------------
+
+// A token minted here rather than by the script, so the by-hand path has one to
+// paste. The script generates its own.
 const manualToken = (() => {
-  const key = 'qh-demo-token';
-  // Survives the one reload coi-serviceworker performs on first visit.
-  let t = sessionStorage.getItem(key);
-  if (!t) {
-    t = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
-    sessionStorage.setItem(key, t);
-  }
-  return t;
+  const b = new Uint8Array(12);
+  crypto.getRandomValues(b);
+  return [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
 })();
 
 function detectPlatform() {
@@ -52,45 +63,23 @@ function renderLaptopCommand() {
   const platform = detectPlatform();
   const scriptUrl = asset('start.sh');
 
-  // Downloaded rather than piped into sh, so it can be read before it runs.
-  // The command itself is the same everywhere; only the label and the caveat
-  // depend on which machine is reading it.
-  $('#cmd-serve').querySelector('code').textContent =
+  $('#cmd-serve').querySelector('code').textContent = `curl -fsSL ${scriptUrl} | sh`;
+  $('#cmd-serve-2').querySelector('code').textContent =
     `curl -fsSL ${scriptUrl} -o quackhole-demo.sh\nsh quackhole-demo.sh`;
 
   if (platform === 'windows') {
     $('#cmd-os').textContent = 'windows — use wsl or git bash';
-    $('#prereq').innerHTML =
-      'The setup script is POSIX shell, so on Windows run it under WSL or Git Bash — ' +
-      'or open the by-hand path below, which is plain SQL.';
   } else {
     $('#cmd-os').textContent = platform === 'macos' ? 'macos — terminal' : 'linux — shell';
   }
 
   $('#cmd-manual').querySelector('code').textContent = [
-    "INSTALL quack; LOAD quack;",
+    'INSTALL quack; LOAD quack;',
     "LOAD './quackhole.duckdb_extension';",
     '',
-    '-- Same two tables scripts/quackhole-demo.sh creates, so the tour below',
-    '-- finds what it expects. Edit the host string to taste.',
-    'CREATE TABLE laptop_info AS',
-    "  SELECT 'your laptop' AS host, 'by hand' AS os,",
-    '         version() AS duckdb_version, now() AS started_at;',
-    '',
-    'CREATE TABLE events AS',
-    "  SELECT range AS id, 'evt_' || range AS name,",
-    "         ['debug','info','warn','error'][(range % 4) + 1] AS level,",
-    '         now()::TIMESTAMP - INTERVAL (range) MINUTE AS ts',
-    '  FROM range(5000);',
-    '',
-    `CALL quackhole_serve(token := '${manualToken}');`,
-    '',
-    '-- The ticket. Re-run this line if it says not ready yet.',
-    "SELECT CASE WHEN relay_url IS NULL THEN 'not ready yet - run this line again'",
-    "  ELSE 'qh1_' || rtrim(replace(replace(to_base64(encode(",
-    `       '{\"e\":\"' || endpoint_id || '\",\"r\":\"' || relay_url || '\",\"t\":\"${manualToken}\"}'`,
-    "       )), '+', '-'), '/', '_'), '=') END AS ticket",
-    'FROM quackhole_status();',
+    '-- serve waits for the endpoint to learn its home relay, then returns the',
+    '-- link to open. No ticket to assemble by hand.',
+    `SELECT url FROM quackhole_serve(token := '${manualToken}');`,
   ].join('\n');
 }
 
@@ -105,179 +94,288 @@ for (const btn of document.querySelectorAll('.copy')) {
       // visitor to paste whatever was on the clipboard before.
       btn.textContent = 'copy failed';
     }
-    setTimeout(() => { btn.textContent = was; }, 1400);
+    setTimeout(() => {
+      btn.textContent = was;
+    }, 1200);
   });
 }
 
-// Keep the diagram pointing at whichever machine the reader is looking at.
-const stepObserver = new IntersectionObserver(
-  (entries) => {
-    for (const e of entries) if (e.isIntersecting) wire.focus(e.target.dataset.where);
-  },
-  { rootMargin: '-45% 0px -45% 0px' },
-);
-for (const step of document.querySelectorAll('.step')) stepObserver.observe(step);
-
-// --- step 2: the connection ------------------------------------------------
+// --- the local session -------------------------------------------------------
 
 const DUCKDB_BUNDLES = {
   mvp: { mainModule: asset('duckdb/duckdb-mvp.wasm'), mainWorker: asset('duckdb/duckdb-browser-mvp.worker.js') },
   eh: { mainModule: asset('duckdb/duckdb-eh.wasm'), mainWorker: asset('duckdb/duckdb-browser-eh.worker.js') },
 };
 
-const sqlString = (s) => `'${String(s).replaceAll("'", "''")}'`;
+// Named per session so two tabs do not update each other's peer map. The bridge
+// joins the same channel and answers peer registrations on it.
+const CHANNEL = `qh-${crypto.randomUUID()}`;
+const channel = new BroadcastChannel(CHANNEL);
 
-// The whole chain is tracked, not just the connection. A failed ATTACH still
-// leaves a DuckDB worker, the bridge worker it spawned, an 8 MB
-// SharedArrayBuffer and a live iroh endpoint behind -- so a visitor who pastes
-// a stale ticket twice would hold two of each, and a successful reconnect
-// would silently orphan the first.
 let session = null;
 
-async function teardown() {
-  if (!session) return;
-  const { conn, db, worker } = session;
-  session = null;
-  // Each step can fail if the layer below already died; that is not worth
-  // reporting, but it must not stop the ones after it.
-  try { await conn.close(); } catch { /* already gone */ }
-  try { await db.terminate(); } catch { /* already gone */ }
-  worker.terminate();
+/// Register a peer's relay with the bridge, and wait for it to say so.
+///
+/// The ATTACH that follows travels a different path -- DuckDB worker, shim,
+/// SharedArrayBuffer -- so without waiting for the ack the dial can overtake the
+/// registration and be made on whatever relay the bridge had before.
+function registerPeer(endpointId, relayUrl) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      channel.removeEventListener('message', onAck);
+      reject(new Error('The transport bridge did not acknowledge the relay. Reload and try again.'));
+    }, 10_000);
+    function onAck(e) {
+      if (e.data?.__qh !== 'peer-ack' || e.data.endpointId !== endpointId) return;
+      clearTimeout(timer);
+      channel.removeEventListener('message', onAck);
+      resolve();
+    }
+    channel.addEventListener('message', onAck);
+    channel.postMessage({ __qh: 'peer', endpointId, relay: relayUrl });
+  });
 }
 
-async function connect(ticket) {
-  await teardown();
-  const { endpointId, relayUrl, token } = ticket;
-  setStatus('connecting', 'dialling');
-  wire.setRelayLabel(relayUrl);
-
+async function bootLocal() {
+  setStatus('booting', 'booting duckdb');
   const bundle = await duckdb.selectBundle(DUCKDB_BUNDLES);
 
   // qh-worker installs the XHR shim into the worker global and only then loads
   // duckdb's own worker bundle, so duckdb is entirely unmodified underneath.
+  // No `relay=` here: relays are per-peer now and arrive over the channel.
   const workerUrl =
     `${asset('qh-worker.js')}?target=${encodeURIComponent(bundle.mainWorker)}` +
-    `&mode=iroh&relay=${encodeURIComponent(relayUrl)}`;
+    `&mode=iroh&channel=${encodeURIComponent(CHANNEL)}`;
 
   const worker = new Worker(workerUrl);
-  let db;
-  let c;
+  const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING), worker);
+  await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+  const conn = await db.connect();
+  await conn.query('INSTALL quack');
+  await conn.query('LOAD quack');
+
+  session = { conn, db, worker };
+  setRestingStatus();
+}
+
+// --- connections -------------------------------------------------------------
+
+// The local wasm database is a connection like any other, and listing it first
+// is what makes "add remote" read as adding a second one rather than as the
+// page's real beginning.
+const connections = [{ name: 'memory', kind: 'local', detail: 'duckdb-wasm, this tab' }];
+
+/// The catalog name a remote gets attached as, and the name of its secret.
+///
+/// Auto-named rather than asked for, because the link from `quackhole_serve`
+/// carries no name and a dialog that demands one before it will connect is a
+/// worse first minute than a second remote called `laptop2`. It is a DuckDB
+/// identifier and it is interpolated unquoted into SQL below, so nothing but
+/// this function may produce one.
+function uniqueName(base) {
+  const taken = new Set(connections.map((c) => c.name));
+  if (!taken.has(base)) return base;
+  for (let n = 2; ; n++) if (!taken.has(`${base}${n}`)) return `${base}${n}`;
+}
+
+function renderConnections() {
+  const list = $('#conn-list');
+  list.replaceChildren();
+  for (const c of connections) {
+    const li = document.createElement('li');
+    li.className = 'conn';
+    li.dataset.kind = c.kind;
+    li.innerHTML = `<span class="conn-name"></span><span class="conn-detail"></span>`;
+    li.querySelector('.conn-name').textContent = c.name;
+    li.querySelector('.conn-detail').textContent = c.detail;
+    // Only remotes can be removed. Without this a remote whose laptop has gone
+    // away stays in the rail forever, and its name stays taken.
+    if (c.kind === 'remote') {
+      const x = document.createElement('button');
+      x.className = 'conn-x';
+      x.type = 'button';
+      x.textContent = '×';
+      x.title = `Detach ${c.name}`;
+      x.setAttribute('aria-label', `Detach ${c.name}`);
+      x.addEventListener('click', () => dropRemote(c));
+      li.append(x);
+    }
+    list.append(li);
+  }
+}
+
+/// List the tables in every connection.
+///
+/// Local and remote need different queries. A Quack-attached catalog is lazy --
+/// it resolves a table name on demand but enumerates nothing, so
+/// `duckdb_tables()`, `SHOW TABLES FROM laptop` and `information_schema` are all
+/// empty for it. `sqlite_master` is the one listing Quack pushes down to the
+/// remote DuckDB, which answers it from its own catalog.
+async function tablesIn(conn) {
+  const sql =
+    conn.kind === 'local'
+      ? `SELECT table_name AS name FROM duckdb_tables() ORDER BY name`
+      : `SELECT name FROM ${conn.name}.sqlite_master ORDER BY name`;
   try {
-    db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING), worker);
-    await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
-    c = await db.connect();
+    return rowsOf(await session.conn.query(sql)).map((r) => r.name);
+  } catch {
+    return null;
+  }
+}
 
-    await c.query('INSTALL quack');
-    await c.query('LOAD quack');
-    if (token) await c.query(`CREATE SECRET (TYPE quack, TOKEN ${sqlString(token)})`);
+/// Drop remotes that are no longer attached.
+///
+/// The rail is a claim about what this session holds, and a visitor can type
+/// `DETACH laptop2` into a cell and make it false. duckdb_databases() is the
+/// only thing that knows -- and it answers locally, with no round trip, so
+/// reconciling against it costs nothing.
+async function syncConnections() {
+  let live;
+  try {
+    const rows = rowsOf(await session.conn.query('SELECT database_name FROM duckdb_databases()'));
+    live = new Set(rows.map((r) => r.database_name));
+  } catch {
+    return;
+  }
+  for (const c of [...connections]) {
+    if (c.kind !== 'remote' || live.has(c.name)) continue;
+    connections.splice(connections.indexOf(c), 1);
+    c.el?.remove();
+  }
+  if (!$('#wire-list').children.length) $('#wire-panel').hidden = true;
+  renderConnections();
+  setRestingStatus();
+}
 
+/// Redraw the table rail, and hand back what it found.
+///
+/// Returning the listing is what keeps a newly attached remote to one metadata
+/// round trip: the rail needs its tables and so does the seed below, and asking
+/// twice would put a second relay round trip in front of the first result.
+async function refreshSchema() {
+  await syncConnections();
+  const list = $('#schema-list');
+  const groups = await Promise.all(connections.map(async (c) => [c, await tablesIn(c)]));
+
+  list.replaceChildren();
+  let any = false;
+  for (const [conn, names] of groups) {
+    if (!names || names.length === 0) continue;
+    any = true;
+    for (const name of names) {
+      const qualified = `${conn.name}.${name}`;
+      const li = document.createElement('li');
+      li.innerHTML = `<button class="schema-item" type="button"></button>`;
+      li.querySelector('button').textContent = qualified;
+      // Clicking a table writes a query rather than running one: the point is to
+      // start you off, not to decide what you wanted.
+      li.querySelector('button').addEventListener('click', () => {
+        addCell(`SELECT * FROM ${qualified} LIMIT 20`, { run: true });
+      });
+      list.append(li);
+    }
+  }
+  if (!any) list.innerHTML = '<li class="schema-empty">no tables yet</li>';
+  return new Map(groups.map(([c, names]) => [c.name, names ?? []]));
+}
+
+// --- remotes -----------------------------------------------------------------
+
+/// Draw this remote's own route in the rail.
+///
+/// One wire per remote rather than one wire with several ends: each remote is
+/// reached through its own relay, and they are not the same relay. A single
+/// diagram would have to pick one to name.
+function addWire(conn) {
+  const li = $('#wire-tpl').content.firstElementChild.cloneNode(true);
+  li.dataset.name = conn.name;
+  li.querySelector('.wire-peer-name').textContent = conn.name;
+  // Appended before createWire, which resolves the relay legend by walking up
+  // to .wire-frame -- cheap to get wrong, and it fails by silently leaving the
+  // placeholder in place.
+  $('#wire-list').append(li);
+  $('#wire-panel').hidden = false;
+
+  const w = createWire(li.querySelector('.wire-mount'), conn.name);
+  w.setRelayLabel(conn.relayUrl);
+  w.setState('connecting');
+  return { wire: w, el: li };
+}
+
+/// Attach a remote described by a ticket, into the session that already exists.
+async function addRemote(ticket) {
+  const { endpointId, relayUrl, token } = ticket;
+
+  // Attaching the same laptop twice would work and would be a lie: two catalog
+  // names over one connection, listed as if they were two machines.
+  const already = connections.find((c) => c.endpointId === endpointId);
+  if (already) throw new Error(`That laptop is already attached, as "${already.name}".`);
+
+  const conn = {
+    name: uniqueName('laptop'),
+    kind: 'remote',
+    endpointId,
+    relayUrl,
+    detail: `${endpointId.slice(0, 8)}… via relay`,
+  };
+
+  setStatus('connecting', 'dialling');
+  Object.assign(conn, addWire(conn));
+
+  try {
+    await registerPeer(endpointId, relayUrl);
+
+    // Named and scoped to this one endpoint. An unnamed secret is a single
+    // global, so the second remote would either collide on the name or quietly
+    // hand the first remote's token to a different machine. Quack resolves the
+    // secret by the ATTACH path, so the scope is what routes the right token to
+    // the right laptop -- a secret scoped elsewhere is not found at all.
+    if (token) {
+      await session.conn.query(
+        `CREATE SECRET ${conn.name} (TYPE quack, TOKEN ${sqlString(token)}, SCOPE ${sqlString(quackUrl(endpointId))})`,
+      );
+    }
     const t0 = performance.now();
-    await c.query(`ATTACH ${sqlString(`quack:${endpointId}.iroh:9494`)} AS laptop`);
-    const attachMs = performance.now() - t0;
-
-    session = { conn: c, db, worker };
-    return attachMs;
+    await session.conn.query(`ATTACH ${sqlString(quackUrl(endpointId))} AS ${conn.name}`);
+    conn.attachMs = performance.now() - t0;
   } catch (err) {
-    try { await c?.close(); } catch { /* never opened */ }
-    try { await db?.terminate(); } catch { /* never instantiated */ }
-    worker.terminate();
+    conn.wire.setState('failed');
+    conn.el.remove();
+    if (!$('#wire-list').children.length) $('#wire-panel').hidden = true;
+    await session.conn.query(`DROP SECRET IF EXISTS ${conn.name}`).catch(() => {});
     throw err;
   }
+
+  connections.push(conn);
+  renderConnections();
+  conn.wire.setState('live');
+  setRestingStatus();
+  return conn;
 }
 
-const pasteError = $('#paste-error');
-const pasteNote = $('#paste-note');
-
-function showError(msg) {
-  pasteError.textContent = msg;
-  pasteError.hidden = false;
+/// Detach a remote and give its name back.
+///
+/// The secret goes with it, so the name is free to be reused -- otherwise the
+/// next `CREATE SECRET laptop` fails on a laptop that is no longer here.
+///
+/// The rail is not edited here: refreshSchema reconciles it against
+/// duckdb_databases(), which is the same path a hand-typed DETACH takes. Two
+/// ways to remove a connection would be two things to keep agreeing.
+async function dropRemote(conn) {
+  // If the DETACH fails, the catalog really is still attached and the rail
+  // should keep saying so -- which is better feedback than an exception nobody
+  // sees.
+  await session.conn.query(`DETACH ${conn.name}`).catch(() => {});
+  await session.conn.query(`DROP SECRET IF EXISTS ${conn.name}`).catch(() => {});
+  await refreshSchema();
 }
 
-$('#paste-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  pasteError.hidden = true;
-  pasteNote.hidden = true;
+// --- results -----------------------------------------------------------------
 
-  // The bridge parks the DuckDB thread in Atomics.wait, so without a
-  // SharedArrayBuffer there is nothing to wait on. Say so before the failure
-  // arrives as something less legible from inside a worker.
-  if (!self.crossOriginIsolated) {
-    showError(
-      'This page is not cross-origin isolated, so SharedArrayBuffer is unavailable and the ' +
-      'transport cannot run. Reload once — the service worker that adds the headers installs ' +
-      'on first visit. If it persists, your browser may be blocking service workers here.',
-    );
-    return;
-  }
-
-  let ticket;
-  try {
-    ticket = decodeTicket($('#ticket').value);
-  } catch (err) {
-    showError(err.message);
-    return;
-  }
-
-  const btn = $('#connect');
-  btn.disabled = true;
-  btn.textContent = 'Connecting…';
-
-  try {
-    const attachMs = await connect(ticket);
-    setStatus('live', 'live · relay');
-    pasteNote.textContent =
-      `Attached in ${Math.round(attachMs)}ms as "laptop". That is three round trips through the relay.`;
-    pasteNote.hidden = false;
-    wire.pulse(attachMs);
-    unlockQuery();
-  } catch (err) {
-    setStatus('failed', 'no route');
-    showError(
-      `Could not attach: ${err?.message ?? err}\n\n` +
-      'Most often this means the laptop stopped serving, or the ticket is from an earlier run. ' +
-      'Check the terminal is still running and copy a fresh ticket.',
-    );
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Connect';
-  }
-});
-
-// --- step 3: the tour, then the console ------------------------------------
-
-// Each probe has to prove something the previous one did not, or it is just
-// latency theatre.
-const PROBES = [
-  {
-    sql: 'SELECT host, os, duckdb_version FROM laptop.laptop_info',
-    why: 'Read off the machine itself. That hostname is your laptop, not this tab.',
-    format: (rows) => {
-      const r = rows[0];
-      return r ? `${r.host} · ${r.os} · duckdb ${r.duckdb_version}` : 'no rows';
-    },
-  },
-  {
-    sql: 'SELECT count(*) AS n FROM laptop.events',
-    why: 'A full count, executed on the laptop. Only the answer crosses the wire.',
-    format: (rows) => `${rows[0].n} rows`,
-  },
-  {
-    sql: 'SELECT level, count(*) AS n FROM laptop.events GROUP BY level ORDER BY n DESC',
-    why: 'The grouping happens there too — Quack pushes the aggregate down.',
-    format: (rows) => rows.map((r) => `${r.level}=${r.n}`).join('  '),
-  },
-  {
-    sql: "SELECT name, ts FROM laptop.events WHERE id = 42",
-    why: 'A warm point lookup, for comparison. This is what steady-state latency costs.',
-    format: (rows) => (rows[0] ? `${rows[0].name} @ ${rows[0].ts}` : 'no rows'),
-  },
-];
-
-// Arrow hands back values that stringify badly. Counts arrive as BigInt, and
-// DuckDB timestamps arrive as epoch milliseconds with a fractional part rather
-// than as a Date -- so `ts` renders as 1788058053144.624 unless the column's
-// declared type is consulted. That is why formatting is per field, not per
-// value: the JS value alone cannot tell a timestamp from a large number.
+// Arrow hands timestamps back as epoch millis and integers as BigInt, and JSON
+// cannot carry either -- so `ts` renders as 1788058053144.624 unless the
+// column's declared type is consulted. Formatting is per field, not per value:
+// the JS value alone cannot tell a timestamp from a large number.
 const asDate = (v) => {
   const d = new Date(Number(v));
   return Number.isNaN(d.getTime()) ? String(v) : `${d.toISOString().slice(0, 19).replace('T', ' ')}Z`;
@@ -298,58 +396,20 @@ const rowsOf = (table) => {
     .map((r) => Object.fromEntries(Object.entries(r.toJSON()).map(([k, v]) => [k, cell(v, types[k] ?? '')])));
 };
 
-function unlockQuery() {
-  const step = $('#step-query');
-  step.removeAttribute('data-locked');
-  $('#tour').hidden = false;
-  $('#console').hidden = false;
-  runTour();
-}
-
-async function runTour() {
-  const list = $('#probes');
-  list.replaceChildren();
-
-  for (const probe of PROBES) {
-    const li = document.createElement('li');
-    li.className = 'probe';
-    li.dataset.state = 'pending';
-    li.innerHTML =
-      `<span class="probe-sql"></span><span class="probe-ms">running…</span>` +
-      `<span class="probe-why"></span><span class="probe-out"></span>`;
-    li.querySelector('.probe-sql').textContent = probe.sql;
-    li.querySelector('.probe-why').textContent = probe.why;
-    list.append(li);
-
-    const t0 = performance.now();
-    try {
-      const rows = rowsOf(await session.conn.query(probe.sql));
-      const ms = performance.now() - t0;
-      li.dataset.state = 'ok';
-      li.querySelector('.probe-ms').textContent = `${Math.round(ms)}ms`;
-      li.querySelector('.probe-out').textContent = probe.format(rows);
-      wire.pulse(ms);
-    } catch (err) {
-      // Keep going. The probes are independent, and stopping here would hide
-      // three working ones behind a single missing table.
-      li.dataset.state = 'failed';
-      li.querySelector('.probe-ms').textContent = 'failed';
-      li.querySelector('.probe-out').textContent = String(err?.message ?? err);
-    }
-  }
-}
-
-function renderResult(table, ms) {
-  const mount = $('#result');
+function renderResult(mount, table, ms) {
   const rows = rowsOf(table);
   const cols = table.schema.fields.map((f) => f.name);
 
   if (rows.length === 0) {
-    mount.innerHTML = '<p class="result-meta"></p>';
-    mount.querySelector('.result-meta').textContent = `No rows · ${Math.round(ms)}ms`;
+    const p = document.createElement('p');
+    p.className = 'result-meta';
+    p.textContent = `No rows · ${Math.round(ms)}ms`;
+    mount.replaceChildren(p);
     return;
   }
 
+  const wrap = document.createElement('div');
+  wrap.className = 'result';
   const el = document.createElement('table');
   const head = el.insertRow();
   for (const c of cols) {
@@ -357,69 +417,223 @@ function renderResult(table, ms) {
     th.textContent = c;
     head.append(th);
   }
-  // Enough to see the shape without turning the page into a grid widget.
-  for (const r of rows.slice(0, 50)) {
+  // Enough to see the shape without turning this into a grid widget.
+  for (const r of rows.slice(0, 200)) {
     const tr = el.insertRow();
     for (const c of cols) {
       const td = tr.insertCell();
       td.textContent = r[c] === null ? '—' : String(r[c]);
     }
   }
+  wrap.append(el);
 
   const meta = document.createElement('p');
   meta.className = 'result-meta';
   meta.textContent =
     `${rows.length} row${rows.length === 1 ? '' : 's'}` +
-    `${rows.length > 50 ? ' (first 50 shown)' : ''} · ${Math.round(ms)}ms round trip`;
+    `${rows.length > 200 ? ' (first 200 shown)' : ''} · ${Math.round(ms)}ms round trip`;
 
-  mount.replaceChildren(el, meta);
+  mount.replaceChildren(wrap, meta);
 }
 
-$('#sql-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const sql = $('#sql').value.trim();
-  if (!sql || !session) return;
+// --- the notebook ------------------------------------------------------------
 
-  const btn = $('#run');
+let cellSeq = 0;
+
+function addCell(sql = '', { run = false, focus = false } = {}) {
+  const n = ++cellSeq;
+  const art = document.createElement('article');
+  art.className = 'cell';
+  art.dataset.state = 'idle';
+  art.innerHTML = `
+    <div class="cell-head">
+      <span class="cell-n">[${n}]</span>
+      <span class="cell-ms"></span>
+      <button class="cell-run" type="button">run</button>
+      <button class="cell-del" type="button" aria-label="Remove cell">×</button>
+    </div>
+    <textarea class="cell-sql" spellcheck="false" rows="1"></textarea>
+    <div class="cell-out"></div>`;
+
+  const ta = art.querySelector('.cell-sql');
+  ta.value = sql;
+
+  // Grow with the query. A notebook where long SQL scrolls inside a 3-row box
+  // is a worse text editor than the one it is imitating.
+  const autosize = () => {
+    ta.style.height = 'auto';
+    ta.style.height = `${Math.max(ta.scrollHeight, 56)}px`;
+  };
+  ta.addEventListener('input', autosize);
+
+  const runCell = async () => {
+    const text = ta.value.trim();
+    if (!text || !session) return;
+    art.dataset.state = 'running';
+    art.querySelector('.cell-ms').textContent = 'running…';
+    const t0 = performance.now();
+    try {
+      const table = await session.conn.query(text);
+      const ms = performance.now() - t0;
+      renderResult(art.querySelector('.cell-out'), table, ms);
+      art.dataset.state = 'ok';
+      art.querySelector('.cell-ms').textContent = `${Math.round(ms)}ms`;
+      // Which wire to pulse, decided by reading the SQL: duckdb-wasm does not
+      // report which catalogs a query touched, and with several remotes
+      // attached, pulsing all of them would claim traffic that never happened.
+      // A qualified reference is the only way to reach a remote, so `laptop.`
+      // in the text is the signal. Names come from uniqueName(), so there is
+      // nothing to escape.
+      for (const c of connections) {
+        if (c.kind === 'remote' && new RegExp(`\\b${c.name}\\s*\\.`, 'i').test(text)) c.wire.pulse(ms);
+      }
+      // DDL in a cell changes what the rail should show.
+      if (/^\s*(create|drop|attach|detach|alter)\b/i.test(text)) refreshSchema();
+    } catch (err) {
+      const p = document.createElement('p');
+      p.className = 'result-error';
+      p.textContent = String(err?.message ?? err);
+      art.querySelector('.cell-out').replaceChildren(p);
+      art.dataset.state = 'failed';
+      art.querySelector('.cell-ms').textContent = 'failed';
+    }
+  };
+
+  art.querySelector('.cell-run').addEventListener('click', runCell);
+  art.querySelector('.cell-del').addEventListener('click', () => {
+    art.remove();
+    if (!$('#notebook').querySelector('.cell')) addCell('', { focus: true });
+  });
+  ta.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      runCell();
+    }
+  });
+
+  $('#notebook').append(art);
+  autosize();
+  if (focus) ta.focus();
+  if (run) runCell();
+  return art;
+}
+
+// --- dialogs -----------------------------------------------------------------
+
+const onboard = $('#onboard');
+const pasteError = $('#paste-error');
+const pasteNote = $('#paste-note');
+
+function showError(msg) {
+  pasteError.textContent = msg;
+  pasteError.hidden = false;
+}
+
+$('#add-remote').addEventListener('click', () => {
+  pasteError.hidden = true;
+  pasteNote.hidden = true;
+  $('#ticket').value = '';
+  // The second time through, the dialog is not onboarding any more -- the
+  // visitor has done this once and needs the command and the field, not the
+  // explanation of what they are about to do.
+  if (connections.some((c) => c.kind === 'remote')) {
+    $('#onboard-title').textContent = 'Add another remote';
+    $('#onboard-lede').textContent =
+      'Run this on the next machine. Each remote is attached under its own name and reached over its own relay.';
+  }
+  onboard.showModal();
+});
+$('#open-notes').addEventListener('click', () => $('#notes').showModal());
+
+$('#paste-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  pasteError.hidden = true;
+  pasteNote.hidden = true;
+
+  const btn = $('#paste-go');
   btn.disabled = true;
-  const t0 = performance.now();
   try {
-    const table = await session.conn.query(sql);
-    const ms = performance.now() - t0;
-    renderResult(table, ms);
-    wire.pulse(ms);
+    const conn = await addRemote(decodeTicket($('#ticket').value));
+    pasteNote.textContent =
+      `Attached in ${Math.round(conn.attachMs)}ms as "${conn.name}".` +
+      ' That is three round trips through the relay.';
+    pasteNote.hidden = false;
+    onboard.close();
+    seedFor(conn);
   } catch (err) {
-    const p = document.createElement('p');
-    p.className = 'result-error';
-    p.textContent = String(err?.message ?? err);
-    $('#result').replaceChildren(p);
+    // Leave the dialog open: the error is about the ticket, and the field it
+    // refers to is in here. The pill only goes red when nothing is attached --
+    // a failed second remote does not make the first one stop working.
+    if (connections.some((c) => c.kind === 'remote')) setRestingStatus();
+    else setStatus('failed', 'no route');
+    showError(String(err?.message ?? err));
   } finally {
     btn.disabled = false;
   }
 });
 
-$('#sql').addEventListener('keydown', (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') $('#sql-form').requestSubmit();
-});
+/// Fill the notebook from what the remote actually has.
+///
+/// The first thing a visitor should see is their own data, not an empty box --
+/// but only the demo script's laptop is known to have `laptop_info` and
+/// `events`. A second remote is somebody's real database, and opening it on two
+/// cells that guessed wrong is worse than opening it on one that guessed
+/// nothing. So the listing the rail needs anyway decides what to run.
+async function seedFor(conn) {
+  const tables = (await refreshSchema()).get(conn.name) ?? [];
+  const n = conn.name;
 
-// --- boot ------------------------------------------------------------------
+  const cells = [];
+  if (tables.includes('laptop_info')) cells.push(`SELECT host, os, duckdb_version FROM ${n}.laptop_info`);
+  if (tables.includes('events')) cells.push(`SELECT level, count(*) AS n FROM ${n}.events GROUP BY level ORDER BY n DESC`);
+  if (cells.length === 0 && tables.length) cells.push(`SELECT * FROM ${n}.${tables[0]} LIMIT 20`);
+
+  const blank = [...$('#notebook').querySelectorAll('.cell')].filter((c) => !c.querySelector('.cell-sql').value.trim());
+  for (const c of blank) c.remove();
+  for (const sql of cells) addCell(sql, { run: true });
+  addCell('', { focus: false });
+}
+
+// --- boot --------------------------------------------------------------------
 
 renderLaptopCommand();
-setStatus('idle', 'no route');
+renderConnections();
 
-// A ticket can also arrive in the fragment, which never leaves the browser --
-// it is not sent to GitHub's servers and does not appear in their logs. That
-// makes `#qh1_...` a reasonable way to hand someone a working link.
-// decodeURIComponent throws on a truncated escape, and a shared link is
-// exactly the thing that arrives mangled. A bad fragment should leave the page
-// usable, not abort the last statement of the boot sequence.
+// A ticket can arrive in the fragment, which never leaves the browser -- it is
+// not sent to GitHub's servers and does not appear in their logs. That is what
+// makes the link quackhole_serve() returns safe to click.
+// decodeURIComponent throws on a truncated escape, and a shared link is exactly
+// the thing that arrives mangled, so a bad fragment must leave the page usable.
 let fragment = '';
 try {
   fragment = decodeURIComponent(location.hash.slice(1));
 } catch {
   fragment = location.hash.slice(1);
 }
+
+try {
+  await bootLocal();
+  // Run it rather than leaving it primed: the workbench is useful before any
+  // remote exists, and a result on screen says that far better than an empty box.
+  addCell("SELECT 'hello from duckdb-wasm' AS msg, version() AS version", { run: true });
+  await refreshSchema();
+} catch (err) {
+  setStatus('failed', 'duckdb failed');
+  addCell('', { focus: false });
+  const p = document.createElement('p');
+  p.className = 'result-error';
+  p.textContent = `DuckDB-Wasm did not start: ${err?.message ?? err}`;
+  $('#notebook').prepend(p);
+}
+
 if (fragment.startsWith('qh1_')) {
+  // Arriving from the laptop's link: show the dialog already working rather than
+  // showing a form the visitor has no reason to read.
   $('#ticket').value = fragment;
+  $('#onboard-title').textContent = 'Connecting to your laptop';
+  $('#onboard-lede').textContent = 'The link carried a ticket. Attaching it to this workbench now.';
+  onboard.showModal();
   $('#paste-form').requestSubmit();
+} else if (session) {
+  onboard.showModal();
 }

@@ -60,6 +60,21 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
   omits the relay and sends the browser to pkarr, which routinely has not seen
   a server this new. Tests that only want the lifecycle set the setting to 0
   rather than paying the wait per call.
+- **A Quack-attached catalog enumerates nothing.** `duckdb_tables()`,
+  `SHOW TABLES FROM <db>` and `information_schema` are all empty for it -- it
+  resolves a table name on demand and nothing more. `SELECT name FROM
+  <db>.sqlite_master` is the one listing Quack pushes down to the remote, which
+  is how `site/app.js` fills the workbench rail. `duckdb_databases()` is the exception
+  and is purely local: it does list the catalog, which is what lets the rail be
+  reconciled after a hand-typed `DETACH` without a round trip.
+- **A quack secret has to be named and scoped to hold more than one.** An
+  unnamed `CREATE SECRET (TYPE quack, ...)` is a single global, so a second
+  remote collides on the name or is handed the first one's token. Quack looks
+  the secret up by the ATTACH path, so `SCOPE 'quack:<id>.iroh:9494'` is what
+  routes a token to one peer; a secret scoped elsewhere is not found at all and
+  the error is `Could not find a Quack authentication token`, which does not
+  sound like a scope problem. `attach_sql` still emits the unnamed form -- it is
+  a single-remote convenience, and `site/app.js` does not use it.
 - **The bridge's relay is per-peer, keyed by endpoint id.** `web/bridge-worker.js`
   keeps a map the page fills over a `BroadcastChannel`, because the bridge is
   nested inside the DuckDB worker and cannot be reached by postMessage. The

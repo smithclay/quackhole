@@ -1,4 +1,4 @@
-/* quackhole demo.
+/* quackhole workbench.
  *
  * Two accents, and they mean something rather than decorate: yellow is DuckDB,
  * so it marks both endpoints and every artifact you copy; periwinkle is iroh,
@@ -21,11 +21,13 @@
   --body: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
   --data: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
 
-  --gut: clamp(1.25rem, 4vw, 3rem);
-  --col: 74ch;
+  --bar-h: 3.1rem;
+  --rail-w: 17rem;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
+
+html, body { height: 100%; }
 
 body {
   margin: 0;
@@ -33,225 +35,14 @@ body {
   color: var(--paper);
   font: 400 16px/1.65 var(--body);
   -webkit-font-smoothing: antialiased;
-  /* A faint vertical gradient so the ground is not a flat slab, and so the
-     hero reads as the lit end of the page. */
-  background-image: radial-gradient(120% 60% at 50% 0%, #161b2b 0%, var(--ink) 62%);
-  background-repeat: no-repeat;
 }
 
 a { color: var(--relay); text-underline-offset: 3px; text-decoration-thickness: 1px; }
 a:hover { color: var(--paper); }
 
-:focus-visible {
-  outline: 2px solid var(--signal);
-  outline-offset: 3px;
-  border-radius: 2px;
-}
+:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; border-radius: 2px; }
 
 code, kbd { font-family: var(--data); font-size: 0.9em; }
-kbd {
-  background: var(--ink-3); border: 1px solid var(--line);
-  border-radius: 3px; padding: 0.05em 0.4em; font-size: 0.8em;
-}
-
-/* --- instrument bar ------------------------------------------------------ */
-
-.bar {
-  position: sticky; top: 0; z-index: 20;
-  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
-  padding: 0.85rem var(--gut);
-  background: color-mix(in srgb, var(--ink) 88%, transparent);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--line);
-}
-
-.wordmark {
-  font: 700 0.82rem/1 var(--display);
-  letter-spacing: -0.03em;
-  color: var(--paper); text-decoration: none;
-}
-.wordmark:hover { color: var(--signal); }
-
-.bar-status {
-  display: inline-flex; align-items: center; gap: 0.5rem;
-  font: 400 0.7rem/1 var(--data);
-  letter-spacing: 0.06em; text-transform: lowercase;
-  color: var(--dim);
-}
-.bar-dot {
-  width: 7px; height: 7px; border-radius: 50%;
-  background: var(--line); box-shadow: 0 0 0 3px color-mix(in srgb, var(--line) 40%, transparent);
-}
-.bar-status[data-state="connecting"] { color: var(--relay); }
-.bar-status[data-state="connecting"] .bar-dot {
-  background: var(--relay);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--relay) 25%, transparent);
-  animation: throb 1.1s ease-in-out infinite;
-}
-.bar-status[data-state="live"] { color: var(--signal); }
-.bar-status[data-state="live"] .bar-dot {
-  background: var(--signal);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal) 22%, transparent);
-}
-.bar-status[data-state="failed"] { color: var(--bad); }
-.bar-status[data-state="failed"] .bar-dot { background: var(--bad); }
-
-@keyframes throb { 50% { opacity: 0.35; } }
-
-/* --- hero ---------------------------------------------------------------- */
-
-main { padding: 0 var(--gut) 6rem; }
-
-.hero {
-  max-width: var(--col);
-  margin: clamp(2.5rem, 7vw, 5rem) auto 0;
-}
-
-.wire-frame {
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: linear-gradient(var(--ink-2), var(--ink));
-  padding: 1.25rem 1rem 0.9rem;
-}
-
-.wire { display: block; width: 100%; height: auto; overflow: visible; }
-
-.wire-leg {
-  fill: none;
-  stroke: var(--line);
-  stroke-width: 2;
-  stroke-dasharray: 3 7;
-  stroke-linecap: round;
-  transition: stroke 0.5s ease, stroke-dasharray 0.5s ease;
-}
-.wire-node {
-  fill: none;
-  stroke: var(--line);
-  stroke-width: 2;
-  transition: stroke 0.45s ease, fill 0.45s ease;
-}
-.wire-node--relay { stroke: var(--line); }
-.wire-pulse { fill: var(--signal); opacity: 0; }
-
-/* Focus: which machine the step on screen is talking about. Matched by name,
-   because the pulse is also a <circle> and would claim :first-of-type. */
-.wire[data-focus="laptop"] .wire-node--laptop,
-.wire[data-focus="browser"] .wire-node--browser {
-  stroke: var(--signal);
-}
-
-.wire[data-state="connecting"] .wire-leg {
-  stroke: var(--relay);
-  animation: march 0.9s linear infinite;
-}
-.wire[data-state="live"] .wire-leg { stroke: var(--relay); stroke-dasharray: none; }
-.wire[data-state="live"] .wire-node { stroke: var(--signal); fill: color-mix(in srgb, var(--signal) 16%, transparent); }
-.wire[data-state="live"] .wire-node--relay { stroke: var(--relay); fill: color-mix(in srgb, var(--relay) 20%, transparent); }
-.wire[data-state="failed"] .wire-leg { stroke: var(--bad); }
-
-@keyframes march { to { stroke-dashoffset: -20; } }
-
-.wire-legend {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  margin-top: 0.35rem;
-}
-.wire-label { display: flex; flex-direction: column; gap: 0.15rem; text-align: center; }
-.wire-label:first-child { text-align: left; }
-.wire-label:last-child { text-align: right; }
-.wire-label b {
-  font: 500 0.68rem/1.2 var(--data);
-  letter-spacing: 0.02em;
-  color: var(--paper);
-}
-.wire-label i {
-  font: 400 0.63rem/1.2 var(--data);
-  font-style: normal;
-  color: var(--dim);
-  overflow-wrap: anywhere;
-}
-
-h1 {
-  font: 700 clamp(2rem, 7.5vw, 3.4rem)/1.05 var(--display);
-  letter-spacing: -0.055em;
-  margin: 2.5rem 0 1.25rem;
-  text-wrap: balance;
-}
-
-.lede { font-size: 1.06rem; color: #c3cadb; margin: 0 0 1rem; }
-.fineprint { font-size: 0.85rem; color: var(--dim); margin: 0; }
-
-/* --- steps --------------------------------------------------------------- */
-
-.steps {
-  list-style: none;
-  max-width: var(--col);
-  margin: clamp(3rem, 8vw, 5.5rem) auto 0;
-  padding: 0;
-}
-
-.step {
-  display: grid;
-  grid-template-columns: 6.5rem 1fr;
-  gap: 0 1.5rem;
-  align-items: start;
-  padding: 2.25rem 0;
-  border-top: 1px solid var(--line);
-}
-
-.step-where {
-  display: inline-flex; align-items: center; gap: 0.45rem;
-  font: 400 0.68rem/1 var(--data);
-  letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--dim);
-  /* Aligned to the heading it labels. Sticky drifted it down tall steps. */
-  margin-top: 0.3rem;
-}
-/* The marker repeats the wire's shape language: square is the laptop, circle
-   is this browser. Both yellow, because both of them are DuckDB. */
-.step-where::before {
-  content: ''; width: 9px; height: 9px; flex: none;
-  border: 1.5px solid var(--signal);
-}
-.step[data-where="browser"] .step-where::before { border-radius: 50%; }
-
-.step h2 {
-  font: 600 1.18rem/1.25 var(--display);
-  letter-spacing: -0.035em;
-  margin: 0 0 0.6rem;
-}
-.step p { margin: 0 0 1.1rem; color: #b9c1d4; font-size: 0.95rem; }
-
-.step[data-locked="true"] .step-body { opacity: 0.42; }
-.step[data-locked="true"] h2 { color: var(--dim); }
-.step:not([data-locked="true"]) .locked-note { display: none; }
-
-/* --- command blocks ------------------------------------------------------ */
-
-.cmd {
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--ink-2);
-  overflow: hidden;
-}
-.cmd-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0.4rem 0.5rem 0.4rem 0.75rem;
-  border-bottom: 1px solid var(--line);
-  background: var(--ink-3);
-}
-.cmd-os {
-  font: 400 0.66rem/1 var(--data);
-  letter-spacing: 0.09em; text-transform: uppercase; color: var(--dim);
-}
-.cmd pre {
-  margin: 0; padding: 0.85rem 0.75rem;
-  overflow-x: auto;
-  font: 400 0.8rem/1.7 var(--data);
-  color: var(--signal);
-  white-space: pre;
-  tab-size: 2;
-}
 
 button {
   font: 500 0.78rem/1 var(--body);
@@ -266,137 +57,306 @@ button {
 button:hover { background: #fff759; border-color: #fff759; }
 button:disabled { background: var(--line); border-color: var(--line); color: var(--dim); cursor: not-allowed; }
 
-.copy {
-  font-family: var(--data);
-  font-size: 0.66rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  background: transparent;
+.ghost {
+  background: transparent; color: var(--dim); border-color: var(--line);
+  font-family: var(--data); font-size: 0.68rem;
+  letter-spacing: 0.08em; text-transform: uppercase; padding: 0.35rem 0.65rem;
+}
+.ghost:hover { background: transparent; color: var(--signal); border-color: var(--signal); }
+
+/* --- bar ----------------------------------------------------------------- */
+
+.bar {
+  position: fixed; inset: 0 0 auto 0; height: var(--bar-h); z-index: 20;
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 0 1rem;
+  background: color-mix(in srgb, var(--ink) 92%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+.brand { font: 700 0.82rem/1 var(--display); letter-spacing: -0.03em; }
+.bar-right { display: flex; align-items: center; gap: 0.6rem; }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  font: 400 0.7rem/1 var(--data);
+  letter-spacing: 0.06em; color: var(--dim);
+}
+.pill i {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--line); box-shadow: 0 0 0 3px color-mix(in srgb, var(--line) 40%, transparent);
+}
+.pill[data-state="connecting"], .pill[data-state="booting"] { color: var(--relay); }
+.pill[data-state="connecting"] i, .pill[data-state="booting"] i {
+  background: var(--relay);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--relay) 25%, transparent);
+  animation: throb 1.1s ease-in-out infinite;
+}
+.pill[data-state="live"] { color: var(--signal); }
+.pill[data-state="live"] i {
+  background: var(--signal);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal) 22%, transparent);
+}
+.pill[data-state="failed"] { color: var(--bad); }
+.pill[data-state="failed"] i { background: var(--bad); }
+
+@keyframes throb { 50% { opacity: 0.35; } }
+
+/* --- workbench shell ----------------------------------------------------- */
+
+.workbench {
+  display: grid;
+  grid-template-columns: var(--rail-w) minmax(0, 1fr);
+  min-height: 100%;
+  padding-top: var(--bar-h);
+}
+
+.rail {
+  border-right: 1px solid var(--line);
+  background: var(--ink-2);
+  padding: 1.25rem 1rem 3rem;
+  display: flex; flex-direction: column; gap: 1.75rem;
+  position: sticky; top: var(--bar-h); align-self: start;
+  /* Full viewport height, so the rail reads as a wall of the workbench rather
+     than a card floating in the corner when there is little in it. */
+  height: calc(100vh - var(--bar-h));
+  overflow-y: auto;
+}
+
+.rail-block h2 {
+  font: 600 0.66rem/1 var(--data);
+  letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--dim); margin: 0 0 0.75rem;
+}
+
+.conns { list-style: none; margin: 0 0 0.75rem; padding: 0; display: grid; gap: 0.4rem; }
+.conn {
+  display: grid; gap: 0.1rem;
+  /* Two columns so the detach button sits beside the name and spans both rows,
+     rather than pushing the detail line out of the box. */
+  grid-template-columns: 1fr auto;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line); border-radius: 3px;
+  background: var(--ink);
+}
+.conn-x {
+  grid-column: 2; grid-row: 1 / span 2; align-self: center;
+  background: transparent; border: 0; padding: 0 0.15rem;
+  color: var(--dim); font: 400 0.9rem/1 var(--data);
+  /* Only on hover or keyboard focus: a row of x's reads as a list of things
+     about to be deleted. */
+  opacity: 0; transition: opacity 0.15s ease, color 0.15s ease;
+}
+.conn:hover .conn-x, .conn-x:focus-visible { opacity: 1; }
+.conn-x:hover { color: var(--bad); }
+/* Shape language shared with the wire: circle is this browser, square is a
+   remote. Both yellow, because both of them are DuckDB. */
+.conn-name, .conn-detail { grid-column: 1; }
+.conn-name { font: 500 0.8rem/1.3 var(--data); display: flex; align-items: center; gap: 0.45rem; }
+.conn-name::before {
+  content: ''; width: 8px; height: 8px; flex: none; border: 1.5px solid var(--signal);
+}
+.conn[data-kind="local"] .conn-name::before { border-radius: 50%; }
+.conn-detail { font: 400 0.68rem/1.4 var(--data); color: var(--dim); overflow-wrap: anywhere; }
+
+.add { width: 100%; }
+
+.schema { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.15rem; }
+.schema-empty { font: 400 0.72rem/1.5 var(--data); color: var(--dim); }
+.schema-item {
+  width: 100%; text-align: left;
+  background: transparent; border: 0; border-radius: 2px;
+  color: var(--paper);
+  font: 400 0.75rem/1.5 var(--data);
+  padding: 0.2rem 0.35rem;
+}
+.schema-item:hover { background: var(--ink-3); color: var(--signal); }
+
+/* --- wire ---------------------------------------------------------------- */
+
+/* One route per remote, stacked. The separator only appears between them, so a
+   single remote looks exactly as it did before there could be two. */
+.wires { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.9rem; }
+.wire-frame + .wire-frame { border-top: 1px solid var(--line); padding-top: 0.9rem; }
+.wire { display: block; width: 100%; height: auto; overflow: visible; }
+
+.wire-leg {
+  fill: none; stroke: var(--line); stroke-width: 2;
+  stroke-dasharray: 3 7; stroke-linecap: round;
+  transition: stroke 0.5s ease, stroke-dasharray 0.5s ease;
+}
+.wire-node { fill: none; stroke: var(--line); stroke-width: 2; transition: stroke 0.45s ease, fill 0.45s ease; }
+.wire-node--relay { stroke: var(--line); }
+.wire-pulse { fill: var(--signal); opacity: 0; }
+
+.wire[data-state="connecting"] .wire-leg { stroke: var(--relay); animation: march 0.9s linear infinite; }
+.wire[data-state="live"] .wire-leg { stroke: var(--relay); stroke-dasharray: none; }
+.wire[data-state="live"] .wire-node { stroke: var(--signal); fill: color-mix(in srgb, var(--signal) 16%, transparent); }
+.wire[data-state="live"] .wire-node--relay { stroke: var(--relay); fill: color-mix(in srgb, var(--relay) 20%, transparent); }
+.wire[data-state="failed"] .wire-leg { stroke: var(--bad); }
+
+@keyframes march { to { stroke-dashoffset: -20; } }
+
+.wire-legend {
+  display: grid; grid-template-columns: 1fr; gap: 0.1rem;
+  margin: 0.5rem 0 0;
+  font: 400 0.66rem/1.45 var(--data);
   color: var(--dim);
-  border-color: var(--line);
-  padding: 0.3rem 0.6rem;
+  text-align: center;
+}
+.wire-relay-host { color: var(--relay); overflow-wrap: anywhere; }
+.wire-peer-name { color: var(--paper); }
+
+/* --- notebook ------------------------------------------------------------ */
+
+.notebook {
+  padding: 1.5rem clamp(1rem, 3vw, 2.5rem) 6rem;
+  display: grid; gap: 1.1rem;
+  align-content: start;
+  max-width: 60rem;
+}
+
+.cell {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--ink-2);
+  overflow: hidden;
+}
+.cell[data-state="running"] { border-color: var(--relay); }
+.cell[data-state="failed"] { border-color: color-mix(in srgb, var(--bad) 50%, var(--line)); }
+
+.cell-head {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.4rem 0.5rem 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--ink-3);
+}
+.cell-n { font: 400 0.68rem/1 var(--data); color: var(--dim); }
+.cell-ms { font: 400 0.68rem/1 var(--data); color: var(--relay); margin-left: auto; }
+.cell[data-state="failed"] .cell-ms { color: var(--bad); }
+.cell-run { font-family: var(--data); font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; padding: 0.3rem 0.7rem; }
+.cell-del {
+  background: transparent; border-color: transparent; color: var(--dim);
+  font-size: 1rem; line-height: 1; padding: 0.2rem 0.45rem;
+}
+.cell-del:hover { background: transparent; border-color: var(--line); color: var(--bad); }
+
+.cell-sql {
+  display: block; width: 100%;
+  background: transparent; border: 0; resize: none;
+  color: var(--paper);
+  font: 400 0.82rem/1.7 var(--data);
+  padding: 0.75rem;
+  outline: none;
+  tab-size: 2;
+}
+.cell-sql:focus { background: var(--ink); }
+
+.cell-out:not(:empty) { border-top: 1px solid var(--line); padding: 0.75rem; }
+
+.result { overflow-x: auto; max-height: 26rem; }
+.result table { border-collapse: collapse; font: 400 0.78rem/1.5 var(--data); width: 100%; }
+.result th, .result td {
+  text-align: left; padding: 0.3rem 0.9rem 0.3rem 0;
+  border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+.result th {
+  position: sticky; top: 0; background: var(--ink-2);
+  color: var(--dim); font-weight: 400; text-transform: uppercase;
+  font-size: 0.68rem; letter-spacing: 0.08em;
+}
+.result-meta { font: 400 0.72rem/1.5 var(--data); color: var(--dim); margin: 0.55rem 0 0; }
+.result-error { color: var(--bad); font: 400 0.78rem/1.6 var(--data); white-space: pre-wrap; margin: 0; }
+
+/* --- dialogs ------------------------------------------------------------- */
+
+dialog {
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--ink-2);
+  color: var(--paper);
+  padding: 1.75rem;
+  width: min(46rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 4rem);
+}
+dialog::backdrop { background: rgba(6, 8, 14, 0.72); backdrop-filter: blur(3px); }
+
+.dialog-x { display: flex; justify-content: flex-end; margin: -0.5rem -0.5rem 0 0; }
+.dialog-x button {
+  background: transparent; border-color: transparent; color: var(--dim);
+  font-size: 1.15rem; line-height: 1; padding: 0.15rem 0.45rem;
+}
+.dialog-x button:hover { background: transparent; color: var(--paper); }
+
+dialog h2 {
+  font: 600 1.2rem/1.25 var(--display);
+  letter-spacing: -0.035em; margin: 0 0 0.6rem;
+}
+.dialog-lede { color: #b9c1d4; font-size: 0.92rem; margin: 0 0 1.1rem; }
+dialog hr { border: 0; border-top: 1px solid var(--line); margin: 1.6rem 0; }
+.fineprint { font-size: 0.82rem; color: var(--dim); margin: 0; }
+
+/* --- command blocks ------------------------------------------------------ */
+
+.cmd { border: 1px solid var(--line); border-radius: 4px; background: var(--ink); overflow: hidden; }
+.cmd-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.35rem 0.5rem 0.35rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--ink-3);
+}
+.cmd-os { font: 400 0.66rem/1 var(--data); letter-spacing: 0.09em; text-transform: uppercase; color: var(--dim); }
+.cmd pre {
+  margin: 0; padding: 0.8rem 0.75rem; overflow-x: auto;
+  font: 400 0.8rem/1.7 var(--data); color: var(--signal);
+  white-space: pre; tab-size: 2;
+}
+
+.copy {
+  font-family: var(--data); font-size: 0.66rem;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  background: transparent; color: var(--dim); border-color: var(--line);
+  padding: 0.28rem 0.6rem;
 }
 .copy:hover { background: transparent; color: var(--signal); border-color: var(--signal); }
 
-.aside { margin-top: 1.25rem; }
-.aside summary {
-  cursor: pointer;
-  font: 400 0.85rem/1.5 var(--body);
-  color: var(--dim);
-}
+.aside { margin-top: 1.1rem; }
+.aside summary { cursor: pointer; font: 400 0.85rem/1.5 var(--body); color: var(--dim); }
 .aside summary:hover { color: var(--paper); }
-.aside > p { margin: 0.9rem 0; font-size: 0.88rem; }
-.aside .fineprint { margin-top: 0.75rem; }
+.aside > p { margin: 0.85rem 0; font-size: 0.88rem; color: #b9c1d4; }
+.aside .fineprint { margin-top: 0.7rem; }
 
 /* --- paste --------------------------------------------------------------- */
 
 .paste { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .paste input {
-  flex: 1 1 22ch;
-  min-width: 0;
-  background: var(--ink-2);
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  color: var(--paper);
-  font: 400 0.85rem/1 var(--data);
-  padding: 0.6rem 0.7rem;
+  flex: 1 1 22ch; min-width: 0;
+  background: var(--ink); border: 1px solid var(--line); border-radius: 3px;
+  color: var(--paper); font: 400 0.85rem/1 var(--data); padding: 0.6rem 0.7rem;
 }
 .paste input::placeholder { color: #4d566d; }
 .paste input:focus { border-color: var(--relay); }
 
-.slot-error, .slot-note { font-size: 0.85rem; margin: 0.85rem 0 0; }
-.slot-error { color: var(--bad); white-space: pre-wrap; }
-.slot-note { color: var(--dim); }
+.paste-error, .paste-note { font-size: 0.85rem; margin: 0.85rem 0 0; }
+.paste-error { color: var(--bad); white-space: pre-wrap; }
+.paste-note { color: var(--dim); }
 
-/* --- tour + console ------------------------------------------------------ */
+/* --- notes --------------------------------------------------------------- */
 
-.probes { list-style: none; margin: 1.25rem 0 0; padding: 0; }
-.probe {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0.15rem 1rem;
-  align-items: baseline;
-  padding: 0.7rem 0;
-  border-top: 1px solid var(--line);
-}
-.probe-sql {
-  font: 400 0.78rem/1.5 var(--data);
-  color: var(--paper);
-  overflow-wrap: anywhere;
-}
-.probe-ms {
-  font: 500 0.78rem/1 var(--data);
-  color: var(--relay);
-  white-space: nowrap;
-}
-.probe-why { grid-column: 1 / -1; font-size: 0.82rem; color: var(--dim); }
-.probe-out {
-  grid-column: 1 / -1;
-  font: 400 0.78rem/1.6 var(--data);
-  color: var(--signal);
-  overflow-wrap: anywhere;
-}
-.probe[data-state="pending"] .probe-ms { color: var(--dim); }
-.probe[data-state="failed"] .probe-out { color: var(--bad); }
-
-.console { margin-top: 2rem; }
-.console-label { display: block; font-size: 0.85rem; color: var(--dim); margin-bottom: 0.5rem; }
-.console textarea {
-  width: 100%;
-  background: var(--ink-2);
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  color: var(--paper);
-  font: 400 0.82rem/1.6 var(--data);
-  padding: 0.7rem;
-  resize: vertical;
-}
-.console textarea:focus { border-color: var(--relay); }
-.console-actions {
-  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
-  margin-top: 0.6rem;
-}
-.console-hint { font-size: 0.75rem; color: var(--dim); }
-
-.result { margin-top: 1rem; overflow-x: auto; }
-.result table { border-collapse: collapse; font: 400 0.78rem/1.5 var(--data); width: 100%; }
-.result th, .result td {
-  text-align: left; padding: 0.35rem 0.9rem 0.35rem 0;
-  border-bottom: 1px solid var(--line); white-space: nowrap;
-}
-.result th { color: var(--dim); font-weight: 400; text-transform: uppercase; font-size: 0.68rem; letter-spacing: 0.08em; }
-.result-meta { font: 400 0.75rem/1.5 var(--data); color: var(--dim); margin: 0.6rem 0 0; }
-.result-error { color: var(--bad); font: 400 0.8rem/1.6 var(--data); white-space: pre-wrap; }
-
-/* --- explain -------------------------------------------------------------- */
-
-.explain {
-  max-width: var(--col);
-  margin: clamp(3.5rem, 9vw, 6rem) auto 0;
-  border-top: 1px solid var(--line);
-  padding-top: 2.5rem;
-}
-.explain > h2 {
-  font: 600 0.72rem/1 var(--data);
-  letter-spacing: 0.16em; text-transform: uppercase;
-  color: var(--dim); margin: 0 0 2rem;
-}
-.explain-grid { display: grid; gap: 2rem; grid-template-columns: repeat(auto-fit, minmax(24ch, 1fr)); }
-.explain h3 {
-  font: 600 0.95rem/1.3 var(--display);
-  letter-spacing: -0.03em; margin: 0 0 0.5rem;
-}
-.explain p { margin: 0; font-size: 0.88rem; color: #a9b2c7; }
-.explain-foot { margin: 3.25rem 0 0; font-size: 0.82rem; color: var(--dim); overflow-wrap: anywhere; }
-
-.noscript { max-width: var(--col); margin: 3rem auto; padding: 0 var(--gut); color: var(--bad); }
+.notes-grid { display: grid; gap: 1.75rem; grid-template-columns: repeat(auto-fit, minmax(22ch, 1fr)); margin-bottom: 1.75rem; }
+.notes-grid h3 { font: 600 0.95rem/1.3 var(--display); letter-spacing: -0.03em; margin: 0 0 0.5rem; }
+.notes-grid p { margin: 0; font-size: 0.87rem; color: #a9b2c7; }
 
 /* --- narrow -------------------------------------------------------------- */
 
-@media (max-width: 34rem) {
-  .step { grid-template-columns: 1fr; gap: 0.75rem; }
-  .step-where { margin-top: 0; }
-  .wire-label i { display: none; }
+@media (max-width: 52rem) {
+  .workbench { grid-template-columns: 1fr; }
+  .rail {
+    position: static; max-height: none;
+    border-right: 0; border-bottom: 1px solid var(--line);
+    flex-direction: row; flex-wrap: wrap; gap: 1.25rem;
+  }
+  .rail-block { flex: 1 1 14rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {
