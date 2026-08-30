@@ -35,3 +35,9 @@ web/wasm/
 # site/build.mjs out of site/, web/, web/wasm/ and node_modules.
 site/node_modules/
 site/dist/
+
+# The npm package is assembled too: npm/dist/ is built by npm/build.mjs out of
+# npm/src/ and web/, and npm/ has its own node_modules for the CLI's bindings.
+npm/node_modules/
+npm/dist/
+npm/*.tgz
