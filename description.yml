@@ -3,16 +3,15 @@
 # opening a PR there; keeping the original here is how duckdb-otlp avoids the
 # copy drifting from the repo it describes.
 #
-# One thing must still be true before that PR can build: the repo has to be
-# public, and it is private today. `ref` below is main's tip as of PR #1 -- the
-# commit that carries the whole phase-1 extension -- so it is already a valid
-# default-branch build target; bump it to whatever main points at when you
-# actually submit.
+# `ref` below is the commit community-extensions builds, and it is main's tip as
+# of this bump rather than the v0.0.1 tag: the tag lands on this PR's merge
+# commit, which does not exist yet. Repoint it at the tagged commit before
+# submitting, so the entry builds exactly what was released.
 
 extension:
   name: quackhole
   description: Query a DuckDB behind NAT from anywhere, over an encrypted peer-to-peer connection — no port forwarding, VPN, or certificates
-  version: 0.1.0
+  version: 0.0.1
   language: C++
   build: cmake
   license: MIT
@@ -29,7 +28,7 @@ extension:
 
 repo:
   github: smithclay/quackhole
-  ref: 77b2d18ca3c3d013d710624355a302f9305465d8
+  ref: 7cdd3c665dd400a9133f25a1b93a7397f9f38fe1
 
 docs:
   hello_world: |
