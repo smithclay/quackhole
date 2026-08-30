@@ -1,6 +1,6 @@
 {
   "name": "quackhole",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Query a DuckDB behind NAT from a browser or another DuckDB, over an encrypted peer-to-peer connection",
   "license": "MIT",
   "type": "module",
