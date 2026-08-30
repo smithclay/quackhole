@@ -12,25 +12,30 @@ does too, because they are the same files.
     ../web/build-wasm.sh     # produces web/wasm/, gitignored
     npm run dev              # http://127.0.0.1:8099, reloads on save
 
-`npm run dev` watches `site/` and `web/` and reloads the page when you save.
-A rebuild is about 40ms because it only redoes the bundle and the copies — the
-duckdb bundles, the iroh wasm and the fonts are large or fetched over the
-network, and none of them change while you are editing the page. `npm run
-preview` is the same server without the watching, if you want to be sure you
-are looking at exactly what a full build produces.
+[Vite](https://vite.dev) is the build. `npm run dev` serves the page unbundled
+with HMR; `npm run build` produces `dist/`; `npm run preview` serves that
+`dist/` back, which is the way to be sure you are looking at exactly what
+deploys. Both servers set the cross-origin isolation headers directly — see
+below for why that matters.
 
-Two things make this a usable loop rather than a fast one:
+Three things make this a usable loop rather than a fast one:
 
+- **Editing `styles.css` does not restart DuckDB.** The stylesheet is swapped in
+  place, so an attached remote and a notebook full of results survive it. Only
+  `app.js`, `wire.js`, `ticket.js` and the files under `web/` force a reload —
+  they own workers and a wasm session, and hot-swapping a module that spawned a
+  worker leaves the old one running.
 - **The ticket lives in the fragment, and the fragment survives a reload.** Open
-  the link one laptop printed, and every save comes back already attached — you
-  are iterating on the connected page, not on the empty one.
+  the link one laptop printed, and every reload comes back already attached —
+  you are iterating on the connected page, not on the empty one.
 - **You do not need a laptop for most of it.** The notebook, the connection rail
   and the schema list all work against the local `memory` connection alone. Only
   the routes panel and remote queries need a real remote.
 
-The live-reload client is injected by the dev server into HTML responses, not
-written into `index.html` — `dist/` is what gets deployed, and the page that
-ships must not carry it.
+`vite.config.js` owns the two things Vite does not do by itself, and the
+comments there say why each is the way it is: the files that must ship
+byte-identical rather than bundled, and the fonts, which are fetched rather than
+found.
 
 ## The flow
 
@@ -97,9 +102,8 @@ meant three encoders agreeing on a shape none of them owned.
 | `wire.js` | The topology diagram, one per remote. Opens broken; pulses per query at the measured latency |
 | `ticket.js` | Ticket decode. The only encoder is `MintTicket` in the extension |
 | `styles.css` | Yellow is DuckDB, periwinkle is iroh. Nothing else is coloured |
-| `coi-serviceworker.js` | See below |
-| `build.mjs` | Assembles `dist/` from here, `web/`, `web/wasm/` and duckdb-wasm |
-| `serve.mjs` | The static server `npm run dev` and `verify.mjs` share. Also the live-reload channel, which only `--watch` turns on |
+| `public/coi-serviceworker.js` | See below. In `public/` so it ships unhashed at the root — it registers itself by its own URL, so a move into `assets/` would scope it there |
+| `vite.config.js` | The build. Vite owns `index.html`, `styles.css` and `app.js`; two plugins own the verbatim copies and the fonts |
 | `verify.mjs` | Drives the built page against a real laptop, headless. `QH_URL` points it at a deployment instead of `dist/`; `QH_TICKET2` adds a second laptop |
 
 ## Cross-origin isolation, on a host that cannot send headers
@@ -116,15 +120,20 @@ the worker was itself fetched without the headers.
 
 Two consequences worth knowing:
 
-- **Fonts are self-hosted.** `build.mjs` fetches them at build time. Under
+- **Fonts are self-hosted.** `vite.config.js` fetches them at build time. Under
   `require-corp` a cross-origin `<link rel=stylesheet>` is fetched in no-cors
   mode and blocked unless the far end sends CORP, which Google Fonts does not
   promise. A failure there is cosmetic, so the build warns and falls back to
   system faces rather than failing.
-- **`npm run dev` sets the headers directly** and does not rely on the service
-  worker. That is deliberate: when something breaks, it separates a transport
-  bug from a Pages-workaround bug. Use `node verify.mjs --sw` to exercise the
-  worker path that a real visitor gets.
+- **`npm run dev` and `npm run preview` set the headers directly** and do not
+  rely on the service worker. That is deliberate: when something breaks, it
+  separates a transport bug from a Pages-workaround bug. Use `node verify.mjs
+  --sw` to exercise the worker path that a real visitor gets.
+- **A worker inherits its page's COEP.** Anything `vite.config.js` serves itself
+  has to send the isolation headers too, because that middleware runs ahead of
+  the one Vite applies `server.headers` with. Miss it and `qh-worker.js` is
+  fetched, is 200, and still refuses to start — with an error event carrying no
+  message.
 
 ## Verifying it
 
@@ -143,7 +152,7 @@ whether Pages is serving it.
       sh scripts/quackhole-demo.sh
 
     # terminal 2 -- the browser
-    node build.mjs
+    npm run build
     QH_TICKET=qh1_… node verify.mjs
 
 Give it `QH_TICKET2` as well and it attaches a second laptop, queries both in

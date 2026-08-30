@@ -5,9 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>quackhole — a workbench for DuckDBs with no address</title>
 <meta name="description" content="A DuckDB workbench that runs entirely in your browser and queries DuckDBs behind NAT over iroh.">
-<link rel="stylesheet" href="fonts.css">
-<link rel="stylesheet" href="styles.css">
-<script src="coi-serviceworker.js"></script>
+<!-- fonts.css is fetched at build time and injected by vite.config.js; it has
+     no on-disk source for Vite to resolve a <link> against. -->
+<link rel="stylesheet" href="./styles.css">
+<!-- In public/, so it ships unhashed at the root: it registers itself by
+     document.currentScript.src, and a hashed path under assets/ would scope
+     the service worker to assets/ and stop it controlling the page. The
+     leading slash is Vite's public-file marker, and `base: './'` rewrites it
+     to a relative href in the built HTML -- which is what a project Pages
+     site under /quackhole/ needs. -->
+<script src="/coi-serviceworker.js"></script>
 </head>
 <body>
 

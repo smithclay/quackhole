@@ -3,10 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build.mjs",
-    "dev": "node build.mjs --serve --watch",
-    "verify": "node verify.mjs",
-    "preview": "node build.mjs --serve"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "verify": "node verify.mjs"
   },
   "comments": {
     "dependencies": "What building the site needs. The Pages workflow installs only these.",
@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@duckdb/duckdb-wasm": "^1.33.1-dev57.0",
-    "esbuild": "^0.28.2"
+    "vite": "^8.2.2"
   },
   "devDependencies": {
     "playwright": "^1.49.0"

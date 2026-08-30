@@ -6,7 +6,7 @@
 // break without the page looking broken, so asserting on the page's own end
 // state is the only check worth having.
 //
-//   node build.mjs
+//   npm run build
 //   QH_TICKET=qh1_... node verify.mjs
 //
 // Serves with the isolation headers set directly rather than through
@@ -18,9 +18,9 @@
 // only way to check that what is live on Pages still works -- a local dist/ can
 // pass while the deployment is stale or broken.
 import { chromium } from 'playwright';
+import { preview } from 'vite';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startStaticServer } from './serve.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, 'dist');
@@ -42,15 +42,29 @@ if (TICKET2 === TICKET) {
 }
 
 // A remote target serves itself; only the local run needs a server started here.
+// `vite preview` rather than a server of our own, so what this drives is what
+// `npm run preview` shows you -- one fewer thing that can be the difference
+// between a passing run and a broken page.
 let server = null;
 let base;
 if (REMOTE) {
   base = REMOTE.endsWith('/') ? REMOTE : `${REMOTE}/`;
   console.log(`\n  ${base}  (isolation via whatever the deployment does)\n`);
 } else {
-  const started = await startStaticServer(OUT, { isolate: !VIA_SW });
-  server = started.server;
-  base = `http://127.0.0.1:${started.port}/`;
+  server = await preview({
+    // 0 lets the OS pick, which avoids colliding with a dev server already on
+    // 8099.
+    preview: { host: '127.0.0.1', port: 0 },
+    logLevel: 'warn',
+    // Under --sw the page has to earn cross-origin isolation the way a
+    // github.io visitor does, so the headers vite.config.js sets come off.
+    // Passing `preview: { headers: {} }` above would not do it: inline config
+    // is deep-merged into the file's, so an empty object leaves both headers
+    // in place and the run quietly proves nothing. Mutating in `config` is
+    // after the file is loaded and before anything reads it.
+    plugins: VIA_SW ? [{ name: 'qh:no-isolation', config: (c) => void ((c.preview ??= {}).headers = {}) }] : [],
+  });
+  base = server.resolvedUrls.local[0].replace(/\/?$/, '/');
   console.log(`\n  serving ${OUT}\n  ${base}  (isolation via ${VIA_SW ? 'service worker' : 'headers'})\n`);
 }
 
@@ -290,7 +304,7 @@ try {
   failed = err.message;
 } finally {
   await browser.close();
-  server?.close();
+  await server?.close();
 }
 
 console.log(failed ? `\n  FAILED: ${failed}\n` : '\n  PASS\n');

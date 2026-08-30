@@ -88,3 +88,20 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
 - **A browser client that omits an optional query param takes a different code
   path.** `test/browser` always passes `timeout`, which is why a
   temporal-dead-zone bug in `shim.js` survived until `site/` left it out.
+- **A dedicated worker inherits its page's COEP.** Anything a dev-server
+  middleware in `site/vite.config.js` answers itself has to send the isolation
+  headers, because it short-circuits the middleware Vite applies
+  `server.headers` with. Miss it and `qh-worker.js` is fetched, is 200, and
+  still refuses to start -- with an error event carrying no message.
+- **Inline Vite config is deep-merged into the config file, so `{}` does not
+  clear anything.** `verify.mjs --sw` has to strip the isolation headers to
+  exercise the service worker path; passing `preview: { headers: {} }` leaves
+  both headers in place and the run quietly proves nothing. Mutating in a
+  plugin's `config` hook is what actually removes them.
+- **`web/`, `public/coi-serviceworker.js` and the duckdb-wasm bundles are
+  copied, never bundled.** `VERBATIM` in `site/vite.config.js` is the list.
+  `qh-worker.js` reaches its siblings through `importScripts('./protocol.js')`
+  at runtime, which no content hash survives, and `coi-serviceworker.js`
+  registers itself by `document.currentScript.src`, so a move into `assets/`
+  would scope the service worker to `assets/` and silently stop it controlling
+  the page.
