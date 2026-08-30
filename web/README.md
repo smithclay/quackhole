@@ -67,4 +67,16 @@ tell the two clients apart. Two implementations would have to agree about things
 that are not obvious — `Connection: close` framing, chunk extensions, which
 caller headers get dropped — and would drift the moment one was edited alone.
 
-Tests live in `test/browser/`.
+## Who drives this
+
+Two callers, and they are the reason the paths here are relative rather than
+rooted at `/`: [`site/`](../site) is served from a project Pages site under
+`/quackhole/`, where a leading slash resolves to github.io itself.
+
+| | |
+|---|---|
+| [`test/browser/`](../test/browser) | The harness. Proves each layer independently |
+| [`site/`](../site) | The public demo, which copies these files in verbatim |
+
+Neither reimplements anything here. That is the point: what the demo proves is
+what someone vendoring these files into their own page gets.

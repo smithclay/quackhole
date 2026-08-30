@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>quackhole — query a DuckDB that has no address</title>
+<meta name="description" content="Connect DuckDB-Wasm in this tab to a DuckDB on your laptop, behind NAT, over an encrypted peer-to-peer connection. No port forwarding, no VPN, no certificates.">
+
+<!-- GitHub Pages cannot send COOP/COEP, and the transport blocks in
+     Atomics.wait, which needs a SharedArrayBuffer. This service worker
+     re-serves same-origin responses with the headers and reloads once. It must
+     run before anything else on the page. -->
+<script src="./coi-serviceworker.js"></script>
+<link rel="stylesheet" href="./fonts.css">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+<header class="bar">
+  <a class="wordmark" href="https://github.com/smithclay/quackhole">quackhole</a>
+  <div class="bar-status" id="status" data-state="idle">
+    <span class="bar-dot"></span><span id="status-text">no route</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- The hero is the diagram, not a headline. The page opens showing a
+       connection that does not exist yet; finishing it is the whole visit. -->
+  <section class="hero">
+    <div class="wire-frame">
+      <div class="wire-mount" id="wire"></div>
+      <div class="wire-legend">
+        <span class="wire-label" data-node="browser"><b>this browser</b><i>duckdb-wasm</i></span>
+        <span class="wire-label" data-node="relay"><b>relay</b><i class="wire-relay-host">n0 public</i></span>
+        <span class="wire-label" data-node="laptop"><b>your laptop</b><i>duckdb + quackhole</i></span>
+      </div>
+    </div>
+
+    <h1>A database<br>with no address.</h1>
+    <p class="lede">
+      Your laptop's DuckDB is behind a NAT. It has no public IP, no open port and no
+      certificate. This tab is going to query it anyway — end-to-end encrypted, over a
+      relay that cannot read the traffic. One command on the laptop, one paste back here.
+    </p>
+    <p class="fineprint" id="prereq">
+      You need the <a href="https://duckdb.org/docs/installation/">DuckDB CLI</a> on your
+      laptop. Everything else the command below fetches for you.
+    </p>
+  </section>
+
+  <ol class="steps">
+
+    <li class="step" id="step-serve" data-where="laptop">
+      <div class="step-rail"><span class="step-where">laptop</span></div>
+      <div class="step-body">
+        <h2>Start a DuckDB that can be reached</h2>
+        <p>
+          Downloads the quackhole extension for your platform, seeds a small sample table so
+          there is something to query, starts serving, and prints a ticket. It runs in the
+          foreground; stop it with <kbd>Ctrl-C</kbd> when you are done.
+        </p>
+
+        <div class="cmd">
+          <div class="cmd-head">
+            <span class="cmd-os" id="cmd-os">detecting platform…</span>
+            <button class="copy" data-copy="#cmd-serve">copy</button>
+          </div>
+          <pre id="cmd-serve"><code></code></pre>
+        </div>
+
+        <details class="aside">
+          <summary>Or do it by hand, in the DuckDB you already have open</summary>
+          <p>
+            Same result, no script. This uses a token generated for this page, and mints the
+            same ticket in SQL. If the last line prints <em>not ready yet</em>, the endpoint
+            has not learned its home relay — run that line again.
+          </p>
+          <div class="cmd">
+            <div class="cmd-head">
+              <span class="cmd-os">SQL</span>
+              <button class="copy" data-copy="#cmd-manual">copy</button>
+            </div>
+            <pre id="cmd-manual"><code></code></pre>
+          </div>
+          <p class="fineprint">
+            The extension is not in community-extensions yet, so this needs a DuckDB started
+            with <code>-unsigned</code> and the downloaded binary. The script above handles that.
+          </p>
+        </details>
+      </div>
+    </li>
+
+    <li class="step" id="step-paste" data-where="browser">
+      <div class="step-rail"><span class="step-where">browser</span></div>
+      <div class="step-body">
+        <h2>Paste the ticket it printed</h2>
+        <p>
+          The ticket carries three things: the endpoint id, the relay to reach it through, and
+          the token. It never leaves this tab — the connection is made from your browser
+          directly to your laptop.
+        </p>
+        <form class="paste" id="paste-form">
+          <input
+            id="ticket"
+            name="ticket"
+            type="text"
+            spellcheck="false"
+            autocomplete="off"
+            placeholder="qh1_…"
+            aria-label="Ticket from your laptop">
+          <button type="submit" id="connect">Connect</button>
+        </form>
+        <p class="slot-error" id="paste-error" role="alert" hidden></p>
+        <p class="slot-note" id="paste-note" hidden></p>
+      </div>
+    </li>
+
+    <li class="step" id="step-query" data-where="browser" data-locked="true">
+      <div class="step-rail"><span class="step-where">browser</span></div>
+      <div class="step-body">
+        <h2>Query your laptop</h2>
+        <p class="locked-note">Unlocks once the connection is live.</p>
+
+        <div class="tour" id="tour" hidden>
+          <p>
+            Every one of these runs on your laptop. The timings are real, measured in this tab,
+            and they include a round trip through the relay.
+          </p>
+          <ol class="probes" id="probes"></ol>
+        </div>
+
+        <div class="console" id="console" hidden>
+          <label class="console-label" for="sql">Your turn — any SQL, against <code>laptop</code></label>
+          <form id="sql-form">
+            <textarea id="sql" spellcheck="false" rows="3">SELECT * FROM laptop.events ORDER BY ts DESC LIMIT 10;</textarea>
+            <div class="console-actions">
+              <span class="console-hint"><kbd>⌘</kbd><kbd>↵</kbd> to run</span>
+              <button type="submit" id="run">Run</button>
+            </div>
+          </form>
+          <div class="result" id="result"></div>
+        </div>
+      </div>
+    </li>
+  </ol>
+
+  <section class="explain">
+    <h2>What's actually happening</h2>
+    <div class="explain-grid">
+      <div>
+        <h3>The address is a public key</h3>
+        <p>
+          <code>quack:&lt;endpoint-id&gt;.iroh:9494</code>. That id is a 32-byte ed25519 public
+          key in z-base-32 — 52 characters, so it fits a DNS label. Nothing resolves it;
+          quackhole intercepts before a socket exists. Connecting to the right address and
+          authenticating the server are the same operation, so there is no certificate to
+          issue, renew or trust.
+        </p>
+      </div>
+      <div>
+        <h3>Quack is still the protocol</h3>
+        <p>
+          quackhole is a transport bridge and nothing else.
+          <a href="https://duckdb.org/docs/stable/core_extensions/quack">Quack</a> stays the
+          database protocol; its HTTP rides
+          <a href="https://www.iroh.computer/">iroh</a> QUIC streams, which supply identity, NAT
+          traversal, relay fallback and encryption. Your laptop cannot tell this tab apart from
+          a native DuckDB.
+        </p>
+      </div>
+      <div>
+        <h3>A browser can only relay</h3>
+        <p>
+          iroh compiles its IP transport out entirely under <code>cfg(wasm_browser)</code>,
+          because a browser cannot open a UDP socket. There is no hole punching and no direct
+          path from here — ever. Traffic stays end-to-end encrypted; the relay forwards
+          ciphertext it cannot read. Between two native peers, a direct path is possible.
+        </p>
+      </div>
+      <div>
+        <h3>The bridge under this tab</h3>
+        <p>
+          DuckDB-Wasm's Quack client makes <em>synchronous</em> XHR calls from a worker, so the
+          transport has to block. This page replaces <code>XMLHttpRequest</code> inside that
+          worker and parks it in <code>Atomics.wait</code> on a
+          <code>SharedArrayBuffer</code> while a second worker does the async iroh work — which
+          is why the page needs cross-origin isolation.
+        </p>
+      </div>
+    </div>
+    <p class="explain-foot">
+      Source, protocol notes and the cross-network test harness:
+      <a href="https://github.com/smithclay/quackhole">github.com/smithclay/quackhole</a>
+    </p>
+  </section>
+</main>
+
+<noscript>
+  <p class="noscript">This demo runs DuckDB in your browser, so it needs JavaScript.</p>
+</noscript>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

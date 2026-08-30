@@ -1,0 +1,89 @@
+# Builds and deploys the demo at https://smithclay.github.io/quackhole/.
+#
+# The page is assembled, not committed: web/wasm/ is gitignored, and the
+# duckdb-wasm bundles come from npm. So this workflow reproduces the same three
+# steps site/README.md documents for a local build, in the same order.
+#
+# The duckdb submodule is deliberately not checked out. Nothing here compiles
+# the C++ extension -- only crates/quackhole-web, which is pure Rust -- and
+# fetching duckdb costs minutes for files this build never opens.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'web/**'
+      - 'crates/**'
+      - 'scripts/quackhole-demo.sh'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time, and never cancel one midway: a half-published site is
+# worse than a slightly stale one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install a wasm-capable C toolchain
+        # ring compiles C for wasm32-unknown-unknown; ubuntu's clang has the
+        # target, unlike Apple's, so no Homebrew LLVM dance is needed here.
+        run: sudo apt-get update && sudo apt-get install -y clang llvm lld
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+
+      - name: Build the iroh transport
+        run: web/build-wasm.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: Install site dependencies
+        # --omit=dev leaves out playwright, which only verify.mjs needs and
+        # which CI never runs: it wants a live relay and a native server.
+        working-directory: site
+        run: npm ci --omit=dev
+
+      - name: Build the site
+        working-directory: site
+        run: node build.mjs
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

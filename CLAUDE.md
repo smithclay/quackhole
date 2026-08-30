@@ -25,8 +25,8 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
     make test                # sqllogictest; add QUACKHOLE_NET_TESTS=1 for the gated ones
     make rust-check          # cargo fmt --check, clippy -D warnings, cargo test
 
-`make lifecycle-check`, `test/docker/run.sh` and `test/browser/run.mjs` cover
-what those cannot; see the READMEs.
+`make lifecycle-check`, `test/docker/run.sh`, `test/browser/run.mjs` and
+`site/verify.mjs` cover what those cannot; see the READMEs.
 
 ## Things that are easy to get wrong
 
@@ -46,3 +46,13 @@ what those cannot; see the READMEs.
   a hand-written group is a CI failure rather than a preference.
 - **iroh for wasm needs `default-features = false, features = ["tls-ring"]`.**
   Dropping default features alone compiles `presets::N0` away.
+- **Paths inside `web/` must stay relative.** `site/` is a *project* Pages site
+  served under `/quackhole/`, so a leading `/` resolves to github.io itself.
+  `test/browser` serves from the root and hides this, so it passes either way.
+- **The ticket shape lives in three places and they must agree**:
+  `site/ticket.js` decodes it, `scripts/quackhole-demo.sh` and the by-hand SQL
+  in `site/app.js` both mint it. It exists because `attach_sql` omits the relay
+  URL, which a browser cannot do without.
+- **A browser client that omits an optional query param takes a different code
+  path.** `test/browser` always passes `timeout`, which is why a
+  temporal-dead-zone bug in `shim.js` survived until `site/` left it out.
