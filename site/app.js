@@ -45,35 +45,18 @@ const { QuackholeSession } = await import(/* @vite-ignore */ asset('session.js')
 
 // --- what to run on the other machine ---------------------------------------
 
-// A token minted here rather than by the script, so the by-hand path has one to
-// paste. The script generates its own.
+// A token minted here rather than by the CLI, so the by-hand path has one to
+// paste. `npx quackhole` generates its own.
 const manualToken = (() => {
   const b = new Uint8Array(12);
   crypto.getRandomValues(b);
   return [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
 })();
 
-function detectPlatform() {
-  const s = `${navigator.userAgentData?.platform ?? ''} ${navigator.platform ?? ''} ${navigator.userAgent}`;
-  if (/win/i.test(s) && !/darwin/i.test(s)) return 'windows';
-  if (/mac|darwin/i.test(s)) return 'macos';
-  return 'linux';
-}
-
-function renderLaptopCommand() {
-  const platform = detectPlatform();
-  const scriptUrl = asset('start.sh');
-
-  $('#cmd-serve').querySelector('code').textContent = `curl -fsSL ${scriptUrl} | sh`;
-  $('#cmd-serve-2').querySelector('code').textContent =
-    `curl -fsSL ${scriptUrl} -o quackhole-demo.sh\nsh quackhole-demo.sh`;
-
-  if (platform === 'windows') {
-    $('#cmd-os').textContent = 'windows — use wsl or git bash';
-  } else {
-    $('#cmd-os').textContent = platform === 'macos' ? 'macos — terminal' : 'linux — shell';
-  }
-
+// `npx quackhole` is the same command on every platform, so it is written out
+// in index.html rather than built here. This is only the by-hand path, which
+// needs a token minted in this tab.
+function renderManualCommand() {
   $('#cmd-manual').querySelector('code').textContent = [
     'INSTALL quack; LOAD quack;',
     "LOAD './quackhole.duckdb_extension';",
@@ -503,7 +486,7 @@ async function seedFor(conn) {
 
 // --- boot --------------------------------------------------------------------
 
-renderLaptopCommand();
+renderManualCommand();
 
 // A ticket can arrive in the fragment, which never leaves the browser -- it is
 // not sent to GitHub's servers and does not appear in their logs. That is what

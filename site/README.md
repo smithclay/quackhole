@@ -42,7 +42,7 @@ found.
 | Where | What |
 |---|---|
 | browser | DuckDB-Wasm boots on arrival; the notebook works before any remote exists |
-| laptop | `curl -fsSL .../start.sh \| sh` — fetch DuckDB and the extension, seed a table, serve, print a link |
+| laptop | `npx quackhole` — fetch the extension, seed a table, serve, print a link |
 | browser | opening that link `ATTACH`es the laptop into the session already running |
 
 Onboarding is a dialog, not a page: adding a remote is a task you finish once,
@@ -149,8 +149,7 @@ whether Pages is serving it.
 
     # terminal 1 -- the laptop
     QH_EXT=build/release/extension/quackhole/quackhole.duckdb_extension \
-    QH_DUCKDB=build/release/duckdb \
-      sh scripts/quackhole-demo.sh
+      npx ../npm
 
     # terminal 2 -- the browser
     npm run build
@@ -160,7 +159,9 @@ Give it `QH_TICKET2` as well and it attaches a second laptop, queries both in
 one statement, refuses a duplicate ticket, and detaches one of them — the four
 things one remote cannot exercise. A second server needs a second machine, or a
 different Quack port locally: `quackhole_serve` binds `127.0.0.1:9494` by
-default and the script refuses to start on top of an existing one.
+default and reuses whatever is already there rather than starting its own, so
+the second one needs `npx ../npm --port 9495`. It refuses to start otherwise,
+because the token it would print is not the token that server accepts.
 
 It needs a live n0 relay and a native server, so it is not a CI test — it sits
 alongside `test/docker` and `test/browser` as something a human runs.
@@ -168,8 +169,8 @@ alongside `test/docker` and `test/browser` as something a human runs.
 ## Deploying
 
 [`.github/workflows/pages.yml`](../.github/workflows/pages.yml) on pushes to
-`main` that touch `site/`, `web/`, `crates/` or the demo script. It builds the
-wasm and the site the same way this README does.
+`main` that touch `site/`, `web/` or `crates/`. It builds the wasm and the site
+the same way this README does.
 
 Two things must be true in repository settings, and neither is in this repo:
 

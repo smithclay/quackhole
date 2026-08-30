@@ -33,7 +33,7 @@ const REMOTE = process.env.QH_URL;
 const VIA_SW = process.argv.includes('--sw');
 
 if (!TICKET) {
-  console.error('Set QH_TICKET to the ticket printed by scripts/quackhole-demo.sh');
+  console.error('Set QH_TICKET to the ticket printed by `npx quackhole`');
   process.exit(2);
 }
 if (TICKET2 === TICKET) {

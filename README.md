@@ -13,8 +13,9 @@ infrastructure of your own. You need a shared token and a 52-character address.
 
 **Try it without installing anything first:**
 [smithclay.github.io/quackhole](https://smithclay.github.io/quackhole/) runs DuckDB-Wasm in
-your browser and walks you through connecting it to a DuckDB on your own laptop — one command
-there, one paste back. See [`site/`](site).
+your browser and walks you through connecting it to a DuckDB on your own laptop. The one
+command it asks for there is `npx quackhole`, which fetches the extension, seeds a sample
+database and prints a link back. See [`site/`](site) and [`npm/`](npm).
 
 Quackhole is a **transport bridge and nothing else**.
 [Quack](https://duckdb.org/docs/stable/core_extensions/quack) stays the database protocol; we
@@ -89,8 +90,9 @@ to issue, renew, or trust.
 - Restrict who may connect with an `allow` list of endpoint ids, checked before any Quack
   traffic.
 - Reach a laptop from a **browser** — DuckDB-Wasm can attach to an unmodified
-  `quackhole_serve`. See [`web/`](web) for the client, or
-  [the demo](https://smithclay.github.io/quackhole/) to watch it happen.
+  `quackhole_serve`. See [`web/`](web) for the client, [`npm/`](npm) for it packaged as
+  `cdn.jsdelivr.net/npm/quackhole`, or [the demo](https://smithclay.github.io/quackhole/)
+  to watch it happen.
 - Keep working on networks that block UDP: iroh's relay connection runs over HTTPS/443, so a
   captive portal is a slower path, not a failure.
 

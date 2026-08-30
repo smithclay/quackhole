@@ -119,10 +119,6 @@ const VERBATIM = {
   'duckdb/duckdb-browser-mvp.worker.js': join(DUCKDB, 'duckdb-browser-mvp.worker.js'),
   'duckdb/duckdb-eh.wasm': join(DUCKDB, 'duckdb-eh.wasm'),
   'duckdb/duckdb-browser-eh.worker.js': join(DUCKDB, 'duckdb-browser-eh.worker.js'),
-
-  // The page tells people to download this and read it. Serving it from the
-  // same origin as the instructions is the only way that claim holds.
-  'start.sh': join(ROOT, 'scripts', 'quackhole-demo.sh'),
 };
 
 function verbatim() {

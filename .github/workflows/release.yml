@@ -1,9 +1,11 @@
 # Publishes the extension binaries the demo downloads.
 #
-# scripts/quackhole-demo.sh fetches
-#   releases/latest/download/quackhole-<platform>.duckdb_extension
+# `npx quackhole` fetches
+#   releases/download/v<version>/quackhole-<platform>.duckdb_extension
 # so the asset names below are load-bearing: renaming one breaks the first step
-# of the onboarding on https://smithclay.github.io/quackhole/.
+# of the onboarding on https://smithclay.github.io/quackhole/. The tag is the
+# npm package's own version, not `latest` -- npm and releases are two publishing
+# surfaces, and `latest` would let them disagree. See npm/README.md.
 #
 # The build is repeated here rather than reusing MainDistributionPipeline's
 # artifacts, because artifacts do not cross workflow runs without a fragile

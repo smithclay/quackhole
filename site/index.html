@@ -82,30 +82,26 @@
 
   <h2 id="onboard-title">Add a remote DuckDB</h2>
   <p class="dialog-lede" id="onboard-lede">
-    Run this on the machine you want to query. It fetches DuckDB and the quackhole
-    extension into a temp directory, seeds a sample table, starts serving, and prints
-    a link. Nothing is installed.
+    Run this on the machine you want to query. It fetches the quackhole extension into
+    a temp directory, seeds a sample table, starts serving, and prints a link. Nothing
+    is installed.
   </p>
 
+  <!-- Written out here rather than built by app.js: npx is the same command on
+       every platform, so there is nothing to detect and nothing to interpolate. -->
   <div class="cmd">
     <div class="cmd-head">
-      <span class="cmd-os" id="cmd-os">detecting platform…</span>
-      <button class="copy" data-copy="#cmd-serve" type="button">copy</button>
+      <span class="cmd-os">any platform — needs node 20+</span>
+      <button class="copy" data-copy="#cmd-npx" type="button">copy</button>
     </div>
-    <pre id="cmd-serve"><code></code></pre>
+    <pre id="cmd-npx"><code>npx quackhole</code></pre>
   </div>
 
-  <details class="aside">
-    <summary>Prefer to read it before running it?</summary>
-    <p>Same script, downloaded first. It is meant to be read — that is why it is one file with no dependencies.</p>
-    <div class="cmd">
-      <div class="cmd-head">
-        <span class="cmd-os">two steps</span>
-        <button class="copy" data-copy="#cmd-serve-2" type="button">copy</button>
-      </div>
-      <pre id="cmd-serve-2"><code></code></pre>
-    </div>
-  </details>
+  <p class="fineprint">
+    That runs the <a href="https://www.npmjs.com/package/quackhole">quackhole</a> package —
+    <a href="https://github.com/smithclay/quackhole/tree/main/npm">read it first</a> if you
+    would rather. Ctrl-C stops it and removes the sample data.
+  </p>
 
   <details class="aside">
     <summary>Or do it by hand, in a DuckDB you already have open</summary>
@@ -122,7 +118,7 @@
     </div>
     <p class="fineprint">
       The extension is not in community-extensions yet, so this needs a DuckDB started
-      with <code>-unsigned</code> and the downloaded binary. The script above handles that.
+      with <code>-unsigned</code> and the downloaded binary. The command above handles that.
     </p>
   </details>
 

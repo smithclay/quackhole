@@ -16,7 +16,6 @@ on:
       - 'site/**'
       - 'web/**'
       - 'crates/**'
-      - 'scripts/quackhole-demo.sh'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
