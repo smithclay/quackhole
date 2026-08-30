@@ -1,0 +1,142 @@
+# Source of truth for the community-extensions entry. Submitting means copying
+# this file to community-extensions/extensions/quackhole/description.yml and
+# opening a PR there; keeping the original here is how duckdb-otlp avoids the
+# copy drifting from the repo it describes.
+#
+# One thing must still be true before that PR can build: the repo has to be
+# public, and it is private today. `ref` below is main's tip as of PR #1 -- the
+# commit that carries the whole phase-1 extension -- so it is already a valid
+# default-branch build target; bump it to whatever main points at when you
+# actually submit.
+
+extension:
+  name: quackhole
+  description: Query a DuckDB behind NAT from anywhere, over an encrypted peer-to-peer connection — no port forwarding, VPN, or certificates
+  version: 0.1.0
+  language: C++
+  build: cmake
+  license: MIT
+  # Must stay identical to exclude_archs in
+  # .github/workflows/MainDistributionPipeline.yml, so what CI proves is what
+  # gets published. iroh needs UDP sockets and a real tokio reactor, so every
+  # wasm target is out; mingw is out because the Rust staticlib does not link
+  # cleanly against it. linux_amd64_musl is opt-in upstream and so redundant
+  # here, but it is carried across to keep the two strings diffable.
+  excluded_platforms: "wasm_mvp;wasm_eh;wasm_threads;windows_amd64_mingw;linux_amd64_musl"
+  requires_toolchains: rust
+  maintainers:
+    - smithclay
+
+repo:
+  github: smithclay/quackhole
+  ref: 77b2d18ca3c3d013d710624355a302f9305465d8
+
+docs:
+  hello_world: |
+    -- Quackhole is a transport bridge: Quack stays the database protocol, and
+    -- quackhole carries its bytes over iroh QUIC streams. So both sides load
+    -- both extensions.
+
+    -- On the machine you want to reach, behind NAT:
+    INSTALL quack; LOAD quack;
+    LOAD quackhole;
+
+    CALL quackhole_serve(token := 'your-shared-token');
+    FROM quackhole_status();  -- endpoint id, relay, and a paste-ready attach_sql
+
+    -- From anywhere else -- a different network, a different continent:
+    INSTALL quack; LOAD quack;
+    LOAD quackhole;
+
+    CREATE SECRET (TYPE quack, TOKEN 'your-shared-token');
+    ATTACH 'quack:<endpoint-id>.iroh:9494' AS laptop;
+
+    FROM laptop.logs WHERE ts > now() - INTERVAL '1 hour';
+
+    -- Roles are per call, not per machine: one DuckDB can serve and attach at
+    -- the same time. To run both on ONE machine, set a throwaway key first --
+    -- otherwise both load the same key, share an endpoint id, and iroh refuses
+    -- the dial with "connecting to ourself is not supported":
+    --   SET GLOBAL quackhole_ephemeral = true;
+
+  extended_description: |
+    # Reach a DuckDB that has no address
+
+    Some DuckDBs are not reachable: a laptop on cafe Wi-Fi, a machine behind a
+    corporate NAT, a home server with no public IP. The usual answers are a port
+    forward, a VPN, a reverse tunnel, or a cloud hop — infrastructure to run and
+    certificates to renew.
+
+    Quackhole needs none of that. You need a shared token and a 52-character
+    address.
+
+    ## The address is a public key
+
+    ```
+    quack:<endpoint-id>.iroh:9494
+    ```
+
+    `<endpoint-id>` is a 32-byte ed25519 public key in z-base-32 — 52 characters,
+    so it fits in a DNS label. There is no DNS record and nothing ever resolves
+    it; quackhole intercepts before a socket exists.
+
+    That is what removes the certificate problem. The address *is* the identity,
+    so connecting to the right address and authenticating the server are the same
+    operation. There is nothing to issue, renew, or trust.
+
+    ## A transport bridge and nothing else
+
+    [Quack](https://duckdb.org/docs/stable/core_extensions/quack) stays the
+    database protocol. Quackhole carries its HTTP over
+    [iroh](https://www.iroh.computer/) QUIC streams, which supply identity, NAT
+    traversal, relay fallback, and end-to-end encryption. `ATTACH` is ordinary
+    Quack syntax — there is no new dialect to learn.
+
+    ## Use it for
+
+    - Querying a DuckDB behind NAT with no inbound port open on either side
+    - Joining across several remote DuckDBs at once, since roles are per call
+    - Restricting who may connect with an `allow` list of endpoint ids, checked
+      before any Quack traffic
+    - Reaching a laptop from a **browser** — DuckDB-Wasm can attach to an
+      unmodified `quackhole_serve`
+
+    ## Interface
+
+    | Function | What it does |
+    |---|---|
+    | `quackhole_serve([token], [target], [allow], [ephemeral], [auto_serve])` | Start Quack on `target` (default `127.0.0.1:9494`) if needed, bind an iroh endpoint, accept streams into it |
+    | `quackhole_stop()` | Stop the accept loop. Cached outbound connections stay usable |
+    | `quackhole_status()` | Endpoint id, relay URL, whether serving, and one row per known peer with its path (`direct` or `relay`) |
+
+    Settings are read when the endpoint binds, which can happen implicitly on the
+    first `ATTACH` to a `.iroh` host, so set them globally: `quackhole_key_path`
+    (default `~/.quackhole/key`), `quackhole_ephemeral`, `quackhole_relay_url`.
+
+    ## Security
+
+    The endpoint key at `~/.quackhole/key` (mode `0600`) **is** the address.
+    Persisting it is what lets an address survive a restart; losing it means a new
+    address, not a disclosure of data at rest.
+
+    iroh guarantees that the server is who the address says and that the relay can
+    neither read nor forge traffic. Quackhole adds the optional `allow` list and a
+    fixed `target`, so only the Quack port is reachable. Quack itself governs which
+    SQL runs. Relays see endpoint ids, timing, and byte counts — not SQL, results,
+    tokens, or which database is attached.
+
+    ## Good to know
+
+    - Early-stage. Measured over a public relay between networks with no route
+      between them: `ATTACH` about a second, warm queries 0.14–0.21s, a 200k-row
+      scan under 2.5s.
+    - **Hole punching is unverified.** Every measurement so far is relayed, so
+      nothing yet says how often iroh gets a direct connection through real CGNAT
+      or a symmetric NAT. Expect relay latency until you have measured otherwise.
+    - Quackhole carries Quack traffic only. `read_csv('https://<id>.iroh:9494/x.csv')`
+      reaches httpfs, not quackhole; use `ATTACH` and SQL.
+    - Browsers are client-only and relay-only, and need cross-origin isolation
+      (COOP/COEP).
+    - An idle `ATTACH` holds a relay path open at roughly one packet every five
+      seconds, and cached connections are never evicted.
+    - Native only: macOS, Linux, Windows. This is not a wasm extension.
