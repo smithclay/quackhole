@@ -132,7 +132,6 @@ is installed, no key is persisted, and nothing is left running after Ctrl-C.
 
 | | |
 |---|---|
-| `--db <path>` | Serve a database you already have instead of the sample |
 | `--token <t>` | Use a token of your own rather than a fresh random one |
 | `--port <n>` | Quack's local port, if `9494` is taken |
 | `--page <url>` | Aim the printed link at another workbench |
