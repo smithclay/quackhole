@@ -107,6 +107,18 @@ fn observed_path(conn: &Connection) -> &'static str {
     }
 }
 
+/// May this failure be retried on a fresh connection?
+///
+/// Only when the request cannot have reached the peer. Quack carries INSERTs
+/// and DDL, so replaying a request that may already have been applied would
+/// apply it twice -- at-most-once is the property that matters here, not
+/// at-least-once. `reused` narrows it further: a failure on a connection we
+/// just opened is a real failure, not a stale-cache symptom, and retrying it
+/// would only double the latency before reporting the same error.
+fn may_retry(attempt: &Attempt, reused: bool) -> bool {
+    reused && matches!(attempt, Attempt::BeforeSend(_))
+}
+
 /// Write `req` on a fresh bi-stream and read the reply to stream end.
 async fn round_trip(conn: &Connection, req: &[u8]) -> Attempt {
     let (mut send, mut recv) = match conn.open_bi().await {
@@ -154,13 +166,10 @@ pub async fn request_async(
     let id = addr.id;
     let reused = cache.get(&id).is_some();
     let conn = cache.get_or_connect(endpoint, addr.clone(), peers).await?;
-    let (conn, body) = match round_trip(&conn, req).await {
+    let attempt = round_trip(&conn, req).await;
+    let (conn, body) = match attempt {
         Attempt::Response(body) => (conn, body),
-        // A cached connection can be dead (peer restarted, idle timeout).
-        // Redial once -- but only when the request cannot have reached the
-        // peer, because Quack carries INSERTs and DDL, and replaying those
-        // would apply them twice.
-        Attempt::BeforeSend(_) if reused => {
+        _ if may_retry(&attempt, reused) => {
             cache.invalidate(&id);
             let conn = cache.get_or_connect(endpoint, addr, peers).await?;
             match round_trip(&conn, req).await {
@@ -212,5 +221,46 @@ impl Core {
         })?;
         // HEAD carries a Content-Length it does not honour.
         crate::http::parse_response(&raw, req.method != "HEAD")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn before() -> Attempt {
+        Attempt::BeforeSend(anyhow::anyhow!("could not open stream"))
+    }
+    fn after() -> Attempt {
+        Attempt::AfterSend(anyhow::anyhow!("read failed mid-response"))
+    }
+
+    #[test]
+    fn a_stale_cached_connection_is_retried() {
+        // The case the policy exists for: the peer restarted or the idle
+        // timeout fired, so opening the stream failed before anything was sent.
+        assert!(may_retry(&before(), true));
+    }
+
+    #[test]
+    fn a_request_that_may_have_been_applied_is_never_retried() {
+        // The important half. Quack carries INSERTs and DDL: once the bytes are
+        // on the wire we cannot know whether the peer acted on them, so a retry
+        // risks applying the same statement twice.
+        assert!(!may_retry(&after(), true));
+        assert!(!may_retry(&after(), false));
+    }
+
+    #[test]
+    fn a_fresh_connection_is_not_retried() {
+        // Nothing to invalidate, so a retry would redial the same peer, fail
+        // the same way, and double the time before the caller hears about it.
+        assert!(!may_retry(&before(), false));
+    }
+
+    #[test]
+    fn a_success_is_never_retried() {
+        assert!(!may_retry(&Attempt::Response(vec![1, 2, 3]), true));
+        assert!(!may_retry(&Attempt::Response(Vec::new()), false));
     }
 }

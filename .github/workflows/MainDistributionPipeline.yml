@@ -26,6 +26,28 @@ jobs:
       # cleanly against them.
       exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64_mingw;linux_amd64_musl'
 
+  # The distribution pipeline builds the extension and runs its sqllogictests,
+  # but it knows nothing about cargo -- so until this job existed, none of the
+  # Rust tests ran in CI, including the HTTP framing that both clients share.
+  # Network-gated tests stay gated: CI should not depend on n0's relays.
+  rust-checks:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
   code-quality-check:
     name: Code Quality Check
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v1.5-variegata

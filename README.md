@@ -150,6 +150,11 @@ test/docker/run.sh                         # two DuckDBs on networks that cannot
 Tests that need the network are gated on `QUACKHOLE_NET_TESTS=1` so the default suite stays
 hermetic.
 
+`make lifecycle-check` covers what the SQL tests cannot: closing a database with a bound
+endpoint, and forking after `LOAD`. Both are hang-class failures, so each scenario runs in a
+child process and is judged on whether it *exits*. It needs the Python bindings at the DuckDB
+version the extension was built against, which the target derives from the submodule.
+
 Formatting and lints run as pre-commit hooks, so they fail on your machine rather than in
 the CI matrix:
 
@@ -164,7 +169,9 @@ prek run --all-files            # first time, or after changing the config
 `format.py` expects; newer releases disagree about line breaking and CI rejects the result.
 It also runs `cargo fmt` and `cargo clippy -D warnings`, which nothing else did — the C++
 side had two gates and the side containing every unsafe block had none. The same checks are
-available as `make rust-check`.
+available as `make rust-check`, and CI runs them too: the distribution pipeline builds the
+extension and runs its sqllogictests but knows nothing about cargo, so a separate job covers
+the Rust side.
 
 CI's own gates can still be run directly, and cover a slightly different set (`format.py`
 reaches into `test/`; the hooks reach the C ABI header it does not):

@@ -472,3 +472,160 @@ pub unsafe extern "C" fn qh_relay_url(core: *const Core, out: *mut c_char, out_l
     // SAFETY: out holds out_len bytes; write_str refuses to overrun it.
     unsafe { write_str(out, out_len, &core.relay_url()) }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every entry point is reachable from C with a null handle, so each has to
+    /// answer rather than dereference. None of these need a Core -- binding one
+    /// would touch the network -- which is exactly why they were cheap enough
+    /// to have written long ago.
+    #[test]
+    fn null_handles_are_answered_not_dereferenced() {
+        let mut buf = [0 as c_char; 64];
+        unsafe {
+            assert_eq!(
+                qh_endpoint_id(std::ptr::null(), true, buf.as_mut_ptr(), 64),
+                QH_ERR
+            );
+            assert_eq!(qh_serve_stop(std::ptr::null_mut(), 100), QH_ERR);
+            assert!(!qh_is_serving(std::ptr::null()));
+            assert_eq!(qh_peer_count(std::ptr::null()), 0);
+            assert_eq!(qh_relay_url(std::ptr::null(), buf.as_mut_ptr(), 64), QH_ERR);
+            assert_eq!(
+                qh_peer_info(
+                    std::ptr::null(),
+                    0,
+                    buf.as_mut_ptr(),
+                    64,
+                    buf.as_mut_ptr(),
+                    64,
+                    buf.as_mut_ptr(),
+                    64
+                ),
+                QH_ERR
+            );
+        }
+    }
+
+    #[test]
+    fn freeing_null_is_a_no_op() {
+        // The header promises this, and C++ destructors lean on it.
+        unsafe {
+            qh_core_free(std::ptr::null_mut(), 100);
+            qh_response_free(std::ptr::null_mut());
+        }
+    }
+
+    #[test]
+    fn response_accessors_survive_a_null_handle() {
+        let null = std::ptr::null();
+        unsafe {
+            assert_eq!(qh_response_status(null), 0);
+            assert_eq!(qh_response_header_count(null), 0);
+            assert_eq!(qh_response_body_len(null), 0);
+            assert!(qh_response_reason(null).is_null());
+            assert!(qh_response_body(null).is_null());
+            assert!(qh_response_header_name(null, 0).is_null());
+            assert!(qh_response_header_value(null, 0).is_null());
+        }
+    }
+
+    #[test]
+    fn a_header_index_past_the_end_returns_null() {
+        let response: QhResponse = crate::Response {
+            status: 200,
+            reason: "OK".into(),
+            headers: vec![("Content-Length".into(), "2".into())],
+            body: b"hi".to_vec(),
+        }
+        .into();
+        let ptr: *const QhResponse = &response;
+        unsafe {
+            assert_eq!(qh_response_header_count(ptr), 1);
+            assert!(!qh_response_header_name(ptr, 0).is_null());
+            // C++ loops up to header_count; an off-by-one must not read past it.
+            assert!(qh_response_header_name(ptr, 1).is_null());
+            assert!(qh_response_header_value(ptr, 99).is_null());
+            assert_eq!(qh_response_body_len(ptr), 2);
+        }
+    }
+
+    #[test]
+    fn an_empty_body_still_yields_a_pointer() {
+        // C++ hands this straight to memcpy, which is UB on null even with a
+        // length of zero.
+        let response: QhResponse = crate::Response::default().into();
+        let ptr: *const QhResponse = &response;
+        unsafe {
+            assert_eq!(qh_response_body_len(ptr), 0);
+            assert!(!qh_response_body(ptr).is_null());
+        }
+    }
+
+    #[test]
+    fn write_str_refuses_a_buffer_that_cannot_hold_the_terminator() {
+        let mut buf = [0 as c_char; 4];
+        unsafe {
+            // "abc" plus NUL is exactly 4.
+            assert_eq!(write_str(buf.as_mut_ptr(), 4, "abc"), QH_OK);
+            assert_eq!(CStr::from_ptr(buf.as_ptr()).to_str().unwrap(), "abc");
+            // "abcd" would need 5, so it refuses rather than truncating: a
+            // truncated endpoint id is a different, valid-looking address.
+            assert_eq!(write_str(buf.as_mut_ptr(), 4, "abcd"), QH_ERR);
+            assert_eq!(write_str(std::ptr::null_mut(), 64, "abc"), QH_ERR);
+        }
+    }
+
+    #[test]
+    fn write_err_truncates_rather_than_overrunning() {
+        let mut buf = [0x7f as c_char; 8];
+        unsafe {
+            write_err(buf.as_mut_ptr(), 8, "a message far longer than eight bytes");
+            let written = CStr::from_ptr(buf.as_ptr()).to_str().unwrap();
+            assert_eq!(written, "a messa", "fills 7 bytes and terminates");
+
+            // Neither of these may write anywhere.
+            write_err(std::ptr::null_mut(), 8, "ignored");
+            write_err(buf.as_mut_ptr(), 0, "ignored");
+        }
+    }
+
+    #[test]
+    fn cstr_rejects_null_and_invalid_utf8() {
+        unsafe {
+            assert_eq!(cstr(std::ptr::null()), None);
+
+            let good = CString::new("endpoint").unwrap();
+            assert_eq!(cstr(good.as_ptr()), Some("endpoint"));
+
+            // A C caller can hand us any bytes. A lone 0xff is not UTF-8, and
+            // this has to be None rather than an unchecked conversion.
+            let bad = CString::new([0xffu8, 0xfe]).unwrap();
+            assert_eq!(cstr(bad.as_ptr()), None);
+        }
+    }
+
+    #[test]
+    fn collect_headers_distinguishes_empty_from_null() {
+        unsafe {
+            // n == 0 is a valid request with no headers, not an error.
+            assert_eq!(
+                collect_headers(std::ptr::null(), std::ptr::null(), 0),
+                Some(Vec::new())
+            );
+            // Claiming entries while passing no array is a caller bug.
+            assert!(collect_headers(std::ptr::null(), std::ptr::null(), 2).is_none());
+
+            let name = CString::new("X-Test").unwrap();
+            let value = CString::new("1").unwrap();
+            let names = [name.as_ptr()];
+            let values = [value.as_ptr()];
+            assert_eq!(
+                collect_headers(names.as_ptr(), values.as_ptr(), 1),
+                Some(vec![("X-Test".to_string(), "1".to_string())])
+            );
+        }
+    }
+}

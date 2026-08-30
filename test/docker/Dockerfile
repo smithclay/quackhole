@@ -19,7 +19,17 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 ENV PATH=/root/.cargo/bin:$PATH
 
 WORKDIR /src
-COPY . /src
+# Copied piecemeal rather than `COPY . /src`. With the whole tree in one layer,
+# editing a README or one of the scripts below invalidated it and triggered a
+# five-minute in-container DuckDB rebuild. Ordered least-likely-to-change first,
+# since Docker invalidates from the first changed layer onward.
+COPY duckdb /src/duckdb
+COPY extension-ci-tools /src/extension-ci-tools
+COPY CMakeLists.txt Makefile extension_config.cmake vcpkg.json /src/
+COPY cmake /src/cmake
+COPY crates /src/crates
+COPY src /src/src
+COPY test/sql /src/test/sql
 
 # .dockerignore strips every .git, so `git describe` cannot work. DuckDB's own
 # release CI uses this same escape hatch; the version string has to be a real
