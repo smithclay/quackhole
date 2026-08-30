@@ -2354,7 +2354,7 @@ dependencies = [
 
 [[package]]
 name = "quackhole-core"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "hex",
@@ -2365,7 +2365,7 @@ dependencies = [
 
 [[package]]
 name = "quackhole-web"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "console_error_panic_hook",
  "getrandom 0.3.4",
