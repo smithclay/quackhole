@@ -1,0 +1,55 @@
+{
+  "name": "quackhole",
+  "version": "0.0.1",
+  "description": "Query a DuckDB behind NAT from a browser or another DuckDB, over an encrypted peer-to-peer connection",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "quackhole": "bin/quackhole.js"
+  },
+  "exports": {
+    ".": "./dist/quackhole.js",
+    "./web/*": "./dist/web/*"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "comments": {
+    "version": "Derived from crates/Cargo.toml by build.mjs, because bin/quackhole.js resolves the release tag it downloads from it. See docs/UPDATING.md.",
+    "@duckdb/node-api": "Pinned, not ranged. Its version() is v1.5.5, which is the duckdb_version the extension is built against -- so the ABI match the old shell script spent 60 lines detecting is true by construction. A range would let that come apart on an install.",
+    "playwright": "Only npm/test/scratch.mjs needs it, and CI never runs it: it wants a live relay and a native server."
+  },
+  "dependencies": {
+    "@duckdb/node-api": "1.5.5-r.4"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "node build.mjs --check",
+    "test": "node test/scratch.mjs"
+  },
+  "keywords": [
+    "duckdb",
+    "duckdb-wasm",
+    "quack",
+    "iroh",
+    "p2p",
+    "nat-traversal"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/smithclay/quackhole.git",
+    "directory": "npm"
+  },
+  "homepage": "https://smithclay.github.io/quackhole/",
+  "bugs": {
+    "url": "https://github.com/smithclay/quackhole/issues"
+  }
+}

@@ -16,7 +16,6 @@ on:
       - 'site/**'
       - 'web/**'
       - 'crates/**'
-      - 'scripts/quackhole-demo.sh'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -71,7 +70,7 @@ jobs:
 
       - name: Build the site
         working-directory: site
-        run: node build.mjs
+        run: npm run build
 
       - uses: actions/upload-pages-artifact@v3
         with:

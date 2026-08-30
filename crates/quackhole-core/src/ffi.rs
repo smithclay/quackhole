@@ -80,6 +80,32 @@ unsafe fn write_str(out: *mut c_char, out_len: usize, value: &str) -> i32 {
     QH_OK
 }
 
+/// `write_str`, but says so in the error buffer when it will not fit.
+///
+/// The peer-identity calls below all write a string a caller sized a buffer
+/// for, and "QH_ERR with nothing said" is indistinguishable there from a
+/// malformed ticket.
+unsafe fn write_str_or_err(
+    out: *mut c_char,
+    out_len: usize,
+    value: &str,
+    err: *mut c_char,
+    err_len: usize,
+) -> i32 {
+    // SAFETY: both buffers are the caller's, passed through unchanged.
+    unsafe {
+        if write_str(out, out_len, value) == QH_OK {
+            return QH_OK;
+        }
+        write_err(
+            err,
+            err_len,
+            &format!("a {out_len} byte buffer does not fit {} bytes", value.len()),
+        );
+        QH_ERR
+    }
+}
+
 unsafe fn cstr<'a>(ptr: *const c_char) -> Option<&'a str> {
     if ptr.is_null() {
         return None;
@@ -166,6 +192,143 @@ pub unsafe extern "C" fn qh_endpoint_id(
     };
     // SAFETY: out holds out_len bytes; write_str refuses to overrun it.
     unsafe { write_str(out, out_len, id) }
+}
+
+//===--------------------------------------------------------------------===//
+// Peer identity
+//===--------------------------------------------------------------------===//
+//
+// None of these need a Core. Peer identity is arithmetic on strings, and the
+// C++ needs it in places -- binding a table function, formatting a column --
+// where no endpoint has been bound and none should be as a side effect.
+
+/// Build a `Peer` from an endpoint id alone, for the spellings that ignore the
+/// rest. Relay and token are empty because `address()` and `secret_name()` are
+/// derived from the id and nothing else.
+fn peer_from_id(endpoint_id: Option<&str>) -> anyhow::Result<crate::Peer> {
+    let Some(endpoint_id) = endpoint_id else {
+        anyhow::bail!("endpoint id must not be null");
+    };
+    crate::Peer::new(endpoint_id, "", "")
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qh_ticket_mint(
+    endpoint_id: *const c_char,
+    relay_url: *const c_char,
+    token: *const c_char,
+    out: *mut c_char,
+    out_len: usize,
+    err: *mut c_char,
+    err_len: usize,
+) -> i32 {
+    // SAFETY: per quackhole_core.h, every string pointer is null or
+    // NUL-terminated, out holds out_len bytes and err holds err_len.
+    unsafe {
+        let ticket = guard(err, err_len, || {
+            let Some(endpoint_id) = cstr(endpoint_id) else {
+                anyhow::bail!("endpoint id must not be null");
+            };
+            crate::Peer::new(
+                endpoint_id,
+                cstr(relay_url).unwrap_or(""),
+                cstr(token).unwrap_or(""),
+            )?
+            .to_ticket()
+        });
+        match ticket {
+            Some(ticket) => write_str_or_err(out, out_len, &ticket, err, err_len),
+            None => QH_ERR,
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qh_ticket_parse(
+    ticket: *const c_char,
+    id_out: *mut c_char,
+    id_len: usize,
+    relay_out: *mut c_char,
+    relay_len: usize,
+    token_out: *mut c_char,
+    token_len: usize,
+    err: *mut c_char,
+    err_len: usize,
+) -> i32 {
+    // SAFETY: as above, and each output buffer holds the length given beside it.
+    unsafe {
+        let peer = guard(err, err_len, || {
+            let Some(ticket) = cstr(ticket) else {
+                anyhow::bail!("ticket must not be null");
+            };
+            crate::Peer::parse_ticket(ticket)
+        });
+        let Some(peer) = peer else {
+            return QH_ERR;
+        };
+        // All three or none: a caller handed an id but silently no token would
+        // attach and then fail authentication, which reads as a server problem
+        // rather than as a buffer that was too small.
+        if write_str_or_err(id_out, id_len, peer.endpoint_id(), err, err_len) != QH_OK
+            || write_str_or_err(relay_out, relay_len, peer.relay_url(), err, err_len) != QH_OK
+        {
+            return QH_ERR;
+        }
+        write_str_or_err(token_out, token_len, peer.token(), err, err_len)
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qh_peer_address(
+    endpoint_id: *const c_char,
+    out: *mut c_char,
+    out_len: usize,
+    err: *mut c_char,
+    err_len: usize,
+) -> i32 {
+    // SAFETY: as on qh_ticket_mint.
+    unsafe {
+        match guard(err, err_len, || {
+            Ok(peer_from_id(cstr(endpoint_id))?.address())
+        }) {
+            Some(address) => write_str_or_err(out, out_len, &address, err, err_len),
+            None => QH_ERR,
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qh_peer_secret_name(
+    endpoint_id: *const c_char,
+    out: *mut c_char,
+    out_len: usize,
+    err: *mut c_char,
+    err_len: usize,
+) -> i32 {
+    // SAFETY: as on qh_ticket_mint.
+    unsafe {
+        match guard(err, err_len, || {
+            Ok(peer_from_id(cstr(endpoint_id))?.secret_name())
+        }) {
+            Some(name) => write_str_or_err(out, out_len, &name, err, err_len),
+            None => QH_ERR,
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qh_address_endpoint_id(
+    address: *const c_char,
+    out: *mut c_char,
+    out_len: usize,
+) -> i32 {
+    // SAFETY: address is null or NUL-terminated; out holds out_len bytes.
+    unsafe {
+        let Some(id) = cstr(address).and_then(crate::Peer::parse_address) else {
+            return QH_ERR;
+        };
+        write_str(out, out_len, &id)
+    }
 }
 
 //===--------------------------------------------------------------------===//
@@ -343,6 +506,34 @@ unsafe fn collect_headers(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn qh_peer_relay_set(
+    core: *mut Core,
+    endpoint_id: *const c_char,
+    relay_url: *const c_char,
+    err: *mut c_char,
+    err_len: usize,
+) -> i32 {
+    // SAFETY: core is null or a live handle, the strings are null or
+    // NUL-terminated, and err holds err_len bytes -- per quackhole_core.h.
+    unsafe {
+        let Some(core) = core.as_ref() else {
+            write_err(err, err_len, "null quackhole core");
+            return QH_ERR;
+        };
+        let result = guard(err, err_len, || {
+            let Some(endpoint_id) = cstr(endpoint_id) else {
+                anyhow::bail!("endpoint id must not be null");
+            };
+            core.set_peer_relay(endpoint_id, cstr(relay_url).unwrap_or(""))
+        });
+        match result {
+            Some(()) => QH_OK,
+            None => QH_ERR,
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn qh_response_status(response: *const QhResponse) -> u16 {
     // SAFETY: null or a live handle from this library, per quackhole_core.h.
     unsafe { response.as_ref() }.map(|r| r.status).unwrap_or(0)
@@ -473,6 +664,22 @@ pub unsafe extern "C" fn qh_relay_url(core: *const Core, out: *mut c_char, out_l
     unsafe { write_str(out, out_len, &core.relay_url()) }
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qh_relay_url_wait(
+    core: *const Core,
+    timeout_ms: u64,
+    out: *mut c_char,
+    out_len: usize,
+) -> i32 {
+    // SAFETY: null or a live handle from this library, per quackhole_core.h.
+    let Some(core) = (unsafe { core.as_ref() }) else {
+        return QH_ERR;
+    };
+    let url = core.wait_relay_url(std::time::Duration::from_millis(timeout_ms));
+    // SAFETY: out holds out_len bytes; write_str refuses to overrun it.
+    unsafe { write_str(out, out_len, &url) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,6 +711,175 @@ mod tests {
                     buf.as_mut_ptr(),
                     64
                 ),
+                QH_ERR
+            );
+        }
+    }
+
+    #[test]
+    fn peer_identity_survives_the_c_abi() {
+        let id = crate::parse_endpoint_id(&iroh::SecretKey::generate().public().to_z32())
+            .unwrap()
+            .to_z32();
+        let id_c = CString::new(id.clone()).unwrap();
+        let relay_c = CString::new("https://relay.example/").unwrap();
+        // The one field a caller controls, and the one that can carry a quote
+        // into the JSON.
+        let token_c = CString::new(r#"a"b\c"#).unwrap();
+
+        let mut ticket = [0 as c_char; 2048];
+        let mut err = [0 as c_char; 512];
+        unsafe {
+            assert_eq!(
+                qh_ticket_mint(
+                    id_c.as_ptr(),
+                    relay_c.as_ptr(),
+                    token_c.as_ptr(),
+                    ticket.as_mut_ptr(),
+                    2048,
+                    err.as_mut_ptr(),
+                    512,
+                ),
+                QH_OK,
+                "{}",
+                CStr::from_ptr(err.as_ptr()).to_string_lossy()
+            );
+
+            let (mut id_out, mut relay_out, mut token_out) =
+                ([0 as c_char; 80], [0 as c_char; 512], [0 as c_char; 512]);
+            assert_eq!(
+                qh_ticket_parse(
+                    ticket.as_ptr(),
+                    id_out.as_mut_ptr(),
+                    80,
+                    relay_out.as_mut_ptr(),
+                    512,
+                    token_out.as_mut_ptr(),
+                    512,
+                    err.as_mut_ptr(),
+                    512,
+                ),
+                QH_OK
+            );
+            assert_eq!(cstr(id_out.as_ptr()), Some(id.as_str()));
+            assert_eq!(cstr(relay_out.as_ptr()), Some("https://relay.example/"));
+            assert_eq!(cstr(token_out.as_ptr()), Some(r#"a"b\c"#));
+
+            // The invariant the C++ used to hold by writing the same string
+            // twice: the SCOPE and the ATTACH path are one function.
+            let mut address = [0 as c_char; 96];
+            assert_eq!(
+                qh_peer_address(
+                    id_c.as_ptr(),
+                    address.as_mut_ptr(),
+                    96,
+                    err.as_mut_ptr(),
+                    512
+                ),
+                QH_OK
+            );
+            assert_eq!(
+                cstr(address.as_ptr()),
+                Some(format!("quack:{id}.iroh:9494").as_str())
+            );
+
+            let mut back = [0 as c_char; 80];
+            assert_eq!(
+                qh_address_endpoint_id(address.as_ptr(), back.as_mut_ptr(), 80),
+                QH_OK
+            );
+            assert_eq!(cstr(back.as_ptr()), Some(id.as_str()));
+
+            let mut secret = [0 as c_char; 64];
+            assert_eq!(
+                qh_peer_secret_name(
+                    id_c.as_ptr(),
+                    secret.as_mut_ptr(),
+                    64,
+                    err.as_mut_ptr(),
+                    512
+                ),
+                QH_OK
+            );
+            assert_eq!(cstr(secret.as_ptr()), Some(format!("qh_{id}").as_str()));
+        }
+    }
+
+    #[test]
+    fn peer_identity_refuses_rather_than_truncating() {
+        let id_c = CString::new(iroh::SecretKey::generate().public().to_z32()).unwrap();
+        let relay_c = CString::new("https://relay.example/").unwrap();
+        let mut small = [0 as c_char; 8];
+        let mut err = [0 as c_char; 512];
+        unsafe {
+            // A truncated address is a different, valid-looking one, so this
+            // has to fail -- and say why, or it is indistinguishable from a
+            // malformed id.
+            assert_eq!(
+                qh_peer_address(id_c.as_ptr(), small.as_mut_ptr(), 8, err.as_mut_ptr(), 512),
+                QH_ERR
+            );
+            assert!(
+                CStr::from_ptr(err.as_ptr())
+                    .to_string_lossy()
+                    .contains("does not fit"),
+                "{}",
+                CStr::from_ptr(err.as_ptr()).to_string_lossy()
+            );
+
+            // No relay means no ticket: minting one would hand out a link that
+            // fails on the first click.
+            let mut ticket = [0 as c_char; 2048];
+            let empty = CString::new("").unwrap();
+            assert_eq!(
+                qh_ticket_mint(
+                    id_c.as_ptr(),
+                    empty.as_ptr(),
+                    empty.as_ptr(),
+                    ticket.as_mut_ptr(),
+                    2048,
+                    err.as_mut_ptr(),
+                    512,
+                ),
+                QH_ERR
+            );
+
+            // Nulls are answered, not dereferenced, like everything else here.
+            assert_eq!(
+                qh_ticket_mint(
+                    std::ptr::null(),
+                    relay_c.as_ptr(),
+                    std::ptr::null(),
+                    ticket.as_mut_ptr(),
+                    2048,
+                    err.as_mut_ptr(),
+                    512,
+                ),
+                QH_ERR
+            );
+            assert_eq!(
+                qh_ticket_parse(
+                    std::ptr::null(),
+                    small.as_mut_ptr(),
+                    8,
+                    small.as_mut_ptr(),
+                    8,
+                    small.as_mut_ptr(),
+                    8,
+                    err.as_mut_ptr(),
+                    512,
+                ),
+                QH_ERR
+            );
+            assert_eq!(
+                qh_address_endpoint_id(std::ptr::null(), small.as_mut_ptr(), 8),
+                QH_ERR
+            );
+            // Not an iroh address at all.
+            let local = CString::new("quack:localhost:9494").unwrap();
+            let mut out = [0 as c_char; 80];
+            assert_eq!(
+                qh_address_endpoint_id(local.as_ptr(), out.as_mut_ptr(), 80),
                 QH_ERR
             );
         }

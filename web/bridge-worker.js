@@ -9,6 +9,7 @@
 // Side-effect import: protocol.js assigns to globalThis, so one file serves
 // both this module and the shim's classic script.
 import './protocol.js';
+import { transport } from './peer.js';
 
 const P = globalThis.QH_PROTO;
 
@@ -16,8 +17,26 @@ let ctl = null;
 let data = null;
 let mode = 'fetch';
 let client = null;
-let relay = null;
 let fault = null;
+// The transport module, in iroh mode. It owns the address shape as well as the
+// dial, so the peer a request names is read out of the hostname by the same
+// code the extension uses -- this file used to slice the label off itself.
+let wasm = null;
+
+// The relay to use when a peer is not in the map below. `?relay=` on the worker
+// URL sets it, which is all a single-remote page needs -- test/browser has only
+// ever had one server and passes it that way.
+let defaultRelay = null;
+
+// Per-peer relays, for a caller holding more than one remote at a time. The
+// peer is already resolved per request (from the .iroh hostname); the relay was
+// not, so without this a second remote on a different relay would be dialled
+// through the first one's and fail to resolve.
+//
+// Filled by `peer` control frames, which arrive on the same channel as the
+// requests they are for -- see protocol.js. That is what makes a registration
+// unovertakeable by the dial it precedes.
+const peerRelays = new Map();
 
 /// Hands one chunk to the blocked thread and waits for it to be consumed.
 ///
@@ -47,8 +66,8 @@ function fail(message) {
 
 async function performIroh(req) {
   const u = new URL(req.url);
-  if (!u.hostname.endsWith('.iroh')) throw new Error(`not an iroh host: ${u.hostname}`);
-  const peer = u.hostname.slice(0, -'.iroh'.length);
+  const peer = wasm.Peer.parseAddress(u.hostname);
+  if (!peer) throw new Error(`not an iroh host: ${u.hostname}`);
 
   // duckdb-wasm renames Host to X-Host-Override, because a browser may not set
   // Host on an XHR. Drop it rather than translating it back: the core builds the
@@ -63,6 +82,12 @@ async function performIroh(req) {
   // byte-for-byte the frames the native extension sends. That is what lets an
   // unmodified quackhole_serve answer a browser -- and it is why there is no
   // HTTP code in this file to drift away from the C++ side.
+  // A registered peer wins; otherwise fall back to the one relay the worker URL
+  // carried. Dialling with an empty relay is allowed -- that is iroh resolving
+  // through pkarr -- so a miss degrades rather than throwing. The native side
+  // reads the same way; see `Core::request` in the core.
+  const relay = peerRelays.get(peer) ?? defaultRelay;
+
   return client.request(
     peer,
     relay,
@@ -104,16 +129,23 @@ async function performFetch(req) {
 self.onmessage = async (ev) => {
   const msg = ev.data;
 
-  if (msg && msg.__qh === 'init') {
+  // Registering a peer is answered before anything else, and needs nothing to
+  // be ready: it is a map write, and the init below may still be awaiting the
+  // wasm module when one arrives.
+  if (msg && msg[P.TAG] === P.PEER) {
+    if (msg.endpointId) peerRelays.set(msg.endpointId, msg.relay || null);
+    return;
+  }
+
+  if (msg && msg[P.TAG] === P.INIT) {
     ctl = new Int32Array(msg.sab, 0, 8);
     data = new Uint8Array(msg.sab, P.CTL_BYTES);
     mode = msg.mode || 'fetch';
-    relay = msg.relay || null;
+    defaultRelay = msg.relay || null;
     fault = msg.fault || null;
     try {
       if (mode === 'iroh') {
-        const wasm = await import('./wasm/quackhole.js');
-        await wasm.default();
+        wasm = await transport();
         client = await wasm.connect();
         console.log(`[qh-bridge] iroh endpoint ${client.endpointId()}`);
       }

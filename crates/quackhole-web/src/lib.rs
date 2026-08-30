@@ -123,6 +123,72 @@ impl QuackholeClient {
     }
 }
 
+//===--------------------------------------------------------------------===//
+// Peer identity
+//===--------------------------------------------------------------------===//
+
+/// One remote DuckDB, as this page knows it.
+///
+/// The same `quackhole_core::Peer` the extension mints tickets with, bound a
+/// second time here rather than reimplemented -- exactly as the HTTP framing
+/// above is. Two decoders of the `qh1_` format would drift on the parts that
+/// are not obvious: which fields are optional, what a missing relay means, and
+/// how generous to be about what a person actually pasted.
+#[wasm_bindgen]
+#[derive(Debug, Clone)]
+pub struct Peer {
+    inner: quackhole_core::Peer,
+}
+
+#[wasm_bindgen]
+impl Peer {
+    /// Read a ticket. Throws with a message written for the person holding it.
+    #[wasm_bindgen(js_name = parseTicket)]
+    pub fn parse_ticket(input: &str) -> Result<Peer, JsValue> {
+        quackhole_core::Peer::parse_ticket(input)
+            .map(|inner| Peer { inner })
+            .map_err(|e| JsValue::from_str(&format!("{e:#}")))
+    }
+
+    /// The endpoint id in an `<id>.iroh` address, or undefined if it is not one.
+    ///
+    /// This is what the bridge resolves a request's peer with. It used to be a
+    /// `hostname.slice(0, -'.iroh'.length)` there, which is the same convention
+    /// spelled a third way.
+    #[wasm_bindgen(js_name = parseAddress)]
+    pub fn parse_address(address: &str) -> Option<String> {
+        quackhole_core::Peer::parse_address(address)
+    }
+
+    #[wasm_bindgen(getter, js_name = endpointId)]
+    pub fn endpoint_id(&self) -> String {
+        self.inner.endpoint_id().to_string()
+    }
+
+    #[wasm_bindgen(getter, js_name = relayUrl)]
+    pub fn relay_url(&self) -> String {
+        self.inner.relay_url().to_string()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn token(&self) -> String {
+        self.inner.token().to_string()
+    }
+
+    /// The address to ATTACH, which is also the secret's SCOPE. They have to be
+    /// the same string or the token is filed under a path nothing attaches to.
+    #[wasm_bindgen(getter)]
+    pub fn address(&self) -> String {
+        self.inner.address()
+    }
+
+    /// The DuckDB identifier naming this peer's secret.
+    #[wasm_bindgen(getter, js_name = secretName)]
+    pub fn secret_name(&self) -> String {
+        self.inner.secret_name()
+    }
+}
+
 /// Read a plain `{name: value}` object into header pairs.
 fn js_headers(value: &JsValue) -> Vec<(String, String)> {
     let Some(entries) = js_sys::Object::try_from(value).map(js_sys::Object::entries) else {

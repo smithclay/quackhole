@@ -25,8 +25,10 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
     make test                # sqllogictest; add QUACKHOLE_NET_TESTS=1 for the gated ones
     make rust-check          # cargo fmt --check, clippy -D warnings, cargo test
 
-`make lifecycle-check`, `test/docker/run.sh`, `test/browser/run.mjs` and
-`site/verify.mjs` cover what those cannot; see the READMEs.
+`make lifecycle-check`, `test/docker/run.sh`, `test/browser/run.mjs`,
+`site/verify.mjs` and `npm/test/scratch.mjs` cover what those cannot; see the
+READMEs. The last one packs a tarball, serves it from a second origin, and runs
+the npm README's own quickstart block against a live laptop.
 
 ## Things that are easy to get wrong
 
@@ -49,10 +51,125 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
 - **Paths inside `web/` must stay relative.** `site/` is a *project* Pages site
   served under `/quackhole/`, so a leading `/` resolves to github.io itself.
   `test/browser` serves from the root and hides this, so it passes either way.
-- **The ticket shape lives in three places and they must agree**:
-  `site/ticket.js` decodes it, `scripts/quackhole-demo.sh` and the by-hand SQL
-  in `site/app.js` both mint it. It exists because `attach_sql` omits the relay
-  URL, which a browser cannot do without.
+- **`web/` is loadable from an origin the page is not on, and that is what
+  `QH_CONFIG` is for.** `new Worker(<cross-origin URL>)` throws `SecurityError`
+  for module and classic workers alike, so a CDN copy comes in through a
+  same-origin blob that `importScripts` it -- and a blob URL has no query string
+  to read `?target=` from and an opaque path that `./protocol.js` will not
+  resolve against. So `qh-worker.js` takes `self.QH_CONFIG` when a loader
+  assigns one, falls back to parsing its own URL when it does not, and publishes
+  whichever it used for `shim.js`, which must not parse a second time. `base` is
+  the setting with no query-parameter equivalent and defaults to the worker's
+  own URL, which is what keeps the relative rule above holding for a vendored
+  copy. `npm/src/quackhole.js` is the loader; `test/browser` and `site/` both
+  still take the query-param path, which is why they prove the transport was not
+  changed by the move that changed its plumbing.
+- **Peer identity lives in `crates/quackhole-core/src/peer.rs`**, and is bound
+  twice: over the C ABI (`qh_ticket_mint`, `qh_ticket_parse`, `qh_peer_address`,
+  `qh_peer_secret_name`, `qh_address_endpoint_id`) and over wasm-bindgen as
+  `Peer`, reached from JavaScript through `web/peer.js`. The ticket format, the
+  `quack:<id>.iroh:9494` address and the `qh_<id>` secret name are all derived
+  from one endpoint id, and all three used to be spelled out in the C++ and
+  again in the browser. Same trade as the HTTP framing above: both clients link
+  the crate, so a shape defined there cannot drift.
+- **The ticket is the whole handoff, and `quackhole_attach` is what consumes
+  it.** It carries the relay, which is why it exists: without one iroh resolves
+  through pkarr, which routinely has not seen a server this new. There used to
+  be an `attach_sql` column printing a CREATE SECRET and an ATTACH instead --
+  carrying no relay, with a fixed `AS remote` that collided on a second remote.
+  The shell script and the page's by-hand SQL each hand-rolled the ticket format
+  too, which meant three encoders agreeing on a shape none of them owned.
+- **Two quackhole servers on one machine need distinct Quack ports.**
+  `quackhole_serve` binds `127.0.0.1:9494` by default and reuses whatever is
+  already listening there rather than starting its own -- so a second one is
+  handed the first one's Quack, and the token it prints is not the token that
+  server accepts. Pass `target := '127.0.0.1:9495'` for the second, or
+  `npx ../npm --port 9495`. Needed to test anything multi-remote locally, which
+  is what `site/verify.mjs` with `QH_TICKET2` does.
+- **`quackhole_serve` blocks until the endpoint learns its home relay**, up to
+  `quackhole_relay_wait_ms` (default 10s), because a ticket minted before then
+  omits the relay and sends the browser to pkarr, which routinely has not seen
+  a server this new. Tests that only want the lifecycle set the setting to 0
+  rather than paying the wait per call.
+- **A Quack-attached catalog enumerates nothing.** `duckdb_tables()`,
+  `SHOW TABLES FROM <db>` and `information_schema` are all empty for it -- it
+  resolves a table name on demand and nothing more. `SELECT name FROM
+  <db>.sqlite_master` is the one listing Quack pushes down to the remote, which
+  is how `site/app.js` fills the workbench rail. `duckdb_databases()` is the exception
+  and is purely local: it does list the catalog, which is what lets the rail be
+  reconciled after a hand-typed `DETACH` without a round trip.
+- **A quack secret has to be named and scoped to hold more than one.** An
+  unnamed `CREATE SECRET (TYPE quack, ...)` is a single global, so a second
+  remote collides on the name or is handed the first one's token. Quack looks
+  the secret up by the ATTACH path, so `SCOPE 'quack:<id>.iroh:9494'` is what
+  routes a token to one peer; a secret scoped elsewhere is not found at all and
+  the error is `Could not find a Quack authentication token`, which does not
+  sound like a scope problem. `quackhole_attach` and `site/app.js` both build
+  the named, scoped form out of `Peer::address` and `Peer::secret_name`, so the
+  ATTACH path and the SCOPE cannot be two strings that drift.
+- **The relay is per peer on both sides now.** `Core::set_peer_relay` keys it by
+  endpoint id, exactly as `web/bridge-worker.js` does, and `quackhole_attach`
+  fills it in from the ticket before the ATTACH dials. `quackhole_relay_url` is
+  the fallback for peers with none registered, not an override -- one relay per
+  process is what could not describe two remotes.
+- **The bridge's relay is per-peer, keyed by endpoint id.** `web/bridge-worker.js`
+  keeps a map the page fills with `peer` control frames (`web/protocol.js`).
+  They travel the same shim-to-bridge channel as the dial, which is the whole
+  reason they are frames and not a channel of the page's own: two messages on
+  one port arrive in the order they were sent, so a registration cannot be
+  overtaken by the ATTACH it precedes and there is nothing to acknowledge.
+  `?relay=` is the fallback for a caller with one remote -- `test/browser`
+  still uses it.
+- **`web/shim.js` intercepts the page's control frames with a `message`
+  listener, and that depends on load order.** `qh-worker.js` loads the shim
+  before duckdb's bundle, so the shim's listener is registered before duckdb
+  assigns `globalThis.onmessage` and therefore runs first --
+  `stopImmediatePropagation` is what keeps duckdb from being handed a message
+  with no `type`. Reorder those `importScripts` and the frames reach duckdb
+  instead, which rejects inside its own dispatch.
 - **A browser client that omits an optional query param takes a different code
   path.** `test/browser` always passes `timeout`, which is why a
   temporal-dead-zone bug in `shim.js` survived until `site/` left it out.
+- **A dedicated worker inherits its page's COEP.** Anything a dev-server
+  middleware in `site/vite.config.js` answers itself has to send the isolation
+  headers, because it short-circuits the middleware Vite applies
+  `server.headers` with. Miss it and `qh-worker.js` is fetched, is 200, and
+  still refuses to start -- with an error event carrying no message.
+- **Inline Vite config is deep-merged into the config file, so `{}` does not
+  clear anything.** `verify.mjs --sw` has to strip the isolation headers to
+  exercise the service worker path; passing `preview: { headers: {} }` leaves
+  both headers in place and the run quietly proves nothing. Mutating in a
+  plugin's `config` hook is what actually removes them.
+- **The demo's claim is that `web/` is unmodified, so the connection model has
+  to live there.** `web/session.js` owns attach, detach, the connection list and
+  the `duckdb_databases()` reconcile; `site/app.js` is a view and holds no model
+  of its own. Anything about holding several remotes that ends up in `site/` is
+  in the wrong place -- it makes the demo a lookalike rather than evidence.
+- **`web/`, `public/coi-serviceworker.js` and the duckdb-wasm bundles are
+  copied, never bundled.** `VERBATIM` in `site/vite.config.js` is the list, and
+  `CLIENT` in `npm/build.mjs` is the same list for the npm package -- two
+  callers, both copying, which is what makes what the demo proves true of what
+  the package ships. `qh-worker.js` reaches its siblings through
+  `importScripts('./protocol.js')` at runtime, which no content hash survives,
+  and `coi-serviceworker.js` registers itself by `document.currentScript.src`,
+  so a move into `assets/` would scope the service worker to `assets/` and
+  silently stop it controlling the page.
+- **`web/wasm/.gitignore` is `*`, and npm falls back to a `.gitignore` inside
+  the package.** Copying it into `npm/dist/web/wasm/` drops the entire transport
+  from the tarball, and the result installs, imports, and 404s for its wasm
+  inside a worker -- which the browser reports as a CORS failure, because the
+  404 response carries no `Access-Control-Allow-Origin`. `npm/build.mjs` filters
+  it out on the way in.
+- **A DuckDB extension file must be named `quackhole.duckdb_extension`.** DuckDB
+  derives the entrypoint symbol it looks for from the basename, so a copy named
+  anything else fails at `LOAD` with "did not contain the expected entrypoint
+  function '<basename>_duckdb_cpp_init'" -- which does not sound like a filename
+  problem. The CLI's extension cache therefore keys by directory
+  (`<cache>/<version>/<platform>/quackhole.duckdb_extension`), never by
+  filename.
+- **The npm version is derived from `crates/Cargo.toml`, not maintained.**
+  `npm/bin/quackhole.js` resolves the GitHub release tag it downloads from out
+  of its own `package.json`, so a drifted npm version fetches a binary the CLI
+  was not written for. npm and GitHub releases are two publishing surfaces and
+  nothing else catches it. `node npm/build.mjs --check` asserts they agree; see
+  `docs/UPDATING.md`.

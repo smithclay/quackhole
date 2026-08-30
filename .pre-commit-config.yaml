@@ -53,3 +53,16 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
+
+      # The npm version is derived from crates/Cargo.toml, and bin/quackhole.js
+      # resolves the release tag it downloads from it -- so a drifted
+      # package.json is a CLI that fetches the wrong extension. CLAUDE.md and
+      # UPDATING.md both name this check; until now nothing ran it, and the
+      # release job repaired the drift in the runner instead of reporting it,
+      # which left the repo wrong forever and said nothing.
+      - id: npm-version
+        name: npm version matches crates/Cargo.toml
+        entry: node npm/build.mjs --check
+        language: system
+        files: ^(crates/Cargo\.toml|npm/package\.json)$
+        pass_filenames: false

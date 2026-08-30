@@ -4,6 +4,9 @@
 // that is the true state of things when you arrive: there is no route between
 // this tab and your laptop. Every step on the page closes a bit more of it.
 //
+// One of these per remote. Each is reached over its own relay, so a single
+// diagram covering several would have to pick one relay to name.
+//
 // The shapes carry meaning without relying on colour: circle and square are
 // the two DuckDBs (yellow, because that is where your data is), the diamond
 // between them is a relay you do not run (periwinkle, the iroh half). A
@@ -23,9 +26,10 @@ const el = (name, attrs) => {
 const X = { browser: 60, relay: 300, laptop: 540 };
 const Y = 42;
 
-export function createWire(mount) {
+export function createWire(mount, peer = 'your laptop') {
   const svg = el('svg', { class: 'wire', viewBox: '0 0 600 84', role: 'img' });
-  svg.setAttribute('aria-label', 'Connection from this browser through a relay to your laptop');
+  // Named, so several of these do not all announce themselves identically.
+  svg.setAttribute('aria-label', `Connection from this browser through a relay to ${peer}`);
 
   // Two independent legs rather than one line: the left one lights up as soon
   // as the browser has an endpoint, the right only once the peer answers, so a
@@ -72,11 +76,6 @@ export function createWire(mount) {
     // 'idle' | 'browser' | 'laptop' | 'connecting' | 'live' | 'failed'
     setState(state) {
       svg.dataset.state = state;
-    },
-    // Which machine the instructions on screen are talking about. In a P2P
-    // walkthrough this is the thing people actually lose track of.
-    focus(which) {
-      svg.dataset.focus = which ?? '';
     },
     setRelayLabel(url) {
       if (!relayHost) return;

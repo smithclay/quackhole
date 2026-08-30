@@ -19,8 +19,18 @@ resolved off the worker global *at call time*, so replacing
 | `qh-worker.js` | Worker bootstrap. `importScripts` the shim ahead of the stock duckdb worker. |
 | `shim.js` | The `XMLHttpRequest` replacement, and the blocking half of the bridge. |
 | `bridge-worker.js` | The async half: owns the iroh endpoint, answers over shared memory. |
-| `protocol.js` | The shared-memory layout and budgets. Loaded by both halves. |
-| `wasm/` | Built from `crates/quackhole-web` — iroh, plus the framing from the core. |
+| `protocol.js` | The shared-memory layout, the control frames, and the budgets. Loaded by both halves. |
+| `peer.js` | Ticket, address and secret name, from the core. Loads `wasm/` on demand. |
+| `session.js` | The connection model: attach, detach, list, and keeping the list honest. |
+| `wasm/` | Built from `crates/quackhole-web` — iroh, plus the framing and peer identity from the core. |
+
+`peer.js` exists for the same reason `protocol.js` does, one level up. A ticket,
+the `quack:<id>.iroh:9494` address and the name of the secret that authenticates
+against it are all derived from one endpoint id, and none of those shapes is
+obvious — which fields a ticket may omit, what a missing relay means, that
+`ATTACH` and the secret's `SCOPE` have to be character-for-character the same
+string. They were written out here as well as in the extension's C++, so this
+now asks the core, which is also what mints them.
 
 `crates/` is a Cargo workspace, so the browser and native builds resolve their
 dependencies together. That is the point of it: independent lockfiles would let
@@ -41,9 +51,73 @@ const worker = new Worker(
 
 then attach as usual — `ATTACH 'quack:<endpoint-id>.iroh:9494' AS remote`.
 
-Query parameters: `target` (required, the real duckdb worker), `mode`
-(`iroh`|`fetch`), `relay`, `timeout` (ms), `chunk` (shared buffer bytes),
-`intercept` (extra host to capture, for testing), `debug`.
+Settings: `target` (required, the real duckdb worker), `mode` (`iroh`|`fetch`),
+`relay`, `timeout` (ms), `chunk` (shared buffer bytes), `intercept` (extra host
+to capture, for testing), `debug`, and `base` (below).
+
+### Or without a URL to read them off
+
+`qh-worker.js` takes the same settings as `self.QH_CONFIG`, an object assigned
+before it is loaded, and publishes whichever it used on `globalThis` for
+`shim.js` to read. That exists because these files can be served from an origin
+the page is not on — a CDN — and a cross-origin URL cannot be a worker at all
+(`new Worker` throws `SecurityError`, module or classic). The way in is a
+same-origin blob that `importScripts` the real one, and a blob URL has neither a
+query string to parse nor a path for `./protocol.js` to resolve against:
+
+```js
+const src = `self.QH_CONFIG = ${JSON.stringify(config)};` +
+            `importScripts(${JSON.stringify(entryUrl)});`;
+const worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+```
+
+`base` is the one setting that has no query-parameter equivalent: it is where
+the siblings are, and it defaults to this file's own URL, which is what keeps
+the vendored path resolving relatively. [`quackhole`](../npm) on npm is this
+loader, so a page reaching for the CDN does not write it out.
+
+### More than one remote
+
+`?relay=` is one relay for the whole worker, which is all a caller with a single
+remote needs. A relay actually belongs to a peer, so for several, register each
+one instead — the shim picks these off the worker's message port and forwards
+them to the bridge:
+
+```js
+worker.postMessage({ __qh: 'peer', endpointId, relay: relayUrl });
+await conn.query(`ATTACH 'quack:${endpointId}.iroh:9494' AS laptop`);
+```
+
+No acknowledgement to wait for. The frame and the `ATTACH` travel the same two
+ports in that order, and postMessage preserves it, so the dial cannot be made
+before the bridge knows where to make it.
+
+## The session
+
+Holding several remotes is more than the transport. The names have to be unique
+and the secrets named and scoped to their peers, the relay has to be registered
+before the dial, and the list has to stay true when someone types `DETACH
+laptop2` into a query box. `session.js` is that, so an app is a view over it:
+
+```js
+import { QuackholeSession } from './session.js';
+
+// You boot DuckDB-Wasm -- bundle, logger and paths are yours, and a session
+// that chose them for you would be harder to vendor, not easier.
+const session = new QuackholeSession({ conn, worker });
+
+const laptop = await session.attach('qh1_…');   // secret, scope, relay, ATTACH
+const tables = await session.tables();          // Map: catalog -> table names
+await session.detach(laptop);
+```
+
+`session.connections` is the model to render. `tables()` reconciles it against
+`duckdb_databases()` first — the one listing a Quack catalog answers locally —
+so a remote detached by hand has already left the list by the time you draw it.
+
+[`site/app.js`](../site/README.md) is exactly this and nothing else, which is
+what makes the demo evidence that the shipped client works rather than a
+lookalike.
 
 ## Constraints
 

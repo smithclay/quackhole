@@ -11,7 +11,14 @@
   'use strict';
 
   const NativeXHR = self.XMLHttpRequest;
-  const params = new URLSearchParams(self.location.search);
+
+  // Settings, published by qh-worker.js -- which either parsed them off its own
+  // URL or was handed them by a loader. Read from there rather than parsed
+  // again here: a blob worker has no query string to parse, and two readers of
+  // one set of settings is one more than can be kept honest. Same trade
+  // protocol.js already makes for the shared-memory layout.
+  const config = globalThis.QH_CONFIG;
+  if (!config) throw new Error('shim.js is loaded by qh-worker.js, which publishes QH_CONFIG');
 
   // Layout and constants live in protocol.js, loaded by both sides. Declared
   // up here because TIMEOUT_MS below falls back to it: when a caller omits
@@ -22,17 +29,22 @@
 
   // Hosts to intercept. `.iroh` is the real target; the extra pattern lets the
   // bridge be tested against an ordinary HTTP server, with no iroh involved.
-  const EXTRA = params.get('intercept') || '';
+  const EXTRA = config.intercept || '';
   // Per-request tracing. Off by default; the harness only needs the intercept
   // announcements below, and the rest is noise until something is wrong.
-  const DEBUG = params.get('debug') === '1';
+  const DEBUG = config.debug === '1' || config.debug === true;
   // Bounding this is not a nicety: this thread blocks in Atomics.wait, so an
   // unbounded request does not fail slowly, it wedges the DuckDB worker
   // forever with nothing logged anywhere.
-  const TIMEOUT_MS = Number(params.get('timeout')) || P.DEFAULT_TIMEOUT_MS;
+  const TIMEOUT_MS = Number(config.timeout) || P.DEFAULT_TIMEOUT_MS;
   function shouldIntercept(url) {
     try {
-      const u = new URL(url, self.location.href);
+      // Against config.base, not this worker's own URL. On the loader path
+      // that URL is an opaque `blob:`, which nothing resolves against -- so a
+      // relative request threw, the catch below returned false, and the
+      // request went out over the native XHR with nothing logged. Silently
+      // not intercepting is the one failure this file must not have.
+      const u = new URL(url, config.base);
       if (u.hostname.endsWith('.iroh')) return true;
       return EXTRA !== '' && u.host === EXTRA;
     } catch {
@@ -43,27 +55,99 @@
   // --- shared state -------------------------------------------------------
   // Deliberately overridable: the harness shrinks this so that ordinary
   // responses span several chunks and the reassembly path is actually run.
-  const DATA_BYTES = Number(params.get('chunk')) || 8 * 1024 * 1024;
+  const DATA_BYTES = Number(config.chunk) || 8 * 1024 * 1024;
 
   const sab = new SharedArrayBuffer(P.CTL_BYTES + DATA_BYTES);
   const ctl = new Int32Array(sab, 0, 8);
   const data = new Uint8Array(sab, P.CTL_BYTES);
 
+  /// Start the bridge, from wherever the client's files are being served.
+  ///
+  /// `new Worker(<cross-origin URL>)` throws SecurityError -- for module
+  /// workers as much as classic ones -- so a client loaded from a CDN cannot
+  /// start its own bridge directly. Trying it is the check: a same-origin URL
+  /// is accepted, and a cross-origin one is refused synchronously, before
+  /// anything is fetched. The fallback is a same-origin blob that imports the
+  /// real URL, which works because `import.meta.url` inside it is the far
+  /// end's -- so the wasm glue's `new URL('quackhole_bg.wasm', import.meta.url)`
+  /// still lands where the module came from.
+  function startBridge(url) {
+    try {
+      return new Worker(url, { type: 'module' });
+    } catch {
+      const trampoline = new Blob([`import ${JSON.stringify(url)};`], { type: 'text/javascript' });
+      // Not revoked: nothing promises the blob has been fetched by the time
+      // this returns, and one object URL per worker is not a leak worth racing.
+      return new Worker(URL.createObjectURL(trampoline), { type: 'module' });
+    }
+  }
+
   // Nested worker: the shim owns the bridge, so the page does not have to know
   // it exists and there is no handshake to race against duckdb's own onmessage.
-  // A module worker, because the wasm glue is an ES module.
-  const bridge = new Worker(params.get('bridge') || './bridge-worker.js', { type: 'module' });
+  // A module worker, because the wasm glue is an ES module. Resolved against
+  // config.base rather than against this worker's own URL, which in a blob is
+  // an opaque path nothing resolves against.
+  const bridgeUrl = new URL(config.bridge || 'bridge-worker.js', config.base).href;
+  const bridge = startBridge(bridgeUrl);
   bridge.postMessage({
-    __qh: 'init',
+    [P.TAG]: P.INIT,
     sab,
-    mode: params.get('mode') || 'fetch',
-    relay: params.get('relay') || null,
+    mode: config.mode || 'fetch',
+    // The relay for peers that have none registered. All a caller with one
+    // remote needs; a caller with several sends a `peer` frame per remote.
+    relay: config.relay || null,
     // Test-only: makes the bridge stop answering, so the deadline above can
     // be shown to fire rather than merely existing.
-    fault: params.get('fault') || null,
+    fault: config.fault || null,
+  });
+
+  // A bridge that never loads cannot report its own failure.
+  //
+  // READY_FAILED is written by the bridge itself, so it only covers a bridge
+  // that ran. One that 404s, or is refused by CORS or COEP, never executes a
+  // line -- and without this the flag stays NOT_READY, the first query blocks
+  // in Atomics.wait for the full 30s below, and the error names neither the
+  // cause nor the file. The real message is in the nested worker's console,
+  // which nobody thinks to open.
+  //
+  // This lands in time because the failure is a startup failure: the module is
+  // fetched while duckdb is still fetching its own wasm, so this thread is
+  // pumping its event loop rather than blocked. Once it *is* blocked nothing
+  // here can run -- Atomics.wait dispatches no events -- which is the reason
+  // waitForBridge reads the flag rather than waiting on a promise.
+  let bridgeError = null;
+  bridge.addEventListener('error', (event) => {
+    // Cross-origin worker failures arrive with the message stripped, so name
+    // the URL ourselves; it is the part that says which fetch to go and look at.
+    bridgeError = event.message || `could not load ${bridgeUrl}`;
+    console.error(`[qh-shim] bridge failed to start: ${bridgeError}`);
+    Atomics.store(ctl, P.READY, P.READY_FAILED);
+    Atomics.notify(ctl, P.READY);
+  });
+
+  // Control frames from the page, forwarded onto the same channel as requests.
+  //
+  // This listener is added before duckdb's own -- qh-worker.js loads this file
+  // first -- so it sees the message first and can stop it there. Without
+  // stopImmediatePropagation, duckdb's handler would get a message with no
+  // `type` and reject inside its own dispatch.
+  //
+  // Ordering is the whole point, and it holds end to end: the page posts the
+  // frame and then the ATTACH on one port, this listener runs before duckdb
+  // handles the ATTACH, and both come out here on one more port. A relay
+  // registered before a dial cannot be overtaken by it.
+  self.addEventListener('message', (event) => {
+    if (event.data?.[P.TAG] !== P.PEER) return;
+    event.stopImmediatePropagation();
+    bridge.postMessage(event.data);
   });
 
   function waitForBridge() {
+    // Checked before blocking: if the worker failed to load, the listener above
+    // has already run and there is nothing to wait for. Blocking 30s first
+    // would only delay an answer we have.
+    if (bridgeError) throw new Error(`quackhole bridge failed to start: ${bridgeError}`);
+
     const deadline = Date.now() + 30000;
     while (Atomics.load(ctl, P.READY) === P.NOT_READY) {
       if (Date.now() > deadline) throw new Error('quackhole bridge never became ready');
@@ -72,7 +156,13 @@
     // Distinguishing "started and failed" from "still starting" matters: one is
     // a broken environment, the other is a slow one.
     if (Atomics.load(ctl, P.READY) === P.READY_FAILED) {
-      throw new Error('quackhole bridge failed to initialise');
+      // Two ways to reach READY_FAILED: the bridge ran and could not bind an
+      // endpoint, or it never ran at all. Only the second has a message here.
+      throw new Error(
+        bridgeError
+          ? `quackhole bridge failed to start: ${bridgeError}`
+          : 'quackhole bridge failed to initialise',
+      );
     }
   }
 

@@ -7,6 +7,7 @@
 
 mod dial;
 mod http;
+mod peer;
 // Native-only: the C ABI exists for DuckDB, and a browser cannot serve --
 // quack_serve itself throws NotImplementedException on wasm.
 #[cfg(not(target_family = "wasm"))]
@@ -16,6 +17,7 @@ mod serve;
 
 pub use dial::{ConnCache, request_async};
 pub use http::{Request, Response, build_request, parse_response};
+pub use peer::{Peer, QUACK_PORT};
 
 use anyhow::{Context, Result};
 use iroh::EndpointId;
@@ -54,6 +56,13 @@ pub struct Core {
     serve: Mutex<Option<serve::ServeHandle>>,
     conns: dial::ConnCache,
     peers: PeerMap,
+    /// Where to reach each peer, keyed by endpoint id.
+    ///
+    /// The browser has always had this (`web/bridge-worker.js`); the native
+    /// side had one global `quackhole_relay_url` setting instead, so a second
+    /// remote on a second relay was dialled through the first one's. A relay
+    /// belongs to a peer, not to a process.
+    relays: Mutex<HashMap<EndpointId, String>>,
 }
 
 /// What `quackhole_status()` knows about one peer.
@@ -153,6 +162,7 @@ impl Core {
             serve: Mutex::new(None),
             conns: dial::ConnCache::default(),
             peers: PeerMap::default(),
+            relays: Mutex::new(HashMap::new()),
         })
     }
 
@@ -165,6 +175,44 @@ impl Core {
         let mut peers: Vec<_> = map.iter().map(|(id, e)| (*id, e.clone())).collect();
         peers.sort_by(|(a, _), (b, _)| a.as_bytes().cmp(b.as_bytes()));
         peers
+    }
+
+    /// Remember the relay to reach one peer through.
+    ///
+    /// Set from a ticket, which carries the relay the peer actually published
+    /// on. An empty `relay_url` forgets the peer rather than registering
+    /// nothing, so re-attaching with a relay-less handoff does not silently
+    /// keep dialling through a relay that peer has since left.
+    pub fn set_peer_relay(&self, endpoint_id: &str, relay_url: &str) -> Result<()> {
+        let id = parse_endpoint_id(endpoint_id)?;
+        let relay_url = relay_url.trim();
+        // Rejected here rather than at dial time: an unusable relay registered
+        // now would surface as a failure on some later query, a long way from
+        // the ATTACH that supplied it.
+        if !relay_url.is_empty() {
+            let _: iroh::RelayUrl = relay_url
+                .parse()
+                .with_context(|| format!("'{relay_url}' is not a valid relay url"))?;
+        }
+        let mut relays = self
+            .relays
+            .lock()
+            .map_err(|_| anyhow::anyhow!("quackhole relay map is poisoned"))?;
+        if relay_url.is_empty() {
+            relays.remove(&id);
+        } else {
+            relays.insert(id, relay_url.to_string());
+        }
+        Ok(())
+    }
+
+    /// The relay registered for `id`, or "" if none is.
+    pub(crate) fn peer_relay(&self, id: &EndpointId) -> String {
+        self.relays
+            .lock()
+            .ok()
+            .and_then(|relays| relays.get(id).cloned())
+            .unwrap_or_default()
     }
 
     pub fn endpoint_id_z32(&self) -> &str {
@@ -190,6 +238,41 @@ impl Core {
             .first()
             .map(|status| status.url().to_string())
             .unwrap_or_default()
+    }
+
+    /// Home relay URL, waiting up to `timeout` for one to be learned.
+    ///
+    /// An endpoint does not know its home relay the instant it binds -- it is
+    /// learned a moment later. A ticket minted before then carries no relay, so
+    /// the peer falls back to resolving through pkarr: a round trip to a third
+    /// party that must also have seen this endpoint publish, which a server
+    /// started seconds ago routinely has not. Native callers can retry; a
+    /// browser handed a bad link cannot. Waiting here is what lets
+    /// `quackhole_serve` return a link that works on the first click.
+    ///
+    /// Returns "" if the timeout expires, which callers must treat as "no
+    /// ticket" rather than minting one with an empty relay.
+    pub fn wait_relay_url(&self, timeout: Duration) -> String {
+        let url = self.relay_url();
+        if !url.is_empty() {
+            return url;
+        }
+        let Ok(runtime) = self.runtime() else {
+            return String::new();
+        };
+        runtime.block_on(async {
+            let deadline = tokio::time::Instant::now() + timeout;
+            loop {
+                let url = self.relay_url();
+                if !url.is_empty() {
+                    return url;
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    return String::new();
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
     }
 
     /// Drop the runtime within `deadline`.

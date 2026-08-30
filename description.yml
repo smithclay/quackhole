@@ -40,15 +40,16 @@ docs:
     INSTALL quack; LOAD quack;
     LOAD quackhole;
 
-    CALL quackhole_serve(token := 'your-shared-token');
-    FROM quackhole_status();  -- endpoint id, relay, and a paste-ready attach_sql
+    -- endpoint id, relay, and a ticket: one word carrying all three, plus a
+    -- link that opens the browser workbench already connecting
+    FROM quackhole_serve(token := 'your-shared-token');
 
-    -- From anywhere else -- a different network, a different continent:
+    -- From anywhere else -- a different network, a different continent.
+    -- One call: the secret, its scope, the relay, and the ATTACH.
     INSTALL quack; LOAD quack;
     LOAD quackhole;
 
-    CREATE SECRET (TYPE quack, TOKEN 'your-shared-token');
-    ATTACH 'quack:<endpoint-id>.iroh:9494' AS laptop;
+    CALL quackhole_attach('qh1_...', name := 'laptop');
 
     FROM laptop.logs WHERE ts > now() - INTERVAL '1 hour';
 
@@ -104,7 +105,8 @@ docs:
 
     | Function | What it does |
     |---|---|
-    | `quackhole_serve([token], [target], [allow], [ephemeral], [auto_serve])` | Start Quack on `target` (default `127.0.0.1:9494`) if needed, bind an iroh endpoint, accept streams into it |
+    | `quackhole_serve([token], [target], [allow], [ephemeral], [auto_serve])` | Start Quack on `target` (default `127.0.0.1:9494`) if needed, bind an iroh endpoint, accept streams into it. Returns the ticket and a workbench link |
+    | `quackhole_attach(ticket, [name])` | Secret, scope, relay and `ATTACH` for the peer a ticket names, under the catalog `name` (default `remote`) |
     | `quackhole_stop()` | Stop the accept loop. Cached outbound connections stay usable |
     | `quackhole_status()` | Endpoint id, relay URL, whether serving, and one row per known peer with its path (`direct` or `relay`) |
 

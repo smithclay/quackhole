@@ -11,7 +11,13 @@ crate-type = ["rlib", "staticlib"]
 
 [dependencies]
 anyhow = "1"
+# The ticket format. base64url so the whole thing survives a URL fragment
+# untouched, and serde_json so reading one back is not a hand-rolled parser --
+# the token field is attacker-shaped, being whatever a caller passed to `token :=`.
+base64 = "0.22"
 hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 # Native: default features give metrics, portmapper and the Apple fast datapath.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
