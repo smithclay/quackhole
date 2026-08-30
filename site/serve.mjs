@@ -25,14 +25,29 @@ const TYPES = {
   '.map': 'application/json',
 };
 
+// Appended to every HTML response under `reload`, rather than written into
+// index.html: dist/ is what gets deployed, and the file that ships must not
+// carry a dev-server script. The URL is relative because everything here is --
+// see the note about project Pages sites in build.mjs.
+const RELOAD_SNIPPET =
+  '\n<script>new EventSource("__reload").onmessage = () => location.reload();</script>\n';
+
 /**
  * @param root      directory to serve
  * @param isolate   send COOP/COEP directly. False leaves the page to
  *                  coi-serviceworker, which is what a Pages visitor gets.
  * @param port      0 lets the OS pick, which is what avoids colliding with
  *                  whatever else is already listening.
+ * @param reload    serve the live-reload channel and inject its client. Only
+ *                  `build.mjs --watch` wants this; verify.mjs must not have it,
+ *                  since a reload mid-run would restart the page under it.
+ *
+ * Resolves with a `reload()` that tells every open page to refresh. It is a
+ * no-op unless `reload` is set, so a caller can call it unconditionally.
  */
-export function startStaticServer(root, { isolate = true, port = 0 } = {}) {
+export function startStaticServer(root, { isolate = true, port = 0, reload = false } = {}) {
+  const clients = new Set();
+
   const server = createServer(async (req, res) => {
     let rel;
     try {
@@ -49,8 +64,28 @@ export function startStaticServer(root, { isolate = true, port = 0 } = {}) {
     // way out of the root and rejecting it is enough.
     if (rel.startsWith('..')) return void res.writeHead(403).end('forbidden');
 
+    // The one thing a static file server has to say. Held open, so a rebuild
+    // can push rather than the page having to ask.
+    if (reload && rel === '__reload') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-store',
+        Connection: 'keep-alive',
+      });
+      // A comment line, to flush the head: without it EventSource sits in
+      // CONNECTING until the first real event, and the first save after a
+      // page load would be missed.
+      res.write(': connected\n\n');
+      clients.add(res);
+      req.on('close', () => clients.delete(res));
+      return;
+    }
+
     try {
-      const body = await readFile(join(root, rel));
+      let body = await readFile(join(root, rel));
+      if (reload && extname(rel) === '.html') {
+        body = Buffer.concat([body, Buffer.from(RELOAD_SNIPPET)]);
+      }
       const headers = {
         'Content-Type': TYPES[extname(rel)] ?? 'application/octet-stream',
         'Cache-Control': 'no-store',
@@ -76,6 +111,14 @@ export function startStaticServer(root, { isolate = true, port = 0 } = {}) {
           : err,
       ),
     );
-    server.listen(port, '127.0.0.1', () => resolve({ server, port: server.address().port }));
+    server.listen(port, '127.0.0.1', () =>
+      resolve({
+        server,
+        port: server.address().port,
+        reload: () => {
+          for (const c of clients) c.write('data: reload\n\n');
+        },
+      }),
+    );
   });
 }

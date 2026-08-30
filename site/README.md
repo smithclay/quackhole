@@ -10,7 +10,27 @@ does too, because they are the same files.
 
     npm install
     ../web/build-wasm.sh     # produces web/wasm/, gitignored
-    npm run dev              # http://127.0.0.1:8099
+    npm run dev              # http://127.0.0.1:8099, reloads on save
+
+`npm run dev` watches `site/` and `web/` and reloads the page when you save.
+A rebuild is about 40ms because it only redoes the bundle and the copies — the
+duckdb bundles, the iroh wasm and the fonts are large or fetched over the
+network, and none of them change while you are editing the page. `npm run
+preview` is the same server without the watching, if you want to be sure you
+are looking at exactly what a full build produces.
+
+Two things make this a usable loop rather than a fast one:
+
+- **The ticket lives in the fragment, and the fragment survives a reload.** Open
+  the link one laptop printed, and every save comes back already attached — you
+  are iterating on the connected page, not on the empty one.
+- **You do not need a laptop for most of it.** The notebook, the connection rail
+  and the schema list all work against the local `memory` connection alone. Only
+  the routes panel and remote queries need a real remote.
+
+The live-reload client is injected by the dev server into HTML responses, not
+written into `index.html` — `dist/` is what gets deployed, and the page that
+ships must not carry it.
 
 ## The flow
 
@@ -79,7 +99,7 @@ meant three encoders agreeing on a shape none of them owned.
 | `styles.css` | Yellow is DuckDB, periwinkle is iroh. Nothing else is coloured |
 | `coi-serviceworker.js` | See below |
 | `build.mjs` | Assembles `dist/` from here, `web/`, `web/wasm/` and duckdb-wasm |
-| `serve.mjs` | The static server `npm run dev` and `verify.mjs` share |
+| `serve.mjs` | The static server `npm run dev` and `verify.mjs` share. Also the live-reload channel, which only `--watch` turns on |
 | `verify.mjs` | Drives the built page against a real laptop, headless. `QH_URL` points it at a deployment instead of `dist/`; `QH_TICKET2` adds a second laptop |
 
 ## Cross-origin isolation, on a host that cannot send headers
