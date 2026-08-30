@@ -1,43 +1,24 @@
 # Quackhole
 
-Quackhole lets one DuckDB reach another DuckDB behind NAT — a laptop on cafe Wi-Fi — from
-anywhere, using only [iroh](https://www.iroh.computer/) and n0's public relays. No port
-forwarding, no VPN, no certificates, no relay infrastructure of your own, no sidecar.
+[![Build](https://github.com/smithclay/quackhole/actions/workflows/MainDistributionPipeline.yml/badge.svg)](https://github.com/smithclay/quackhole/actions/workflows/MainDistributionPipeline.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![DuckDB](https://img.shields.io/badge/DuckDB-%E2%89%A5%201.5.5-FFF000?logo=duckdb&logoColor=black)](https://duckdb.org)
 
-It is a **transport bridge and nothing else**.
-[Quack](https://duckdb.org/docs/stable/core_extensions/quack) remains the database protocol.
-Quack is HTTP; Quackhole carries Quack's HTTP bytes over iroh QUIC streams. iroh supplies
-identity, NAT traversal, relay fallback, and end-to-end encryption.
+Query a DuckDB that lives somewhere you cannot reach — a laptop on cafe Wi-Fi, a machine
+behind a corporate NAT, a home server with no public IP — from anywhere, over an encrypted
+peer-to-peer connection.
 
-```
-SQL
- │
-DuckDB
- │
-Quack — HTTP/1.1, POST /quack
- │
-quackhole — HTTPUtil out, iroh acceptor in; one bi-stream per request
- │
-iroh — QUIC, endpoint id = address, hole-punching, relay fallback, E2E encryption
- │
-n0 public relays + address lookup — we run none of it
-```
+No port forwarding, no VPN, no reverse tunnel, no certificates to manage, and no relay
+infrastructure of your own. You need a shared token and a 52-character address.
 
-## The address is a public key
+Quackhole is a **transport bridge and nothing else**.
+[Quack](https://duckdb.org/docs/stable/core_extensions/quack) stays the database protocol; we
+carry its bytes over [iroh](https://www.iroh.computer/) QUIC streams, which supply identity,
+NAT traversal, relay fallback, and end-to-end encryption.
 
-A DuckDB's address is the iroh endpoint id of the Quackhole serving it:
+## Quickstart
 
-```
-quack:<endpoint-id>.iroh:9494
-```
-
-`<endpoint-id>` is a 32-byte ed25519 public key in z-base-32 (52 characters, so it fits a DNS
-label). Nothing ever resolves this name — Quackhole intercepts before a socket exists — but
-keeping it well-formed means it survives every URL parser it passes through.
-
-## Use it
-
-On the laptop, behind NAT:
+On the machine you want to reach, behind NAT:
 
 ```sql
 INSTALL quack; LOAD quack;
@@ -50,7 +31,7 @@ FROM quackhole_status();
 `quackhole_serve` starts Quack on loopback if nothing is listening there, binds an iroh
 endpoint, and prints a paste-ready `attach_sql`.
 
-Anywhere else:
+From anywhere else — a different network, a different continent:
 
 ```sql
 INSTALL quack; LOAD quack;
@@ -62,15 +43,35 @@ ATTACH 'quack:<endpoint-id>.iroh:9494' AS laptop;
 FROM laptop.logs WHERE ts > now() - INTERVAL '1 hour';
 ```
 
-No new syntax — that is an ordinary Quack `ATTACH`. Roles are per call, not per machine: a
+That is an ordinary Quack `ATTACH` — no new syntax. Roles are per call, not per machine: a
 DuckDB can serve and attach to others at the same time.
 
-**Scope:** Quackhole carries *Quack* traffic. It does not make arbitrary httpfs reads work
-over `.iroh` — `read_csv('https://<id>.iroh:9494/x.csv')` reaches httpfs, not Quackhole,
-because httpfs builds its own `HTTPParams` bound to the httpfs util and never consults the
-one installed on `DBConfig`. Reach remote files through `ATTACH` and SQL instead.
+## The address is a public key
 
-## SQL surface
+```
+quack:<endpoint-id>.iroh:9494
+```
+
+`<endpoint-id>` is a 32-byte ed25519 public key in z-base-32 — 52 characters, so it fits a DNS
+label. There is no DNS record and nothing ever resolves it; Quackhole intercepts before a
+socket exists.
+
+This is what removes the certificate problem. The address *is* the identity, so connecting to
+the right address and authenticating the server are the same operation, and there is nothing
+to issue, renew, or trust.
+
+## What you can do
+
+- Query a DuckDB behind NAT from anywhere, with no inbound port open on either side.
+- Attach several remote DuckDBs at once and join across them, since roles are per call.
+- Restrict who may connect with an `allow` list of endpoint ids, checked before any Quack
+  traffic.
+- Reach a laptop from a **browser** — DuckDB-Wasm can attach to an unmodified
+  `quackhole_serve`. See [`web/`](web).
+- Keep working on networks that block UDP: iroh's relay connection runs over HTTPS/443, so a
+  captive portal is a slower path, not a failure.
+
+## API at a glance
 
 | Function | What it does |
 |---|---|
@@ -78,34 +79,28 @@ one installed on `DBConfig`. Reach remote files through `ATTACH` and SQL instead
 | `quackhole_stop()` | Stop the accept loop. Cached outbound connections stay usable |
 | `quackhole_status()` | Endpoint id, relay URL, whether serving, and one row per known peer with its path (`direct` or `relay`) |
 
-`allow := ['<endpoint-id>', ...]` rejects any peer not on the list at accept time, before a
-single byte of Quack traffic. `ephemeral := true` uses a throwaway key instead of the
-persisted one — for CI runners and short-lived VMs.
-
-## Identity
-
-The endpoint key lives at `~/.quackhole/key`, mode `0600`. **The key is the address**, so
-persisting it is what lets an address survive a restart. Losing it means a new address, not a
-disclosure of data at rest.
-
 | Setting | Effect |
 |---|---|
 | `quackhole_key_path` | Where the endpoint key lives (default `~/.quackhole/key`) |
 | `quackhole_ephemeral` | Use a throwaway key instead of the persisted one |
+| `quackhole_relay_url` | Reach peers through this relay, skipping address lookup |
 
-Both are read at the moment the endpoint binds, which can happen implicitly on the first
-`ATTACH` to a `.iroh` host. Set them **globally**, since that path reads database-level
-settings:
+Settings are read when the endpoint binds, which can happen implicitly on the first `ATTACH`
+to a `.iroh` host, so set them **globally**:
 
 ```sql
 SET GLOBAL quackhole_ephemeral = true;
 ```
 
-You need this to run a client and a server **on the same machine**: they would otherwise load
-the same key, share one endpoint id, and iroh would refuse the dial with *"connecting to
+You need that to run a client and a server **on the same machine**: they would otherwise load
+the same key, share an endpoint id, and iroh would refuse the dial with *"connecting to
 ourself is not supported"*. Across machines it is unnecessary.
 
-## What enforces what
+## Security
+
+The endpoint key at `~/.quackhole/key` (mode `0600`) **is** the address. Persisting it is what
+lets an address survive a restart; losing it means a new address, not a disclosure of data at
+rest.
 
 | Property | Enforced by |
 |---|---|
@@ -115,142 +110,35 @@ ourself is not supported"*. Across machines it is unnecessary.
 | Only authorized SQL runs | Quack — its token and auth callbacks |
 | Only the Quack port is reachable | quackhole — a fixed `target`, Quack on loopback |
 
-Relays see endpoint ids, timing and byte counts. They do not see SQL, results, tokens, or
+Relays see endpoint ids, timing, and byte counts. They do not see SQL, results, tokens, or
 which database is attached.
 
-On networks that block UDP — cafe captive portals — iroh's relay connection runs over
-HTTPS/443, so relay-only is the expected path there, not a failure.
+## Limits
 
-## Build
+Early-stage. Measured over a public relay across networks with no route between them: `ATTACH`
+about a second, warm queries 0.14–0.21s, a 200k-row scan under 2.5s.
 
-Needs a Rust toolchain: the iroh transport is a static library linked into an ordinary C++
-DuckDB extension.
+- **Hole punching is unverified.** Every measurement so far is relayed. The test harness
+  firewalls the only direct-address candidates, and browsers have no direct path at all, so
+  nothing here says how often iroh gets a direct connection through real CGNAT or a symmetric
+  NAT. Expect relay latency until you have measured otherwise.
+- **Quackhole carries Quack traffic only.** `read_csv('https://<id>.iroh:9494/x.csv')` reaches
+  httpfs, not Quackhole; use `ATTACH` and SQL instead.
+- **Browsers are client-only and relay-only**, and need cross-origin isolation (COOP/COEP).
+- **An idle `ATTACH` holds a relay path open** at roughly one packet every five seconds, and
+  cached connections are never evicted.
+- **Native only**: macOS, Linux, Windows. Not a wasm extension —
+  [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains why, and what the browser client
+  does instead.
 
-```sh
-git clone --recurse-submodules <this repo>
-make release
-```
+## Documentation
 
-Then `./build/release/duckdb`, or `LOAD` the loadable extension from
-`build/release/extension/quackhole/quackhole.duckdb_extension`.
-
-## Test
-
-```sh
-make test                                  # sqllogictests
-scripts/demo_two_process.sh                # end-to-end, two processes, real relays
-QUACKHOLE_LOADABLE=1 scripts/demo_two_process.sh   # same, via the loadable extension
-
-cd crates/quackhole-core && cargo test     # transport unit tests
-QUACKHOLE_NET_TESTS=1 cargo test           # ... including the live-network round trip
-
-test/docker/run.sh                         # two DuckDBs on networks that cannot reach each other
-```
-
-Tests that need the network are gated on `QUACKHOLE_NET_TESTS=1` so the default suite stays
-hermetic.
-
-`make lifecycle-check` covers what the SQL tests cannot: closing a database with a bound
-endpoint, and forking after `LOAD`. Both are hang-class failures, so each scenario runs in a
-child process and is judged on whether it *exits*. It needs the Python bindings at the DuckDB
-version the extension was built against, which the target derives from the submodule.
-
-Formatting and lints run as pre-commit hooks, so they fail on your machine rather than in
-the CI matrix:
-
-```sh
-brew install prek && prek install
-prek run --all-files            # first time, or after changing the config
-```
-
-`prek` is a drop-in for `pre-commit` and reads the same `.pre-commit-config.yaml`.
-
-`.pre-commit-config.yaml` pins clang-format to **exactly 11.0.1**, which is what DuckDB's
-`format.py` expects; newer releases disagree about line breaking and CI rejects the result.
-It also runs `cargo fmt` and `cargo clippy -D warnings`, which nothing else did — the C++
-side had two gates and the side containing every unsafe block had none. The same checks are
-available as `make rust-check`, and CI runs them too: the distribution pipeline builds the
-extension and runs its sqllogictests but knows nothing about cargo, so a separate job covers
-the Rust side.
-
-CI's own gates can still be run directly, and cover a slightly different set (`format.py`
-reaches into `test/`; the hooks reach the C ABI header it does not):
-
-```sh
-pip install "black>=24" cmake-format "clang_format==11.0.1"
-make format-check
-TIDY_BINARY=$(brew --prefix llvm)/bin/clang-tidy make tidy-check
-```
-
-`format.py` rewrites a sqllogictest's `# group:` to match its directory, so a hand-written
-group is a CI failure rather than a preference.
-
-`test/docker/run.sh` is the one that tests the actual claim. Both peers run in containers on
-separate Docker networks with no route between them, and the client refuses to proceed until
-it has confirmed it cannot reach the server by ICMP or TCP. A second scenario drops outbound
-UDP at both ends, so iroh has to tunnel QUIC over the relay's HTTPS connection -- the
-captive-portal case -- and the run fails unless `peer_path` comes back `relay`. It also prints
-per-query latency. See [test/docker/README.md](test/docker/README.md), which is explicit about
-what this does *not* prove: Docker's NAT is friendly, so it says nothing about hole-punching
-through CGNAT or a symmetric NAT.
-
-## Layout
-
-```
-src/                        C++ extension
-  quackhole_extension.cpp     entry point, table functions, load-order re-arm
-  quackhole_http.cpp          QuackholeHTTPUtil / QuackholeHTTPClient
-  quackhole_state.cpp         per-DatabaseInstance state; shuts the core down on close
-crates/                     Cargo workspace: one Cargo.lock, one target/
-  quackhole-core/             Rust static library (iroh + tokio)
-    src/http.rs                 request building and parsing, shared by both clients
-    include/quackhole_core.h    hand-written C ABI
-  quackhole-web/              the same core built for browsers (wasm-bindgen, relay-only)
-web/                        browser client: the XHR shim and its bridge worker
-cmake/FindQuackholeCore.cmake
-test/docker/                two peers on unroutable networks; the cross-network test
-test/browser/               drives the browser client through headless Chromium
-```
-
-**HTTP framing lives in the core**, not in either client. It has to: the native extension
-drives it from C++ and the browser from JavaScript, and neither can share the other's code.
-Two implementations would have to agree about things that are not obvious — the
-`Connection: close` framing below, chunk extensions, which caller headers get dropped — and
-would drift the moment one was edited alone. C++ marshals to and from DuckDB's types; it does
-not parse. The FFI is correspondingly a little wider than opaque bytes would be, which is the
-price of having one parser instead of three.
-
-### One constraint worth knowing
-
-Quackhole never half-closes the request stream, and always sends `Connection: close`.
-
-Half-closing after writing the request is the obvious design — it tells the peer the request
-is complete. But Quack's server is cpp-httplib, and cpp-httplib answers a half-closed
-connection with *nothing at all*, even when a complete `Content-Length`-framed request is
-already buffered. Measured against a live `quack_serve`: an identical request returns 244
-bytes without `shutdown(SHUT_WR)` and 0 bytes with it.
-
-So the response is framed by the server closing the socket after it replies, which the
-serving side turns into a stream FIN. `Content-Length` and chunked responses are still parsed
-when present.
-
-## Platforms
-
-The *extension* is native macOS, Linux and Windows only, and always will be: DuckDB-Wasm
-loads extensions as raw side modules with no accompanying JS glue, so a wasm build could
-never reach JavaScript, which is where an iroh endpoint has to live in a browser.
-
-Browsers are supported anyway, by not being an extension. duckdb-wasm's HTTP transport is
-`new XMLHttpRequest` resolved off the worker global at call time, so replacing
-`globalThis.XMLHttpRequest` inside the DuckDB worker replaces the transport. See
-[`web/`](web) for a working client that queries an unmodified `quackhole_serve`.
-
-Two consequences worth knowing. A browser can only ever be a *client* — `quack_serve` itself
-throws `NotImplementedException` on wasm. And a browser can only ever *relay*: iroh compiles
-its IP transport out entirely under `cfg(wasm_browser)` because a browser cannot open a UDP
-socket, so there is no hole punching and no direct path. Traffic stays end-to-end encrypted
-regardless; the relay forwards ciphertext it cannot read.
+- [Architecture](docs/ARCHITECTURE.md) — where the seam is, and the constraints that shaped it
+- [Contributing](CONTRIBUTING.md) — build, test, formatting
+- [Browser client](web/README.md)
+- [Cross-network test](test/docker/README.md)
+- [Deferred work](docs/DEFERRED.md)
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
