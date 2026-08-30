@@ -49,10 +49,17 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
 - **Paths inside `web/` must stay relative.** `site/` is a *project* Pages site
   served under `/quackhole/`, so a leading `/` resolves to github.io itself.
   `test/browser` serves from the root and hides this, so it passes either way.
-- **The ticket shape lives in three places and they must agree**:
-  `site/ticket.js` decodes it, `scripts/quackhole-demo.sh` and the by-hand SQL
-  in `site/app.js` both mint it. It exists because `attach_sql` omits the relay
-  URL, which a browser cannot do without.
+- **The extension is the only thing that mints a ticket.** `MintTicket` in
+  `src/quackhole_extension.cpp` builds it; `site/ticket.js` decodes it; nothing
+  else may encode one. It exists because `attach_sql` omits the relay URL,
+  which a browser cannot do without. The shell script and the page's by-hand
+  SQL each used to hand-roll the format, which meant three encoders agreeing on
+  a shape none of them owned.
+- **`quackhole_serve` blocks until the endpoint learns its home relay**, up to
+  `quackhole_relay_wait_ms` (default 10s), because a ticket minted before then
+  omits the relay and sends the browser to pkarr, which routinely has not seen
+  a server this new. Tests that only want the lifecycle set the setting to 0
+  rather than paying the wait per call.
 - **A browser client that omits an optional query param takes a different code
   path.** `test/browser` always passes `timeout`, which is why a
   temporal-dead-zone bug in `shim.js` survived until `site/` left it out.

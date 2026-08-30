@@ -183,6 +183,15 @@ int qh_peer_info(const QhCore *core, size_t index, char *id_out, size_t id_len, 
 //! if no relay is known yet. Returns QH_OK, or QH_ERR if `out_len` is too small.
 int qh_relay_url(const QhCore *core, char *out, size_t out_len);
 
+//! As qh_relay_url, but waits up to `timeout_ms` for a relay to be learned.
+//!
+//! An endpoint does not know its home relay the instant it binds. A ticket
+//! minted before then carries no relay and sends the peer through pkarr, which
+//! routinely has not seen a server this new -- so a link handed to a browser
+//! fails on the first click. Blocks the calling thread; writes an empty string
+//! if the timeout expires.
+int qh_relay_url_wait(const QhCore *core, uint64_t timeout_ms, char *out, size_t out_len);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

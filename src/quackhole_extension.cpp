@@ -4,6 +4,7 @@
 
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/types/blob.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/database.hpp"
@@ -19,6 +20,13 @@ namespace duckdb {
 namespace {
 
 constexpr const char *DEFAULT_TARGET = "127.0.0.1:9494";
+
+//! Workbench that quackhole_serve()'s `url` column points at.
+//!
+//! Baked in so the common case is one statement and one clickable link, and
+//! overridable via the quackhole_workbench_url setting for anyone self-hosting
+//! web/ rather than using the public deployment.
+constexpr const char *DEFAULT_WORKBENCH_URL = "https://smithclay.github.io/quackhole/";
 constexpr uint64_t STOP_DEADLINE_MS = 5000;
 
 //! Re-install our HTTP util whenever another extension finishes loading.
@@ -83,6 +91,77 @@ string RelayUrl(QhCore *core) {
 	return string(buffer);
 }
 
+//! How long quackhole_serve() waits for the endpoint to learn its home relay.
+//!
+//! Long enough to cover the usual case on a cold endpoint, short enough that a
+//! genuinely relay-less network does not look like a hang. Falling through
+//! leaves ticket and url NULL rather than minting a ticket that omits the relay.
+//!
+//! Tunable because the wait is only worth paying for when someone is going to
+//! use the link: a test that calls quackhole_serve() for its lifecycle side
+//! effects sets this to 0 rather than stalling on a relay it never reads.
+constexpr uint64_t DEFAULT_RELAY_WAIT_MS = 10000;
+
+string RelayUrlWait(DatabaseInstance &db, QhCore *core) {
+	uint64_t wait_ms = DEFAULT_RELAY_WAIT_MS;
+	Value setting;
+	if (db.TryGetCurrentSetting("quackhole_relay_wait_ms", setting) && !setting.IsNull()) {
+		auto configured = setting.GetValue<int64_t>();
+		wait_ms = configured < 0 ? 0 : static_cast<uint64_t>(configured);
+	}
+	char buffer[512] = {0};
+	if (qh_relay_url_wait(core, wait_ms, buffer, sizeof(buffer)) != QH_OK) {
+		return string();
+	}
+	return string(buffer);
+}
+
+//! base64url, as the ticket carries it: the two non-URL-safe alphabet
+//! characters swapped and the padding dropped, so the whole ticket survives a
+//! URL fragment untouched. site/ticket.js decodes exactly this.
+string Base64Url(const string &input) {
+	auto encoded = Blob::ToBase64(string_t(input));
+	string result;
+	result.reserve(encoded.size());
+	for (auto c : encoded) {
+		if (c == '+') {
+			result += '-';
+		} else if (c == '/') {
+			result += '_';
+		} else if (c != '=') {
+			result += c;
+		}
+	}
+	return result;
+}
+
+//! `qh1_` + base64url of {"e": endpoint id, "r": relay, "t": token}.
+//!
+//! This is the only place the ticket is minted. It used to be spelled out in
+//! the demo script and again in the page's by-hand SQL, which meant three
+//! encoders that had to agree on a format none of them owned.
+//!
+//! Returns "" when there is no relay to put in it: a ticket without one sends
+//! the browser to pkarr and fails on the first click, so no ticket beats a
+//! broken one.
+string MintTicket(const string &endpoint_id, const string &relay_url, const string &token) {
+	if (relay_url.empty()) {
+		return string();
+	}
+	// endpoint ids are z-base-32 and relays are URLs, but the token is whatever
+	// the caller passed to token :=, so it is the one field that can carry a
+	// quote or a backslash into the JSON.
+	string escaped;
+	escaped.reserve(token.size());
+	for (auto c : token) {
+		if (c == '"' || c == '\\') {
+			escaped += '\\';
+		}
+		escaped += c;
+	}
+	return "qh1_" + Base64Url("{\"e\":\"" + endpoint_id + "\",\"r\":\"" + relay_url + "\",\"t\":\"" + escaped + "\"}");
+}
+
 //===--------------------------------------------------------------------===//
 // quackhole_serve
 //===--------------------------------------------------------------------===//
@@ -105,8 +184,11 @@ unique_ptr<FunctionData> QuackholeServeBind(ClientContext &context, TableFunctio
 	bind_data->ephemeral = GetBool(input, "ephemeral", false);
 	bind_data->auto_serve = GetBool(input, "auto_serve", true);
 
-	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
-	names = {"endpoint_id", "relay_url", "token", "attach_sql"};
+	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+	                LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
+	// ticket and url are appended rather than inserted: attach_sql is documented
+	// by position in more than one place, and moving it would break them quietly.
+	names = {"endpoint_id", "relay_url", "token", "attach_sql", "ticket", "url"};
 	return std::move(bind_data);
 }
 
@@ -188,12 +270,33 @@ void QuackholeServeFunction(ClientContext &context, TableFunctionInput &data_p, 
 	auto attach_sql = "CREATE SECRET (TYPE quack, TOKEN '" + effective_token + "'); ATTACH 'quack:" + endpoint_id +
 	                  ".iroh:9494' AS remote;";
 
+	// Wait, rather than read once: a link is the whole point of this function's
+	// output now, and a link minted before the relay is known does not work.
+	auto relay = RelayUrlWait(db, core);
+	auto ticket = MintTicket(endpoint_id, relay, effective_token);
+
+	string url;
+	if (!ticket.empty()) {
+		Value setting;
+		string base = DEFAULT_WORKBENCH_URL;
+		if (db.TryGetCurrentSetting("quackhole_workbench_url", setting) && !setting.IsNull()) {
+			base = setting.ToString();
+		}
+		// The ticket lives in the fragment so it never reaches the server hosting
+		// the workbench -- it carries the token, and a query string would land in
+		// access logs and Referer headers.
+		if (!base.empty()) {
+			url = base + (base.back() == '#' ? "" : "#") + ticket;
+		}
+	}
+
 	output.SetCardinality(1);
 	output.SetValue(0, 0, Value(endpoint_id));
-	auto relay = RelayUrl(core);
 	output.SetValue(1, 0, relay.empty() ? Value(LogicalType::VARCHAR) : Value(relay));
 	output.SetValue(2, 0, effective_token.empty() ? Value(LogicalType::VARCHAR) : Value(effective_token));
 	output.SetValue(3, 0, Value(attach_sql));
+	output.SetValue(4, 0, ticket.empty() ? Value(LogicalType::VARCHAR) : Value(ticket));
+	output.SetValue(5, 0, url.empty() ? Value(LogicalType::VARCHAR) : Value(url));
 }
 
 //===--------------------------------------------------------------------===//
@@ -325,6 +428,15 @@ static void LoadInternal(ExtensionLoader &loader) {
 	db.config.AddExtensionOption("quackhole_relay_url",
 	                             "Relay to reach peers through, skipping address lookup (default: look up)",
 	                             LogicalType::VARCHAR);
+	// Only affects the `url` column quackhole_serve() returns. Set it when you
+	// host web/ yourself; the ticket in the fragment is the same either way.
+	db.config.AddExtensionOption("quackhole_relay_wait_ms",
+	                             "How long quackhole_serve() waits for a home relay before returning a NULL ticket",
+	                             LogicalType::BIGINT, Value::BIGINT(DEFAULT_RELAY_WAIT_MS));
+	db.config.AddExtensionOption(
+	    "quackhole_workbench_url",
+	    "Workbench URL that quackhole_serve()'s url column points at (default: " + string(DEFAULT_WORKBENCH_URL) + ")",
+	    LogicalType::VARCHAR);
 
 	TableFunction serve("quackhole_serve", {}, QuackholeServeFunction, QuackholeServeBind);
 	serve.named_parameters["token"] = LogicalType::VARCHAR;

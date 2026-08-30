@@ -8,14 +8,18 @@
 # is run -- which is why the page says to download it rather than piping it
 # into a shell.
 #
-# What it does, in order: fetch the quackhole extension for this platform,
+# What it does, in order: fetch the quackhole extension for this platform (and
+# a matching DuckDB CLI, if the one on PATH is the wrong version or absent),
 # build a small sample database in a temp directory, start DuckDB serving it
-# over iroh, wait until the endpoint has learned its home relay, and print a
-# ticket carrying the endpoint id, that relay, and a freshly generated token.
+# over iroh, and print the link quackhole_serve() returns.
 #
-# Nothing is installed outside the temp directory, no cryptographic identity is
-# persisted (the endpoint is ephemeral), and nothing is left running after
-# Ctrl-C.
+# The link is the whole handoff -- opening it adds this database to the
+# workbench and connects. quackhole_serve waits for the home relay and mints
+# the ticket itself, so nothing here knows the ticket format.
+#
+# Nothing is installed outside the temp directory -- not even the DuckDB CLI,
+# so no sudo and no PATH changes -- no cryptographic identity is persisted (the
+# endpoint is ephemeral), and nothing is left running after Ctrl-C.
 #
 # POSIX sh on purpose: this runs on whatever a stranger happens to have.
 #
@@ -49,10 +53,6 @@ printf '\n  quackhole demo\n  --------------\n\n'
 
 # --- what we need ----------------------------------------------------------
 
-DUCKDB="${QH_DUCKDB:-duckdb}"
-command -v "$DUCKDB" >/dev/null 2>&1 ||
-  die "No '$DUCKDB' on PATH. Install the CLI first: https://duckdb.org/docs/installation/"
-
 if command -v curl >/dev/null 2>&1; then
   fetch() { curl -fsSL "$1" -o "$2"; }
 elif command -v wget >/dev/null 2>&1; then
@@ -61,11 +61,70 @@ else
   die "Need curl or wget to download the extension."
 fi
 
-HAVE_DUCKDB="v$("$DUCKDB" --version 2>/dev/null | sed -n 's/^v\{0,1\}\([0-9][0-9.]*\).*/\1/p')"
-if [ "$HAVE_DUCKDB" != "$WANT_DUCKDB" ]; then
-  step "note: your DuckDB is $HAVE_DUCKDB, the extension is built for $WANT_DUCKDB."
-  step "      if LOAD fails below, that mismatch is why."
-  printf '\n'
+# --- which build ------------------------------------------------------------
+#
+# Needed before anything is downloaded: it names both the extension and, if we
+# end up fetching one, the DuckDB CLI.
+
+case "$(uname -s)" in
+  Darwin) OS=osx ;;
+  Linux)  OS=linux ;;
+  *)      die "Unsupported platform $(uname -s). On Windows, run this under WSL or Git Bash." ;;
+esac
+case "$(uname -m)" in
+  arm64|aarch64) ARCH=arm64 ;;
+  x86_64|amd64)  ARCH=amd64 ;;
+  *)             die "Unsupported architecture $(uname -m)." ;;
+esac
+PLATFORM="${OS}_${ARCH}"
+
+WORKDIR="$(mktemp -d)"
+EXT="$WORKDIR/quackhole.duckdb_extension"
+
+# --- DuckDB ------------------------------------------------------------------
+#
+# The extension ABI is tied to a DuckDB version, and a mismatch fails at LOAD
+# with a message that does not explain itself. So rather than asking for a
+# matching CLI and failing when it is absent, fetch one into the temp directory
+# and use it for this run only. Nothing is installed, nothing needs sudo, and
+# whatever DuckDB the user already had keeps whatever version it had.
+
+duckdb_version_of() {
+  "$1" --version 2>/dev/null | sed -n 's/^v\{0,1\}\([0-9][0-9.]*\).*/v\1/p'
+}
+
+DUCKDB="${QH_DUCKDB:-}"
+if [ -n "$DUCKDB" ]; then
+  # An explicit QH_DUCKDB is a developer saying "use this one". Honour it even
+  # if the version disagrees, but say so, because that mismatch explains most
+  # of the ways the next few lines can fail.
+  command -v "$DUCKDB" >/dev/null 2>&1 || [ -x "$DUCKDB" ] ||
+    die "QH_DUCKDB is set to '$DUCKDB', which is not executable."
+  HAVE="$(duckdb_version_of "$DUCKDB")"
+  [ "$HAVE" = "$WANT_DUCKDB" ] ||
+    step "note: QH_DUCKDB is $HAVE, the extension is built for $WANT_DUCKDB."
+elif command -v duckdb >/dev/null 2>&1 && [ "$(duckdb_version_of duckdb)" = "$WANT_DUCKDB" ]; then
+  DUCKDB=duckdb
+  step "using the DuckDB $WANT_DUCKDB already on your PATH"
+else
+  HAVE="$(command -v duckdb >/dev/null 2>&1 && duckdb_version_of duckdb || true)"
+  if [ -n "$HAVE" ]; then
+    step "your DuckDB is $HAVE and the extension needs $WANT_DUCKDB"
+  fi
+  command -v unzip >/dev/null 2>&1 ||
+    die "Need unzip to unpack the DuckDB CLI, or install DuckDB $WANT_DUCKDB yourself:
+  https://duckdb.org/docs/installation/"
+  case "$OS" in
+    osx)   CLI_ZIP="duckdb_cli-osx-universal.zip" ;;
+    linux) CLI_ZIP="duckdb_cli-linux-${ARCH}.zip" ;;
+  esac
+  step "fetching DuckDB $WANT_DUCKDB into $WORKDIR (nothing is installed)"
+  fetch "https://github.com/duckdb/duckdb/releases/download/$WANT_DUCKDB/$CLI_ZIP" "$WORKDIR/duckdb.zip" ||
+    die "Could not download the DuckDB CLI for $PLATFORM."
+  unzip -oq "$WORKDIR/duckdb.zip" -d "$WORKDIR" || die "Could not unpack the DuckDB CLI."
+  DUCKDB="$WORKDIR/duckdb"
+  chmod +x "$DUCKDB" 2>/dev/null || true
+  [ -x "$DUCKDB" ] || die "The DuckDB CLI did not unpack as expected."
 fi
 
 # quackhole_serve reuses a Quack that is already listening rather than starting
@@ -94,22 +153,7 @@ if port_in_use 9494; then
   that process and run this again."
 fi
 
-# --- which build ------------------------------------------------------------
-
-case "$(uname -s)" in
-  Darwin) OS=osx ;;
-  Linux)  OS=linux ;;
-  *)      die "Unsupported platform $(uname -s). On Windows, run this under WSL or Git Bash." ;;
-esac
-case "$(uname -m)" in
-  arm64|aarch64) ARCH=arm64 ;;
-  x86_64|amd64)  ARCH=amd64 ;;
-  *)             die "Unsupported architecture $(uname -m)." ;;
-esac
-PLATFORM="${OS}_${ARCH}"
-
-WORKDIR="$(mktemp -d)"
-EXT="$WORKDIR/quackhole.duckdb_extension"
+# --- the extension -----------------------------------------------------------
 
 if [ -n "${QH_EXT:-}" ]; then
   step "using the local extension $QH_EXT"
@@ -164,37 +208,46 @@ FROM range(5000);
 -- binds, so it has to precede the serve call.
 SET GLOBAL quackhole_ephemeral = true;
 
-CALL quackhole_serve(token := '$TOKEN');
+-- The extension bakes in the public workbench; this is what makes QH_PAGE work
+-- against a local build. Set unconditionally so the link the script prints and
+-- the link the extension mints can never disagree.
+SET GLOBAL quackhole_workbench_url = '$PAGE';
+
+-- quackhole_serve waits for the endpoint to learn its home relay and mints the
+-- ticket and the workbench link itself, so there is nothing to poll for and no
+-- ticket format spelled out here. Captured into a table because serve can only
+-- be called once -- calling it again would try to start the accept loop twice.
+CREATE TABLE qh AS SELECT * FROM quackhole_serve(token := '$TOKEN');
 SELECT 'QH_ROWS ' || count(*) FROM events;
-SELECT 'QH_ID ' || endpoint_id FROM quackhole_status();
+SELECT 'QH_ID ' || endpoint_id FROM qh;
+SELECT 'QH_RELAY ' || coalesce(relay_url, '') FROM qh;
+SELECT 'QH_URL ' || coalesce(url, '') FROM qh;
+
+-- Dropped once it has been read: a browser lists the remote's tables through
+-- sqlite_master, so anything left here shows up in the workbench next to the
+-- sample data as though it were part of the demo.
+DROP TABLE qh;
 SQL
 
 step "starting the endpoint"
 
-# The home relay is not known the instant an endpoint binds -- it is learned a
-# moment later -- and a ticket without it sends the browser to pkarr, which
-# routinely has not seen a server this new. So poll rather than read once.
-ENDPOINT_ID=""
-RELAY=""
+# serve blocks internally until the relay is known, so this is waiting on one
+# statement rather than polling for a value that arrives late. The bound is
+# still generous: the extension gives up on the relay well before this does.
 i=0
 while [ "$i" -lt 60 ]; do
-  if grep -q '^QH_ID ' "$LOG" 2>/dev/null; then
-    ENDPOINT_ID="$(sed -n 's/^QH_ID //p' "$LOG" | head -1)"
-  fi
-  if [ -n "$ENDPOINT_ID" ]; then
-    printf "SELECT 'QH_RELAY ' || coalesce(relay_url, '') FROM quackhole_status();\n" >&3
-    sleep 1
-    RELAY="$(sed -n 's/^QH_RELAY //p' "$LOG" | grep . | head -1 || true)"
-    [ -n "$RELAY" ] && break
-  else
-    sleep 1
-  fi
+  grep -q '^QH_URL ' "$LOG" 2>/dev/null && break
   # A LOAD failure means the process is already gone; do not wait out the loop.
   kill -0 "$SERVER_PID" 2>/dev/null || break
+  sleep 1
   i=$((i + 1))
 done
 
-if [ -z "$ENDPOINT_ID" ] || [ -z "$RELAY" ]; then
+ENDPOINT_ID="$(sed -n 's/^QH_ID //p' "$LOG" | head -1)"
+RELAY="$(sed -n 's/^QH_RELAY //p' "$LOG" | grep . | head -1 || true)"
+URL="$(sed -n 's/^QH_URL //p' "$LOG" | grep . | head -1 || true)"
+
+if [ -z "$URL" ]; then
   printf '\n  DuckDB never reported a usable endpoint. Its output:\n\n' >&2
   sed 's/^/    /' "$LOG" >&2
   exit 1
@@ -212,14 +265,7 @@ if [ "$ROWS" != "5000" ]; then
   exit 1
 fi
 
-# --- the ticket -------------------------------------------------------------
-
-# qh1_ + base64url(JSON). Kept byte-identical to site/ticket.js, which decodes
-# it. tr strips the padding and swaps the two alphabet characters that are not
-# URL-safe; base64 wraps lines on some platforms and not others, hence tr -d.
-b64url() { base64 | tr -d '\n' | tr '+/' '-_' | tr -d '='; }
-TICKET="qh1_$(printf '%s' \
-  "{\"e\":\"$ENDPOINT_ID\",\"r\":\"$RELAY\",\"t\":\"$TOKEN\"}" | b64url)"
+# --- the link ---------------------------------------------------------------
 
 cat <<BANNER
 
@@ -227,14 +273,12 @@ cat <<BANNER
   through $RELAY
 
   ------------------------------------------------------------------
-  Open this link, or paste the ticket into the page:
+  Open this link. It adds this database to the workbench and connects:
 
-  $PAGE#$TICKET
-
-  $TICKET
+  $URL
   ------------------------------------------------------------------
 
-  The ticket carries the token, so treat it like one: anyone holding it
+  The link carries the token, so treat it like one: anyone holding it
   can query this database until you stop.
 
   Serving 5,000 rows in 'events'. Ctrl-C to stop.

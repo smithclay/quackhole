@@ -18,6 +18,12 @@ SET GLOBAL quackhole_key_path = '__TEST_DIR__/quackhole_test_key';
 statement ok
 SET GLOBAL quackhole_ephemeral = false;
 
+# This file is about the serve/stop lifecycle, and never reads the ticket or the
+# link. Waiting for a home relay would add ten seconds per call here for a
+# column nothing below asserts on.
+statement ok
+SET GLOBAL quackhole_relay_wait_ms = 0;
+
 # auto_serve := false because this test is about quackhole's own lifecycle, not
 # about whether a Quack server happens to come up.
 statement ok

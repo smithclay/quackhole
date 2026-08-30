@@ -473,6 +473,22 @@ pub unsafe extern "C" fn qh_relay_url(core: *const Core, out: *mut c_char, out_l
     unsafe { write_str(out, out_len, &core.relay_url()) }
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qh_relay_url_wait(
+    core: *const Core,
+    timeout_ms: u64,
+    out: *mut c_char,
+    out_len: usize,
+) -> i32 {
+    // SAFETY: null or a live handle from this library, per quackhole_core.h.
+    let Some(core) = (unsafe { core.as_ref() }) else {
+        return QH_ERR;
+    };
+    let url = core.wait_relay_url(std::time::Duration::from_millis(timeout_ms));
+    // SAFETY: out holds out_len bytes; write_str refuses to overrun it.
+    unsafe { write_str(out, out_len, &url) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

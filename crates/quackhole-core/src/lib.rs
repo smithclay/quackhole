@@ -192,6 +192,41 @@ impl Core {
             .unwrap_or_default()
     }
 
+    /// Home relay URL, waiting up to `timeout` for one to be learned.
+    ///
+    /// An endpoint does not know its home relay the instant it binds -- it is
+    /// learned a moment later. A ticket minted before then carries no relay, so
+    /// the peer falls back to resolving through pkarr: a round trip to a third
+    /// party that must also have seen this endpoint publish, which a server
+    /// started seconds ago routinely has not. Native callers can retry; a
+    /// browser handed a bad link cannot. Waiting here is what lets
+    /// `quackhole_serve` return a link that works on the first click.
+    ///
+    /// Returns "" if the timeout expires, which callers must treat as "no
+    /// ticket" rather than minting one with an empty relay.
+    pub fn wait_relay_url(&self, timeout: Duration) -> String {
+        let url = self.relay_url();
+        if !url.is_empty() {
+            return url;
+        }
+        let Ok(runtime) = self.runtime() else {
+            return String::new();
+        };
+        runtime.block_on(async {
+            let deadline = tokio::time::Instant::now() + timeout;
+            loop {
+                let url = self.relay_url();
+                if !url.is_empty() {
+                    return url;
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    return String::new();
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+    }
+
     /// Drop the runtime within `deadline`.
     ///
     /// Spends only the remaining budget on `shutdown_timeout`, so total teardown
