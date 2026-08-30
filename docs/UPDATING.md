@@ -49,6 +49,13 @@ as follows:
   - `duckdb_version` input in `duckdb-stable-build` job in `MainDistributionPipeline.yml` should be set to latest tagged release
   - `duckdb_version` input in `duckdb-stable-deploy` job in `MainDistributionPipeline.yml` should be set to latest tagged release
   - the reusable workflow `duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml` for the `duckdb-stable-build` job should be set to latest tagged release
+  - `duckdb_version` in `release.yml`, both in the `build` job and in the
+    `publish` job's `DUCKDB_VERSION` env
+- Bump `@duckdb/node-api` in `npm/package.json` to the release whose `version()`
+  is that same DuckDB. This one is easy to miss and fails late: `npx quackhole`
+  loads a native extension into those bindings, so a mismatch is an ABI error at
+  `LOAD` that names neither version. The pin is what makes the match true by
+  construction — see the note beside it in `npm/package.json`.
 
 # API changes
 DuckDB extensions built with this extension template are built against the internal C++ API of DuckDB. This API is not guaranteed to be stable.
