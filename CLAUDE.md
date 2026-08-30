@@ -25,8 +25,10 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
     make test                # sqllogictest; add QUACKHOLE_NET_TESTS=1 for the gated ones
     make rust-check          # cargo fmt --check, clippy -D warnings, cargo test
 
-`make lifecycle-check`, `test/docker/run.sh`, `test/browser/run.mjs` and
-`site/verify.mjs` cover what those cannot; see the READMEs.
+`make lifecycle-check`, `test/docker/run.sh`, `test/browser/run.mjs`,
+`site/verify.mjs` and `npm/test/scratch.mjs` cover what those cannot; see the
+READMEs. The last one packs a tarball, serves it from a second origin, and runs
+the npm README's own quickstart block against a live laptop.
 
 ## Things that are easy to get wrong
 
@@ -49,6 +51,19 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
 - **Paths inside `web/` must stay relative.** `site/` is a *project* Pages site
   served under `/quackhole/`, so a leading `/` resolves to github.io itself.
   `test/browser` serves from the root and hides this, so it passes either way.
+- **`web/` is loadable from an origin the page is not on, and that is what
+  `QH_CONFIG` is for.** `new Worker(<cross-origin URL>)` throws `SecurityError`
+  for module and classic workers alike, so a CDN copy comes in through a
+  same-origin blob that `importScripts` it -- and a blob URL has no query string
+  to read `?target=` from and an opaque path that `./protocol.js` will not
+  resolve against. So `qh-worker.js` takes `self.QH_CONFIG` when a loader
+  assigns one, falls back to parsing its own URL when it does not, and publishes
+  whichever it used for `shim.js`, which must not parse a second time. `base` is
+  the setting with no query-parameter equivalent and defaults to the worker's
+  own URL, which is what keeps the relative rule above holding for a vendored
+  copy. `npm/src/quackhole.js` is the loader; `test/browser` and `site/` both
+  still take the query-param path, which is why they prove the transport was not
+  changed by the move that changed its plumbing.
 - **Peer identity lives in `crates/quackhole-core/src/peer.rs`**, and is bound
   twice: over the C ABI (`qh_ticket_mint`, `qh_ticket_parse`, `qh_peer_address`,
   `qh_peer_secret_name`, `qh_address_endpoint_id`) and over wasm-bindgen as
@@ -68,9 +83,9 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
   `quackhole_serve` binds `127.0.0.1:9494` by default and reuses whatever is
   already listening there rather than starting its own -- so a second one is
   handed the first one's Quack, and the token it prints is not the token that
-  server accepts. Pass `target := '127.0.0.1:9495'` for the second. Needed to
-  test anything multi-remote locally, which is what `site/verify.mjs` with
-  `QH_TICKET2` does.
+  server accepts. Pass `target := '127.0.0.1:9495'` for the second, or
+  `npx ../npm --port 9495`. Needed to test anything multi-remote locally, which
+  is what `site/verify.mjs` with `QH_TICKET2` does.
 - **`quackhole_serve` blocks until the endpoint learns its home relay**, up to
   `quackhole_relay_wait_ms` (default 10s), because a ticket minted before then
   omits the relay and sends the browser to pkarr, which routinely has not seen
@@ -131,9 +146,30 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
   of its own. Anything about holding several remotes that ends up in `site/` is
   in the wrong place -- it makes the demo a lookalike rather than evidence.
 - **`web/`, `public/coi-serviceworker.js` and the duckdb-wasm bundles are
-  copied, never bundled.** `VERBATIM` in `site/vite.config.js` is the list.
-  `qh-worker.js` reaches its siblings through `importScripts('./protocol.js')`
-  at runtime, which no content hash survives, and `coi-serviceworker.js`
-  registers itself by `document.currentScript.src`, so a move into `assets/`
-  would scope the service worker to `assets/` and silently stop it controlling
-  the page.
+  copied, never bundled.** `VERBATIM` in `site/vite.config.js` is the list, and
+  `CLIENT` in `npm/build.mjs` is the same list for the npm package -- two
+  callers, both copying, which is what makes what the demo proves true of what
+  the package ships. `qh-worker.js` reaches its siblings through
+  `importScripts('./protocol.js')` at runtime, which no content hash survives,
+  and `coi-serviceworker.js` registers itself by `document.currentScript.src`,
+  so a move into `assets/` would scope the service worker to `assets/` and
+  silently stop it controlling the page.
+- **`web/wasm/.gitignore` is `*`, and npm falls back to a `.gitignore` inside
+  the package.** Copying it into `npm/dist/web/wasm/` drops the entire transport
+  from the tarball, and the result installs, imports, and 404s for its wasm
+  inside a worker -- which the browser reports as a CORS failure, because the
+  404 response carries no `Access-Control-Allow-Origin`. `npm/build.mjs` filters
+  it out on the way in.
+- **A DuckDB extension file must be named `quackhole.duckdb_extension`.** DuckDB
+  derives the entrypoint symbol it looks for from the basename, so a copy named
+  anything else fails at `LOAD` with "did not contain the expected entrypoint
+  function '<basename>_duckdb_cpp_init'" -- which does not sound like a filename
+  problem. The CLI's extension cache therefore keys by directory
+  (`<cache>/<version>/<platform>/quackhole.duckdb_extension`), never by
+  filename.
+- **The npm version is derived from `crates/Cargo.toml`, not maintained.**
+  `npm/bin/quackhole.js` resolves the GitHub release tag it downloads from out
+  of its own `package.json`, so a drifted npm version fetches a binary the CLI
+  was not written for. npm and GitHub releases are two publishing surfaces and
+  nothing else catches it. `node npm/build.mjs --check` asserts they agree; see
+  `docs/UPDATING.md`.

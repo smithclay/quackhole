@@ -81,7 +81,14 @@ transport out entirely under `cfg(wasm_browser)` because a browser cannot open a
 so there is no hole punching and no direct path. Traffic stays end-to-end encrypted; the relay
 forwards ciphertext it cannot read.
 
-See [`web/README.md`](../web/README.md).
+Cross-origin isolation is the one requirement that cannot be shipped in a script tag: a
+service worker can only be registered from the origin that served it, so a page reaching for
+the client on a CDN still has to earn isolation on its own. Everything else about being
+loaded from another origin is handled — `new Worker` refuses a cross-origin URL, so
+`npm/src/quackhole.js` starts it from a same-origin blob and injects the settings and the
+base that a blob URL cannot supply.
+
+See [`web/README.md`](../web/README.md) for the client and [`npm/`](../npm) for it packaged.
 
 ## Two TLS layers, one of them certificate-free
 
