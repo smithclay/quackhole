@@ -9,6 +9,6 @@ const params = new URLSearchParams(self.location.search);
 const target = params.get('target');
 if (!target) throw new Error('qh-worker.js needs ?target=<duckdb worker url>');
 
-importScripts('/protocol.js');
-importScripts('/shim.js');
+importScripts('./protocol.js');
+importScripts('./shim.js');
 importScripts(target);
