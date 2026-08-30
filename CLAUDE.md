@@ -64,6 +64,13 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
   carrying no relay, with a fixed `AS remote` that collided on a second remote.
   The shell script and the page's by-hand SQL each hand-rolled the ticket format
   too, which meant three encoders agreeing on a shape none of them owned.
+- **Two quackhole servers on one machine need distinct Quack ports.**
+  `quackhole_serve` binds `127.0.0.1:9494` by default and reuses whatever is
+  already listening there rather than starting its own -- so a second one is
+  handed the first one's Quack, and the token it prints is not the token that
+  server accepts. Pass `target := '127.0.0.1:9495'` for the second. Needed to
+  test anything multi-remote locally, which is what `site/verify.mjs` with
+  `QH_TICKET2` does.
 - **`quackhole_serve` blocks until the endpoint learns its home relay**, up to
   `quackhole_relay_wait_ms` (default 10s), because a ticket minted before then
   omits the relay and sends the browser to pkarr, which routinely has not seen

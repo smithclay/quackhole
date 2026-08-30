@@ -8,6 +8,11 @@
 //! crate, so a shape defined here cannot drift; a shape defined in the C++ and
 //! again in the JavaScript already had, four times over. See the framing bullet
 //! in `CLAUDE.md` for the precedent.
+//!
+//! The ticket format is genuinely ours rather than something we declined to
+//! adopt: iroh-base 1.1 has no ticket type. It exposes `EndpointAddr`,
+//! `RelayUrl` and `key`, and nothing that carries the three fields a peer needs
+//! to hand over.
 
 use crate::parse_endpoint_id;
 use anyhow::{Result, bail};

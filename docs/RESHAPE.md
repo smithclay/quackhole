@@ -1,5 +1,17 @@
 # Reshape: give peer identity one owner
 
+> **Landed.** All four moves are in, on `fix/demo-review`. What they left
+> behind lives in the code and in [`CLAUDE.md`](../CLAUDE.md); this stays as the
+> record of why, not as work to do. `crates/quackhole-core/src/peer.rs` owns
+> peer identity, `quackhole_attach` replaced `attach_sql`, the `peer` control
+> frame in [`web/protocol.js`](../web/protocol.js) replaced the
+> `BroadcastChannel` and its ack, and `web/session.js` holds the connection
+> model `site/app.js` used to. Two things came out differently from the sketch
+> below: `as := 'laptop'` does not parse (AS is reserved, so the parameter is
+> `name`), and `parse_address` returns the endpoint id rather than a `Peer`,
+> because an address carries no relay and no token and a `Peer` built from one
+> would be two-thirds empty.
+
 A brief for a fresh session. Everything needed to start is here; read
 [`CLAUDE.md`](../CLAUDE.md) first for the conventions and the hazards, and
 [`ARCHITECTURE.md`](ARCHITECTURE.md) for the layer diagram.
