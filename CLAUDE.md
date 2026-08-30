@@ -73,8 +73,11 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
   the secret up by the ATTACH path, so `SCOPE 'quack:<id>.iroh:9494'` is what
   routes a token to one peer; a secret scoped elsewhere is not found at all and
   the error is `Could not find a Quack authentication token`, which does not
-  sound like a scope problem. `attach_sql` still emits the unnamed form -- it is
-  a single-remote convenience, and `site/app.js` does not use it.
+  sound like a scope problem. `attach_sql` and `site/app.js` both emit the named,
+  scoped form, and `QuackUrl`/`quackUrl` exist so the ATTACH path and the SCOPE
+  cannot drift apart. The one thing `attach_sql` cannot make unique is its `AS
+  remote` alias, because it is a fixed string -- a second one collides on the
+  catalog name, which is loud and is a one-word edit the scope survives.
 - **The bridge's relay is per-peer, keyed by endpoint id.** `web/bridge-worker.js`
   keeps a map the page fills over a `BroadcastChannel`, because the bridge is
   nested inside the DuckDB worker and cannot be reached by postMessage. The

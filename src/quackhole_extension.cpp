@@ -144,6 +144,27 @@ string Base64Url(const string &input) {
 //! Returns "" when there is no relay to put in it: a ticket without one sends
 //! the browser to pkarr and fails on the first click, so no ticket beats a
 //! broken one.
+//! The address a client dials, written once.
+//!
+//! ATTACH and the secret's SCOPE below have to agree on this string exactly or
+//! the token is filed under a path nothing attaches to, and the failure reads
+//! as "Could not find a Quack authentication token" rather than as a typo.
+//! `site/app.js` has the same one-liner for the same reason.
+string QuackUrl(const string &endpoint_id) {
+	return "quack:" + endpoint_id + ".iroh:9494";
+}
+
+//! A DuckDB identifier naming the secret for one peer.
+//!
+//! Derived from the endpoint id rather than fixed, so two of these strings
+//! pasted into one DuckDB do not collide: an unnamed quack secret is really
+//! `__default_quack`, and a second CREATE SECRET fails on the name whatever its
+//! scope says. The prefix is not decoration -- z-base-32 includes digits, so a
+//! bare endpoint id is not always a valid unquoted identifier.
+string SecretName(const string &endpoint_id) {
+	return "qh_" + endpoint_id;
+}
+
 string MintTicket(const string &endpoint_id, const string &relay_url, const string &token) {
 	if (relay_url.empty()) {
 		return string();
@@ -267,8 +288,14 @@ void QuackholeServeFunction(ClientContext &context, TableFunctionInput &data_p, 
 
 	auto endpoint_id = EndpointId(core);
 	auto effective_token = bind_data.token.empty() ? quack_token : bind_data.token;
-	auto attach_sql = "CREATE SECRET (TYPE quack, TOKEN '" + effective_token + "'); ATTACH 'quack:" + endpoint_id +
-	                  ".iroh:9494' AS remote;";
+	// Named and scoped to this one peer, which is what lets a native client hold
+	// more than one remote -- the same shape site/app.js builds. Only the `AS
+	// remote` alias is still fixed, and a second one collides loudly on the
+	// catalog name rather than quietly on the token; renaming it is a one-word
+	// edit that the scope survives.
+	auto quack_url = QuackUrl(endpoint_id);
+	auto attach_sql = "CREATE SECRET " + SecretName(endpoint_id) + " (TYPE quack, TOKEN '" + effective_token +
+	                  "', SCOPE '" + quack_url + "'); ATTACH '" + quack_url + "' AS remote;";
 
 	// Wait, rather than read once: a link is the whole point of this function's
 	// output now, and a link minted before the relay is known does not work.

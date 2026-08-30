@@ -40,8 +40,9 @@ docs:
     INSTALL quack; LOAD quack;
     LOAD quackhole;
 
-    CALL quackhole_serve(token := 'your-shared-token');
-    FROM quackhole_status();  -- endpoint id, relay, and a paste-ready attach_sql
+    -- endpoint id, relay, a paste-ready attach_sql, and a link that opens the
+    -- browser workbench already connecting
+    FROM quackhole_serve(token := 'your-shared-token');
 
     -- From anywhere else -- a different network, a different continent:
     INSTALL quack; LOAD quack;

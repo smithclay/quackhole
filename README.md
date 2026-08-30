@@ -51,6 +51,16 @@ FROM laptop.logs WHERE ts > now() - INTERVAL '1 hour';
 That is an ordinary Quack `ATTACH` — no new syntax. Roles are per call, not per machine: a
 DuckDB can serve and attach to others at the same time.
 
+For a second remote, the secret has to be named and scoped to its peer — an unnamed one is
+really `__default_quack`, so the second `CREATE SECRET` fails on the name. That is the form
+`attach_sql` prints, so paste that rather than the short version above:
+
+```sql
+CREATE SECRET qh_<endpoint-id> (TYPE quack, TOKEN 'your-shared-token',
+                                SCOPE 'quack:<endpoint-id>.iroh:9494');
+ATTACH 'quack:<endpoint-id>.iroh:9494' AS laptop;
+```
+
 ## The address is a public key
 
 ```
