@@ -133,9 +133,10 @@ main { padding: 0 var(--gut) 6rem; }
 .wire-node--relay { stroke: var(--line); }
 .wire-pulse { fill: var(--signal); opacity: 0; }
 
-/* Focus: which machine the step on screen is talking about. */
-.wire[data-focus="laptop"] .wire-node:not(.wire-node--relay):last-of-type,
-.wire[data-focus="browser"] .wire-node:not(.wire-node--relay):first-of-type {
+/* Focus: which machine the step on screen is talking about. Matched by name,
+   because the pulse is also a <circle> and would claim :first-of-type. */
+.wire[data-focus="laptop"] .wire-node--laptop,
+.wire[data-focus="browser"] .wire-node--browser {
   stroke: var(--signal);
 }
 
@@ -304,7 +305,7 @@ button:disabled { background: var(--line); border-color: var(--line); color: var
 .paste input:focus { border-color: var(--relay); }
 
 .slot-error, .slot-note { font-size: 0.85rem; margin: 0.85rem 0 0; }
-.slot-error { color: var(--bad); }
+.slot-error { color: var(--bad); white-space: pre-wrap; }
 .slot-note { color: var(--dim); }
 
 /* --- tour + console ------------------------------------------------------ */

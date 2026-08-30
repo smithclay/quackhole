@@ -42,18 +42,29 @@ export function createWire(mount) {
   const pulse = el('circle', { class: 'wire-pulse', cx: X.browser, cy: Y, r: 5 });
   svg.append(pulse);
 
+  // Named rather than positional. Selecting these by :first-of-type /
+  // :last-of-type looks tidier and is wrong: the pulse above is also a
+  // <circle>, so it claims :first-of-type and the browser node never matches.
   const nodes = {
-    browser: el('circle', { class: 'wire-node', cx: X.browser, cy: Y, r: 11 }),
+    browser: el('circle', { class: 'wire-node wire-node--browser', cx: X.browser, cy: Y, r: 11 }),
     relay: el('rect', {
       class: 'wire-node wire-node--relay',
       x: X.relay - 9, y: Y - 9, width: 18, height: 18,
       transform: `rotate(45 ${X.relay} ${Y})`,
     }),
-    laptop: el('rect', { class: 'wire-node', x: X.laptop - 10, y: Y - 10, width: 20, height: 20, rx: 2 }),
+    laptop: el('rect', {
+      class: 'wire-node wire-node--laptop',
+      x: X.laptop - 10, y: Y - 10, width: 20, height: 20, rx: 2,
+    }),
   };
   svg.append(nodes.browser, nodes.relay, nodes.laptop);
 
   mount.replaceChildren(svg);
+
+  // The legend is a *sibling* of the mount, not a child -- replaceChildren
+  // above owns everything inside `mount` -- so resolve the label from the
+  // frame that contains both. Querying within `mount` silently finds nothing.
+  const relayHost = mount.closest('.wire-frame')?.querySelector('.wire-relay-host');
 
   let pulseAnim = null;
 
@@ -68,10 +79,12 @@ export function createWire(mount) {
       svg.dataset.focus = which ?? '';
     },
     setRelayLabel(url) {
-      const host = (() => {
-        try { return new URL(url).host; } catch { return url; }
-      })();
-      mount.querySelector('.wire-relay-host')?.replaceChildren(host);
+      if (!relayHost) return;
+      try {
+        relayHost.textContent = new URL(url).host;
+      } catch {
+        relayHost.textContent = url;
+      }
     },
     // One round trip, timed to the real measurement. The duration is clamped
     // into a visible band -- a 6ms answer is not perceivable -- so the readout

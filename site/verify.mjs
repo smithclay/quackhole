@@ -52,6 +52,16 @@ try {
   await page.waitForSelector('#status[data-state="live"]', { timeout: 90_000 });
   console.log(`  ${await page.textContent('#paste-note')}`);
 
+  // The relay legend lives in a sibling of the SVG mount, so it is easy to
+  // query from the wrong root -- which fails silently and leaves the
+  // placeholder in place. Assert it actually shows the ticket's relay.
+  const shownRelay = (await page.textContent('.wire-relay-host')).trim();
+  const wantRelay = new URL(JSON.parse(Buffer.from(TICKET.slice(4), 'base64url')).r).host;
+  if (shownRelay !== wantRelay) {
+    failed = `relay legend shows "${shownRelay}", expected "${wantRelay}"`;
+  }
+  console.log(`  relay legend  ${shownRelay}`);
+
   // Every probe must land, not just the first: the tour stops at the first
   // failure, so "some probes ran" is indistinguishable from success otherwise.
   await page.waitForFunction(
@@ -78,9 +88,11 @@ try {
     console.log(`          ${p.sql}`);
   }
 
+  // Least specific first, so the more useful message wins: a short count is
+  // usually just the symptom of the failure named above it.
   const bad = probes.filter((p) => p.state !== 'ok');
-  if (bad.length) failed = `${bad.length} probe(s) failed`;
   if (probes.length !== 4) failed = `expected 4 probes, saw ${probes.length}`;
+  if (bad.length) failed = `${bad.length} of ${probes.length} probe(s) failed: ${bad[0].out}`;
 
   // The console is the half a visitor drives themselves, and it is a different
   // code path from the tour, so exercise it too.

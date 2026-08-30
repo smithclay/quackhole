@@ -13,8 +13,9 @@
 # over iroh, wait until the endpoint has learned its home relay, and print a
 # ticket carrying the endpoint id, that relay, and a freshly generated token.
 #
-# Nothing is installed outside the temp directory, and nothing is left running
-# after Ctrl-C.
+# Nothing is installed outside the temp directory, no cryptographic identity is
+# persisted (the endpoint is ephemeral), and nothing is left running after
+# Ctrl-C.
 #
 # POSIX sh on purpose: this runs on whatever a stranger happens to have.
 #
@@ -154,6 +155,14 @@ CREATE TABLE events AS SELECT
   now()::TIMESTAMP - INTERVAL (range) MINUTE AS ts,
   (range * 7919 % 1000) / 10.0 AS duration_ms
 FROM range(5000);
+
+-- A throwaway identity, so the header's promise above holds: without this the
+-- extension persists an ed25519 key at ~/.quackhole/key, which outlives the
+-- temp directory and this process. It also keeps a stale ticket from an
+-- earlier run from dialling successfully and then failing at token auth,
+-- since each run now has a different endpoint id. Read when the endpoint
+-- binds, so it has to precede the serve call.
+SET GLOBAL quackhole_ephemeral = true;
 
 CALL quackhole_serve(token := '$TOKEN');
 SELECT 'QH_ROWS ' || count(*) FROM events;

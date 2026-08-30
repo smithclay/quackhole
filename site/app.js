@@ -71,6 +71,12 @@ function renderLaptopCommand() {
     "INSTALL quack; LOAD quack;",
     "LOAD './quackhole.duckdb_extension';",
     '',
+    '-- Same two tables scripts/quackhole-demo.sh creates, so the tour below',
+    '-- finds what it expects. Edit the host string to taste.',
+    'CREATE TABLE laptop_info AS',
+    "  SELECT 'your laptop' AS host, 'by hand' AS os,",
+    '         version() AS duckdb_version, now() AS started_at;',
+    '',
     'CREATE TABLE events AS',
     "  SELECT range AS id, 'evt_' || range AS name,",
     "         ['debug','info','warn','error'][(range % 4) + 1] AS level,",
@@ -90,9 +96,15 @@ function renderLaptopCommand() {
 
 for (const btn of document.querySelectorAll('.copy')) {
   btn.addEventListener('click', async () => {
-    await navigator.clipboard.writeText($(btn.dataset.copy).textContent.trim());
     const was = btn.textContent;
-    btn.textContent = 'copied';
+    try {
+      await navigator.clipboard.writeText($(btn.dataset.copy).textContent.trim());
+      btn.textContent = 'copied';
+    } catch {
+      // Denied, or the document is not focused. Saying so beats leaving the
+      // visitor to paste whatever was on the clipboard before.
+      btn.textContent = 'copy failed';
+    }
     setTimeout(() => { btn.textContent = was; }, 1400);
   });
 }
@@ -115,9 +127,26 @@ const DUCKDB_BUNDLES = {
 
 const sqlString = (s) => `'${String(s).replaceAll("'", "''")}'`;
 
-let conn = null;
+// The whole chain is tracked, not just the connection. A failed ATTACH still
+// leaves a DuckDB worker, the bridge worker it spawned, an 8 MB
+// SharedArrayBuffer and a live iroh endpoint behind -- so a visitor who pastes
+// a stale ticket twice would hold two of each, and a successful reconnect
+// would silently orphan the first.
+let session = null;
+
+async function teardown() {
+  if (!session) return;
+  const { conn, db, worker } = session;
+  session = null;
+  // Each step can fail if the layer below already died; that is not worth
+  // reporting, but it must not stop the ones after it.
+  try { await conn.close(); } catch { /* already gone */ }
+  try { await db.terminate(); } catch { /* already gone */ }
+  worker.terminate();
+}
 
 async function connect(ticket) {
+  await teardown();
   const { endpointId, relayUrl, token } = ticket;
   setStatus('connecting', 'dialling');
   wire.setRelayLabel(relayUrl);
@@ -131,20 +160,29 @@ async function connect(ticket) {
     `&mode=iroh&relay=${encodeURIComponent(relayUrl)}`;
 
   const worker = new Worker(workerUrl);
-  const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING), worker);
-  await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
-  const c = await db.connect();
+  let db;
+  let c;
+  try {
+    db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING), worker);
+    await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+    c = await db.connect();
 
-  await c.query('INSTALL quack');
-  await c.query('LOAD quack');
-  if (token) await c.query(`CREATE SECRET (TYPE quack, TOKEN ${sqlString(token)})`);
+    await c.query('INSTALL quack');
+    await c.query('LOAD quack');
+    if (token) await c.query(`CREATE SECRET (TYPE quack, TOKEN ${sqlString(token)})`);
 
-  const t0 = performance.now();
-  await c.query(`ATTACH ${sqlString(`quack:${endpointId}.iroh:9494`)} AS laptop`);
-  const attachMs = performance.now() - t0;
+    const t0 = performance.now();
+    await c.query(`ATTACH ${sqlString(`quack:${endpointId}.iroh:9494`)} AS laptop`);
+    const attachMs = performance.now() - t0;
 
-  conn = c;
-  return attachMs;
+    session = { conn: c, db, worker };
+    return attachMs;
+  } catch (err) {
+    try { await c?.close(); } catch { /* never opened */ }
+    try { await db?.terminate(); } catch { /* never instantiated */ }
+    worker.terminate();
+    throw err;
+  }
 }
 
 const pasteError = $('#paste-error');
@@ -285,17 +323,18 @@ async function runTour() {
 
     const t0 = performance.now();
     try {
-      const rows = rowsOf(await conn.query(probe.sql));
+      const rows = rowsOf(await session.conn.query(probe.sql));
       const ms = performance.now() - t0;
       li.dataset.state = 'ok';
       li.querySelector('.probe-ms').textContent = `${Math.round(ms)}ms`;
       li.querySelector('.probe-out').textContent = probe.format(rows);
       wire.pulse(ms);
     } catch (err) {
+      // Keep going. The probes are independent, and stopping here would hide
+      // three working ones behind a single missing table.
       li.dataset.state = 'failed';
       li.querySelector('.probe-ms').textContent = 'failed';
       li.querySelector('.probe-out').textContent = String(err?.message ?? err);
-      return;
     }
   }
 }
@@ -339,13 +378,13 @@ function renderResult(table, ms) {
 $('#sql-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const sql = $('#sql').value.trim();
-  if (!sql || !conn) return;
+  if (!sql || !session) return;
 
   const btn = $('#run');
   btn.disabled = true;
   const t0 = performance.now();
   try {
-    const table = await conn.query(sql);
+    const table = await session.conn.query(sql);
     const ms = performance.now() - t0;
     renderResult(table, ms);
     wire.pulse(ms);
@@ -371,7 +410,15 @@ setStatus('idle', 'no route');
 // A ticket can also arrive in the fragment, which never leaves the browser --
 // it is not sent to GitHub's servers and does not appear in their logs. That
 // makes `#qh1_...` a reasonable way to hand someone a working link.
-const fragment = decodeURIComponent(location.hash.slice(1));
+// decodeURIComponent throws on a truncated escape, and a shared link is
+// exactly the thing that arrives mangled. A bad fragment should leave the page
+// usable, not abort the last statement of the boot sequence.
+let fragment = '';
+try {
+  fragment = decodeURIComponent(location.hash.slice(1));
+} catch {
+  fragment = location.hash.slice(1);
+}
 if (fragment.startsWith('qh1_')) {
   $('#ticket').value = fragment;
   $('#paste-form').requestSubmit();

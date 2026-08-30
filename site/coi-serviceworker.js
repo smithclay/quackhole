@@ -84,13 +84,15 @@ if (typeof window === 'undefined') {
         if (registration.active && !navigator.serviceWorker.controller) {
           window.location.reload();
         }
-        registration.addEventListener('updatefound', () => window.location.reload());
       },
       (err) => console.error('[coi] service worker registration failed:', err),
     );
 
     // The first controller taking over is the signal that a reload will now
-    // produce an isolated page.
+    // produce an isolated page. This is the only reload trigger: reloading on
+    // 'updatefound' instead would fire while the replacement worker was still
+    // installing, so that reload would still be served by the old one and this
+    // event would then reload a second time.
     navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload());
   })();
 }
