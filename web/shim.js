@@ -11,7 +11,14 @@
   'use strict';
 
   const NativeXHR = self.XMLHttpRequest;
-  const params = new URLSearchParams(self.location.search);
+
+  // Settings, published by qh-worker.js -- which either parsed them off its own
+  // URL or was handed them by a loader. Read from there rather than parsed
+  // again here: a blob worker has no query string to parse, and two readers of
+  // one set of settings is one more than can be kept honest. Same trade
+  // protocol.js already makes for the shared-memory layout.
+  const config = globalThis.QH_CONFIG;
+  if (!config) throw new Error('shim.js is loaded by qh-worker.js, which publishes QH_CONFIG');
 
   // Layout and constants live in protocol.js, loaded by both sides. Declared
   // up here because TIMEOUT_MS below falls back to it: when a caller omits
@@ -22,14 +29,14 @@
 
   // Hosts to intercept. `.iroh` is the real target; the extra pattern lets the
   // bridge be tested against an ordinary HTTP server, with no iroh involved.
-  const EXTRA = params.get('intercept') || '';
+  const EXTRA = config.intercept || '';
   // Per-request tracing. Off by default; the harness only needs the intercept
   // announcements below, and the rest is noise until something is wrong.
-  const DEBUG = params.get('debug') === '1';
+  const DEBUG = config.debug === '1' || config.debug === true;
   // Bounding this is not a nicety: this thread blocks in Atomics.wait, so an
   // unbounded request does not fail slowly, it wedges the DuckDB worker
   // forever with nothing logged anywhere.
-  const TIMEOUT_MS = Number(params.get('timeout')) || P.DEFAULT_TIMEOUT_MS;
+  const TIMEOUT_MS = Number(config.timeout) || P.DEFAULT_TIMEOUT_MS;
   function shouldIntercept(url) {
     try {
       const u = new URL(url, self.location.href);
@@ -43,26 +50,49 @@
   // --- shared state -------------------------------------------------------
   // Deliberately overridable: the harness shrinks this so that ordinary
   // responses span several chunks and the reassembly path is actually run.
-  const DATA_BYTES = Number(params.get('chunk')) || 8 * 1024 * 1024;
+  const DATA_BYTES = Number(config.chunk) || 8 * 1024 * 1024;
 
   const sab = new SharedArrayBuffer(P.CTL_BYTES + DATA_BYTES);
   const ctl = new Int32Array(sab, 0, 8);
   const data = new Uint8Array(sab, P.CTL_BYTES);
 
+  /// Start the bridge, from wherever the client's files are being served.
+  ///
+  /// `new Worker(<cross-origin URL>)` throws SecurityError -- for module
+  /// workers as much as classic ones -- so a client loaded from a CDN cannot
+  /// start its own bridge directly. Trying it is the check: a same-origin URL
+  /// is accepted, and a cross-origin one is refused synchronously, before
+  /// anything is fetched. The fallback is a same-origin blob that imports the
+  /// real URL, which works because `import.meta.url` inside it is the far
+  /// end's -- so the wasm glue's `new URL('quackhole_bg.wasm', import.meta.url)`
+  /// still lands where the module came from.
+  function startBridge(url) {
+    try {
+      return new Worker(url, { type: 'module' });
+    } catch {
+      const trampoline = new Blob([`import ${JSON.stringify(url)};`], { type: 'text/javascript' });
+      // Not revoked: nothing promises the blob has been fetched by the time
+      // this returns, and one object URL per worker is not a leak worth racing.
+      return new Worker(URL.createObjectURL(trampoline), { type: 'module' });
+    }
+  }
+
   // Nested worker: the shim owns the bridge, so the page does not have to know
   // it exists and there is no handshake to race against duckdb's own onmessage.
-  // A module worker, because the wasm glue is an ES module.
-  const bridge = new Worker(params.get('bridge') || './bridge-worker.js', { type: 'module' });
+  // A module worker, because the wasm glue is an ES module. Resolved against
+  // config.base rather than against this worker's own URL, which in a blob is
+  // an opaque path nothing resolves against.
+  const bridge = startBridge(new URL(config.bridge || 'bridge-worker.js', config.base).href);
   bridge.postMessage({
     [P.TAG]: P.INIT,
     sab,
-    mode: params.get('mode') || 'fetch',
+    mode: config.mode || 'fetch',
     // The relay for peers that have none registered. All a caller with one
     // remote needs; a caller with several sends a `peer` frame per remote.
-    relay: params.get('relay') || null,
+    relay: config.relay || null,
     // Test-only: makes the bridge stop answering, so the deadline above can
     // be shown to fire rather than merely existing.
-    fault: params.get('fault') || null,
+    fault: config.fault || null,
   });
 
   // Control frames from the page, forwarded onto the same channel as requests.

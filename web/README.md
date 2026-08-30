@@ -51,9 +51,30 @@ const worker = new Worker(
 
 then attach as usual — `ATTACH 'quack:<endpoint-id>.iroh:9494' AS remote`.
 
-Query parameters: `target` (required, the real duckdb worker), `mode`
-(`iroh`|`fetch`), `relay`, `timeout` (ms), `chunk` (shared buffer bytes),
-`intercept` (extra host to capture, for testing), `debug`.
+Settings: `target` (required, the real duckdb worker), `mode` (`iroh`|`fetch`),
+`relay`, `timeout` (ms), `chunk` (shared buffer bytes), `intercept` (extra host
+to capture, for testing), `debug`, and `base` (below).
+
+### Or without a URL to read them off
+
+`qh-worker.js` takes the same settings as `self.QH_CONFIG`, an object assigned
+before it is loaded, and publishes whichever it used on `globalThis` for
+`shim.js` to read. That exists because these files can be served from an origin
+the page is not on — a CDN — and a cross-origin URL cannot be a worker at all
+(`new Worker` throws `SecurityError`, module or classic). The way in is a
+same-origin blob that `importScripts` the real one, and a blob URL has neither a
+query string to parse nor a path for `./protocol.js` to resolve against:
+
+```js
+const src = `self.QH_CONFIG = ${JSON.stringify(config)};` +
+            `importScripts(${JSON.stringify(entryUrl)});`;
+const worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+```
+
+`base` is the one setting that has no query-parameter equivalent: it is where
+the siblings are, and it defaults to this file's own URL, which is what keeps
+the vendored path resolving relatively. [`quackhole`](../npm) on npm is this
+loader, so a page reaching for the CDN does not write it out.
 
 ### More than one remote
 
