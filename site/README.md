@@ -44,10 +44,11 @@ by-hand SQL encode. Changing the shape means changing all three.
 | `index.html` | Structure. Steps are labelled by *which machine* they happen on, not numbered |
 | `app.js` | Onboarding, the DuckDB-Wasm boot through the shim, the tour, the console |
 | `wire.js` | The topology diagram. Opens broken; pulses per query at the measured latency |
-| `ticket.js` | Ticket encode/decode |
+| `ticket.js` | Ticket decode. The two encoders live on the laptop |
 | `styles.css` | Yellow is DuckDB, periwinkle is iroh. Nothing else is coloured |
 | `coi-serviceworker.js` | See below |
 | `build.mjs` | Assembles `dist/` from here, `web/`, `web/wasm/` and duckdb-wasm |
+| `serve.mjs` | The static server `npm run dev` and `verify.mjs` share |
 | `verify.mjs` | Drives the built page against a real laptop, headless |
 
 ## Cross-origin isolation, on a host that cannot send headers

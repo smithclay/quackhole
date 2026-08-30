@@ -17,23 +17,16 @@
 // The laptop side mints these -- see scripts/quackhole-demo.sh and the manual
 // SQL on the page -- so any change here has to change there too.
 
+// Decode only. Nothing in the browser mints a ticket -- the two encoders live
+// on the laptop, in shell and in SQL -- and a third one here would be a fourth
+// implementation of the format for no caller to use.
 const PREFIX = 'qh1_';
-
-const b64urlEncode = (str) =>
-  btoa(String.fromCharCode(...new TextEncoder().encode(str)))
-    .replaceAll('+', '-')
-    .replaceAll('/', '_')
-    .replaceAll('=', '');
 
 const b64urlDecode = (str) => {
   // atob wants standard alphabet and padding back.
   const padded = str.replaceAll('-', '+').replaceAll('_', '/').padEnd(Math.ceil(str.length / 4) * 4, '=');
   return new TextDecoder().decode(Uint8Array.from(atob(padded), (c) => c.charCodeAt(0)));
 };
-
-export function encodeTicket({ endpointId, relayUrl, token }) {
-  return PREFIX + b64urlEncode(JSON.stringify({ e: endpointId, r: relayUrl, t: token }));
-}
 
 // Throws with a message written for the person holding the ticket, because
 // every one of these lands directly in the page's error slot.

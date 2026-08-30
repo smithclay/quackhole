@@ -52,20 +52,21 @@ function renderLaptopCommand() {
   const platform = detectPlatform();
   const scriptUrl = asset('start.sh');
 
+  // Downloaded rather than piped into sh, so it can be read before it runs.
+  // The command itself is the same everywhere; only the label and the caveat
+  // depend on which machine is reading it.
+  $('#cmd-serve').querySelector('code').textContent =
+    `curl -fsSL ${scriptUrl} -o quackhole-demo.sh\nsh quackhole-demo.sh`;
+
   if (platform === 'windows') {
     $('#cmd-os').textContent = 'windows — use wsl or git bash';
-    $('#cmd-serve').querySelector('code').textContent =
-      `curl -fsSL ${scriptUrl} -o quackhole-demo.sh\nsh quackhole-demo.sh`;
     $('#prereq').innerHTML =
       'The setup script is POSIX shell, so on Windows run it under WSL or Git Bash — ' +
       'or open the by-hand path below, which is plain SQL.';
   } else {
     $('#cmd-os').textContent = platform === 'macos' ? 'macos — terminal' : 'linux — shell';
-    $('#cmd-serve').querySelector('code').textContent =
-      `curl -fsSL ${scriptUrl} -o quackhole-demo.sh\nsh quackhole-demo.sh`;
   }
 
-  // Downloaded rather than piped into sh, so it can be read before it runs.
   $('#cmd-manual').querySelector('code').textContent = [
     "INSTALL quack; LOAD quack;",
     "LOAD './quackhole.duckdb_extension';",

@@ -8,11 +8,11 @@
 //
 // Nothing here reimplements the client. If the demo works, the thing a user
 // would vendor into their own page works, because they are the same files.
-import { build, context } from 'esbuild';
-import { cp, mkdir, rm, writeFile, readFile, access } from 'node:fs/promises';
-import { createServer } from 'node:http';
-import { dirname, join, extname, basename, normalize } from 'node:path';
+import { build } from 'esbuild';
+import { cp, mkdir, rm, writeFile, access } from 'node:fs/promises';
+import { dirname, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { startStaticServer } from './serve.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
@@ -57,19 +57,29 @@ async function fetchFonts() {
     const wanted = blocks.filter(([, subset]) => subset === 'latin' || subset === 'latin-ext');
     if (wanted.length === 0) throw new Error('no latin @font-face blocks in the response');
 
-    const out = [];
-    for (const [, subset, block] of wanted) {
-      const url = block.match(/url\((https:\/\/[^)]+\.woff2)\)/)?.[1];
-      if (!url) continue;
-      const file = basename(new URL(url).pathname);
-      const font = await fetch(url);
-      if (!font.ok) throw new Error(`HTTP ${font.status} for ${file}`);
-      await writeFile(join(OUT, 'fonts', file), Buffer.from(await font.arrayBuffer()));
-      out.push(block.replace(url, `./fonts/${file}`));
-    }
+    const faces = wanted
+      .map(([, , block]) => ({ block, url: block.match(/url\((https:\/\/[^)]+\.woff2)\)/)?.[1] }))
+      .filter((face) => face.url);
+
+    // Google collapses several of the requested weights onto one physical
+    // file -- IBM Plex Sans 400/500/600 resolve to a single woff2 per subset --
+    // so these 14 @font-face blocks name only 8 distinct URLs. Keying by URL
+    // drops six redundant downloads, about 168 KB of the 311 KB a naive pass
+    // would pull. They are independent, so fetch them together rather than
+    // serially: this is otherwise a second of pure latency on every deploy.
+    const files = new Map(faces.map((face) => [face.url, basename(new URL(face.url).pathname)]));
+    await Promise.all(
+      [...files].map(async ([url, file]) => {
+        const font = await fetch(url);
+        if (!font.ok) throw new Error(`HTTP ${font.status} for ${file}`);
+        await writeFile(join(OUT, 'fonts', file), Buffer.from(await font.arrayBuffer()));
+      }),
+    );
+
+    const out = faces.map((face) => face.block.replace(face.url, `./fonts/${files.get(face.url)}`));
 
     await writeFile(join(OUT, 'fonts.css'), `/* Fetched at build time. See build.mjs. */\n${out.join('\n')}\n`);
-    say(`fonts: ${out.length} faces`);
+    say(`fonts: ${out.length} faces from ${files.size} files`);
   } catch (err) {
     await writeFile(
       join(OUT, 'fonts.css'),
@@ -149,40 +159,14 @@ async function buildSite() {
 
 // --- local preview ----------------------------------------------------------
 
-const TYPES = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.wasm': 'application/wasm',
-  '.woff2': 'font/woff2',
-  '.sh': 'text/plain; charset=utf-8',
-  '.map': 'application/json',
-};
-
 // Serves dist/ with the isolation headers set directly. Locally that makes the
 // service worker a no-op, so `npm run dev` exercises the transport without
 // also depending on the Pages workaround -- when something breaks, that
 // separation is what tells you which of the two it was.
 async function serve() {
   await buildSite();
-  const server = createServer(async (req, res) => {
-    const path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname));
-    const rel = path === '/' ? 'index.html' : path.slice(1);
-    if (rel.startsWith('..')) return void res.writeHead(403).end('forbidden');
-    try {
-      const body = await readFile(join(OUT, rel));
-      res.writeHead(200, {
-        'Content-Type': TYPES[extname(rel)] ?? 'application/octet-stream',
-        'Cross-Origin-Opener-Policy': 'same-origin',
-        'Cross-Origin-Embedder-Policy': 'require-corp',
-        'Cache-Control': 'no-store',
-      }).end(body);
-    } catch {
-      res.writeHead(404).end('not found');
-    }
-  });
-  server.listen(8099, '127.0.0.1', () => console.log('\n  http://127.0.0.1:8099\n'));
+  const { port } = await startStaticServer(OUT, { isolate: true, port: 8099 });
+  console.log(`\n  http://127.0.0.1:${port}\n`);
 }
 
 if (process.argv.includes('--serve')) await serve();

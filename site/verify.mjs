@@ -14,10 +14,9 @@
 // --sw to exercise the service worker path instead, which is what a visitor to
 // github.io actually gets.
 import { chromium } from 'playwright';
-import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { dirname, join, extname, normalize } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { startStaticServer } from './serve.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, 'dist');
@@ -29,33 +28,7 @@ if (!TICKET) {
   process.exit(2);
 }
 
-const TYPES = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.wasm': 'application/wasm',
-  '.woff2': 'font/woff2',
-  '.map': 'application/json',
-};
-
-const server = createServer(async (req, res) => {
-  const path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname));
-  const rel = path === '/' ? 'index.html' : path.slice(1);
-  if (rel.startsWith('..')) return void res.writeHead(403).end('forbidden');
-  try {
-    const body = await readFile(join(OUT, rel));
-    const headers = { 'Content-Type': TYPES[extname(rel)] ?? 'application/octet-stream' };
-    if (!VIA_SW) {
-      headers['Cross-Origin-Opener-Policy'] = 'same-origin';
-      headers['Cross-Origin-Embedder-Policy'] = 'require-corp';
-    }
-    res.writeHead(200, headers).end(body);
-  } catch {
-    res.writeHead(404).end('not found');
-  }
-});
-
-const port = await new Promise((r) => server.listen(0, '127.0.0.1', () => r(server.address().port)));
+const { server, port } = await startStaticServer(OUT, { isolate: !VIA_SW });
 const base = `http://127.0.0.1:${port}/`;
 console.log(`\n  serving ${OUT}\n  ${base}  (isolation via ${VIA_SW ? 'service worker' : 'headers'})\n`);
 
