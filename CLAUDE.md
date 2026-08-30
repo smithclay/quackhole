@@ -60,6 +60,13 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
   omits the relay and sends the browser to pkarr, which routinely has not seen
   a server this new. Tests that only want the lifecycle set the setting to 0
   rather than paying the wait per call.
+- **The bridge's relay is per-peer, keyed by endpoint id.** `web/bridge-worker.js`
+  keeps a map the page fills over a `BroadcastChannel`, because the bridge is
+  nested inside the DuckDB worker and cannot be reached by postMessage. The
+  `?relay=` query param is only the fallback for a caller with one remote --
+  `test/browser` still uses it. Register a peer and wait for the ack *before*
+  ATTACH: the dial travels the SharedArrayBuffer path and will otherwise
+  overtake the registration.
 - **A browser client that omits an optional query param takes a different code
   path.** `test/browser` always passes `timeout`, which is why a
   temporal-dead-zone bug in `shim.js` survived until `site/` left it out.

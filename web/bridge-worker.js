@@ -16,8 +16,25 @@ let ctl = null;
 let data = null;
 let mode = 'fetch';
 let client = null;
-let relay = null;
 let fault = null;
+
+// The relay to use when a peer is not in the map below. `?relay=` on the worker
+// URL sets it, which is all a single-remote page needs -- test/browser has only
+// ever had one server and passes it that way.
+let defaultRelay = null;
+
+// Per-peer relays, for a page holding more than one remote at a time. The peer
+// is already resolved per request (from the .iroh hostname); the relay was not,
+// so before this a second remote on a different relay would have been dialled
+// through the first one's and failed to resolve.
+const peerRelays = new Map();
+
+// How the page reaches this worker. It cannot postMessage here directly -- the
+// bridge is nested inside the DuckDB worker, whose onmessage belongs to DuckDB
+// -- and adding a listener there would put our messages through DuckDB's own
+// dispatch. A BroadcastChannel side-steps the nesting entirely. The name is
+// per-session, so two tabs do not update each other's peer map.
+let channel = null;
 
 /// Hands one chunk to the blocked thread and waits for it to be consumed.
 ///
@@ -63,6 +80,12 @@ async function performIroh(req) {
   // byte-for-byte the frames the native extension sends. That is what lets an
   // unmodified quackhole_serve answer a browser -- and it is why there is no
   // HTTP code in this file to drift away from the C++ side.
+  // A peer registered through the channel wins; otherwise fall back to the one
+  // relay the worker URL carried. Dialling with an empty relay is allowed --
+  // that is iroh resolving through pkarr -- so a miss degrades rather than
+  // throwing, exactly as it did before there was a map.
+  const relay = peerRelays.get(peer) ?? defaultRelay;
+
   return client.request(
     peer,
     relay,
@@ -108,8 +131,21 @@ self.onmessage = async (ev) => {
     ctl = new Int32Array(msg.sab, 0, 8);
     data = new Uint8Array(msg.sab, P.CTL_BYTES);
     mode = msg.mode || 'fetch';
-    relay = msg.relay || null;
+    defaultRelay = msg.relay || null;
     fault = msg.fault || null;
+    if (msg.channel) {
+      channel = new BroadcastChannel(msg.channel);
+      channel.onmessage = (e) => {
+        const m = e.data;
+        if (!m || m.__qh !== 'peer' || !m.endpointId) return;
+        peerRelays.set(m.endpointId, m.relay || null);
+        // Acked rather than fire-and-forget: the page registers a peer and then
+        // ATTACHes it, and the ATTACH travels a different path (DuckDB worker ->
+        // shim -> SharedArrayBuffer), so without this the dial can overtake the
+        // registration and be made on the wrong relay.
+        channel.postMessage({ __qh: 'peer-ack', endpointId: m.endpointId });
+      };
+    }
     try {
       if (mode === 'iroh') {
         const wasm = await import('./wasm/quackhole.js');

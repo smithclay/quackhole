@@ -58,6 +58,9 @@
     sab,
     mode: params.get('mode') || 'fetch',
     relay: params.get('relay') || null,
+    // Named by the page, which uses the same name to register peer relays with
+    // the bridge directly. Absent for callers that only ever have one remote.
+    channel: params.get('channel') || null,
     // Test-only: makes the bridge stop answering, so the deadline above can
     // be shown to fire rather than merely existing.
     fault: params.get('fault') || null,
