@@ -93,4 +93,12 @@ for (const name of CLIENT) {
 }
 
 console.log(`  dist     quackhole.js + web/ (${CLIENT.join(', ')})`);
+
+// The licence, copied to the package root because that is the only place npm
+// looks for one. The repo's lives a directory up, which `files` cannot reach
+// and npm's auto-include does not follow -- so without this the tarball says
+// `"license": "MIT"` and carries no licence text. That matters more here than
+// it would elsewhere: README.md tells people to vendor these files.
+await cp(join(ROOT, 'LICENSE'), join(HERE, 'LICENSE'));
+console.log('  license  LICENSE (from the repo root)');
 console.log(`\n  npm/dist is ready. \`npm pack\` here, or \`npm publish\` on the release tag.\n`);

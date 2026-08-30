@@ -122,21 +122,24 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
-      - name: Assemble the package
-        run: node npm/build.mjs
-
-      # The npm version is derived from crates/Cargo.toml, and the CLI resolves
-      # its download tag from the npm version. So a tag that disagrees would
-      # publish a package that downloads from a release that is not this one.
-      - name: Check the version is this tag
+      # Both checks run before the assemble step, not after, because assembling
+      # *writes* npm/package.json. Reading the version afterwards would only
+      # prove the runner had just repaired it -- the committed drift would
+      # publish fine and stay in the repo, and the next contributor running
+      # `npx ../npm` would get a CLI pointed at the previous release.
+      - name: Check the version is derived, and is this tag
         run: |
           set -euo pipefail
+          node npm/build.mjs --check
           version="$(node -p "require('./npm/package.json').version")"
           [ "v$version" = "${GITHUB_REF_NAME}" ] || {
             echo "npm/package.json is $version but the tag is ${GITHUB_REF_NAME}." >&2
             echo "The version comes from crates/Cargo.toml -- see docs/UPDATING.md." >&2
             exit 1
           }
+
+      - name: Assemble the package
+        run: node npm/build.mjs
 
       - name: Publish
         working-directory: npm

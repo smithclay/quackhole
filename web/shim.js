@@ -39,7 +39,12 @@
   const TIMEOUT_MS = Number(config.timeout) || P.DEFAULT_TIMEOUT_MS;
   function shouldIntercept(url) {
     try {
-      const u = new URL(url, self.location.href);
+      // Against config.base, not this worker's own URL. On the loader path
+      // that URL is an opaque `blob:`, which nothing resolves against -- so a
+      // relative request threw, the catch below returned false, and the
+      // request went out over the native XHR with nothing logged. Silently
+      // not intercepting is the one failure this file must not have.
+      const u = new URL(url, config.base);
       if (u.hostname.endsWith('.iroh')) return true;
       return EXTRA !== '' && u.host === EXTRA;
     } catch {
@@ -82,7 +87,8 @@
   // A module worker, because the wasm glue is an ES module. Resolved against
   // config.base rather than against this worker's own URL, which in a blob is
   // an opaque path nothing resolves against.
-  const bridge = startBridge(new URL(config.bridge || 'bridge-worker.js', config.base).href);
+  const bridgeUrl = new URL(config.bridge || 'bridge-worker.js', config.base).href;
+  const bridge = startBridge(bridgeUrl);
   bridge.postMessage({
     [P.TAG]: P.INIT,
     sab,
@@ -93,6 +99,30 @@
     // Test-only: makes the bridge stop answering, so the deadline above can
     // be shown to fire rather than merely existing.
     fault: config.fault || null,
+  });
+
+  // A bridge that never loads cannot report its own failure.
+  //
+  // READY_FAILED is written by the bridge itself, so it only covers a bridge
+  // that ran. One that 404s, or is refused by CORS or COEP, never executes a
+  // line -- and without this the flag stays NOT_READY, the first query blocks
+  // in Atomics.wait for the full 30s below, and the error names neither the
+  // cause nor the file. The real message is in the nested worker's console,
+  // which nobody thinks to open.
+  //
+  // This lands in time because the failure is a startup failure: the module is
+  // fetched while duckdb is still fetching its own wasm, so this thread is
+  // pumping its event loop rather than blocked. Once it *is* blocked nothing
+  // here can run -- Atomics.wait dispatches no events -- which is the reason
+  // waitForBridge reads the flag rather than waiting on a promise.
+  let bridgeError = null;
+  bridge.addEventListener('error', (event) => {
+    // Cross-origin worker failures arrive with the message stripped, so name
+    // the URL ourselves; it is the part that says which fetch to go and look at.
+    bridgeError = event.message || `could not load ${bridgeUrl}`;
+    console.error(`[qh-shim] bridge failed to start: ${bridgeError}`);
+    Atomics.store(ctl, P.READY, P.READY_FAILED);
+    Atomics.notify(ctl, P.READY);
   });
 
   // Control frames from the page, forwarded onto the same channel as requests.
@@ -113,6 +143,11 @@
   });
 
   function waitForBridge() {
+    // Checked before blocking: if the worker failed to load, the listener above
+    // has already run and there is nothing to wait for. Blocking 30s first
+    // would only delay an answer we have.
+    if (bridgeError) throw new Error(`quackhole bridge failed to start: ${bridgeError}`);
+
     const deadline = Date.now() + 30000;
     while (Atomics.load(ctl, P.READY) === P.NOT_READY) {
       if (Date.now() > deadline) throw new Error('quackhole bridge never became ready');
@@ -121,7 +156,13 @@
     // Distinguishing "started and failed" from "still starting" matters: one is
     // a broken environment, the other is a slow one.
     if (Atomics.load(ctl, P.READY) === P.READY_FAILED) {
-      throw new Error('quackhole bridge failed to initialise');
+      // Two ways to reach READY_FAILED: the bridge ran and could not bind an
+      // endpoint, or it never ran at all. Only the second has a message here.
+      throw new Error(
+        bridgeError
+          ? `quackhole bridge failed to start: ${bridgeError}`
+          : 'quackhole bridge failed to initialise',
+      );
     }
   }
 

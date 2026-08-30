@@ -40,4 +40,7 @@ site/dist/
 # npm/src/ and web/, and npm/ has its own node_modules for the CLI's bindings.
 npm/node_modules/
 npm/dist/
+# Copied from the repo root by build.mjs: npm only reads a LICENSE at the
+# package root, and `files` cannot reach one a directory up.
+npm/LICENSE
 npm/*.tgz
