@@ -118,6 +118,11 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
   exercise the service worker path; passing `preview: { headers: {} }` leaves
   both headers in place and the run quietly proves nothing. Mutating in a
   plugin's `config` hook is what actually removes them.
+- **The demo's claim is that `web/` is unmodified, so the connection model has
+  to live there.** `web/session.js` owns attach, detach, the connection list and
+  the `duckdb_databases()` reconcile; `site/app.js` is a view and holds no model
+  of its own. Anything about holding several remotes that ends up in `site/` is
+  in the wrong place -- it makes the demo a lookalike rather than evidence.
 - **`web/`, `public/coi-serviceworker.js` and the duckdb-wasm bundles are
   copied, never bundled.** `VERBATIM` in `site/vite.config.js` is the list.
   `qh-worker.js` reaches its siblings through `importScripts('./protocol.js')`

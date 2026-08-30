@@ -5,9 +5,12 @@
 // dialog, not a page: it is a task you finish once, and after that the page is
 // a notebook.
 //
-// The transport is unmodified `web/` -- the same shim, bridge and wasm client
-// anyone would vendor into their own app. If this page works, that does too,
-// because they are the same files.
+// This file is a view and nothing else. The connection model -- attaching,
+// detaching, listing, and keeping the list honest against what DuckDB actually
+// holds -- is `QuackholeSession` in unmodified `web/`, alongside the shim, the
+// bridge and the wasm client. If this page works, what anyone would vendor
+// works, because they are the same files. That claim used to be true of the
+// transport and false of everything above it.
 import * as duckdb from '@duckdb/duckdb-wasm';
 import { createWire } from './wire.js';
 
@@ -29,23 +32,16 @@ function setStatus(state, text) {
 // more than one remote, "live" is a property of the list, not of whichever
 // attach happened last.
 function setRestingStatus() {
-  const n = connections.filter((c) => c.kind === 'remote').length;
+  const n = session ? session.connections.filter((c) => c.kind === 'remote').length : 0;
   if (n === 0) setStatus('local', 'local only');
   else setStatus('live', `${n} remote${n === 1 ? '' : 's'} · relay`);
 }
 
-const sqlString = (s) => `'${String(s).replaceAll("'", "''")}'`;
-
-/// Read a ticket, using the transport's own decoder.
+/// The shipped client, imported at runtime rather than bundled.
 ///
-/// Imported at runtime rather than bundled: `web/` is copied in verbatim, and
-/// this is the page reaching into the client it ships rather than keeping a
-/// second copy of it. The address, the secret name and the ticket format are
-/// all the extension's, so there is nothing here for them to drift against.
-const decodeTicket = async (input) => {
-  const { parseTicket } = await import(/* @vite-ignore */ asset('peer.js'));
-  return parseTicket(input);
-};
+/// `web/` is copied into the site verbatim, so this is the page reaching into
+/// the thing it ships rather than keeping a second copy of it.
+const { QuackholeSession } = await import(/* @vite-ignore */ asset('session.js'));
 
 // --- what to run on the other machine ---------------------------------------
 
@@ -114,16 +110,6 @@ const DUCKDB_BUNDLES = {
 
 let session = null;
 
-/// Tell the transport which relay reaches a peer.
-///
-/// Sent to the DuckDB worker, where the shim picks it off and forwards it to
-/// the bridge -- the same channel the ATTACH below travels, so no ack is
-/// needed. Two messages on one port arrive in the order they were sent, which
-/// is the only ordering guarantee this needs.
-function registerPeer(endpointId, relayUrl) {
-  session.worker.postMessage({ __qh: 'peer', endpointId, relay: relayUrl });
-}
-
 async function bootLocal() {
   setStatus('booting', 'booting duckdb');
   const bundle = await duckdb.selectBundle(DUCKDB_BUNDLES);
@@ -140,40 +126,31 @@ async function bootLocal() {
   await conn.query('INSTALL quack');
   await conn.query('LOAD quack');
 
-  session = { conn, db, worker };
+  // Booting is the app's half -- which bundle, which logger, where the .wasm
+  // is served from. Everything after it is the session's.
+  session = new QuackholeSession({ conn, worker });
   setRestingStatus();
 }
 
 // --- connections -------------------------------------------------------------
 
-// The local wasm database is a connection like any other, and listing it first
-// is what makes "add remote" read as adding a second one rather than as the
-// page's real beginning.
-const connections = [{ name: 'memory', kind: 'local', detail: 'duckdb-wasm, this tab' }];
-
-/// The catalog name a remote gets attached as.
-///
-/// Auto-named rather than asked for, because the link from `quackhole_serve`
-/// carries no name and a dialog that demands one before it will connect is a
-/// worse first minute than a second remote called `laptop2`. It is a DuckDB
-/// identifier and it is interpolated unquoted into SQL below, so nothing but
-/// this function may produce one.
-function uniqueName(base) {
-  const taken = new Set(connections.map((c) => c.name));
-  if (!taken.has(base)) return base;
-  for (let n = 2; ; n++) if (!taken.has(`${base}${n}`)) return `${base}${n}`;
-}
+// Per-remote view state, keyed by catalog name. Deliberately beside the
+// session's records rather than hung off them: the session's list is the model,
+// and everything drawn is derived from it -- which is what makes a hand-typed
+// DETACH remove a wire without anything having to notice the DETACH.
+const views = new Map();
 
 function renderConnections() {
   const list = $('#conn-list');
   list.replaceChildren();
-  for (const c of connections) {
+  for (const c of session.connections) {
     const li = document.createElement('li');
     li.className = 'conn';
     li.dataset.kind = c.kind;
     li.innerHTML = `<span class="conn-name"></span><span class="conn-detail"></span>`;
     li.querySelector('.conn-name').textContent = c.name;
-    li.querySelector('.conn-detail').textContent = c.detail;
+    li.querySelector('.conn-detail').textContent =
+      c.kind === 'local' ? 'duckdb-wasm, this tab' : `${c.endpointId.slice(0, 8)}… via relay`;
     // Only remotes can be removed. Without this a remote whose laptop has gone
     // away stays in the rail forever, and its name stays taken.
     if (c.kind === 'remote') {
@@ -190,65 +167,60 @@ function renderConnections() {
   }
 }
 
-/// List the tables in every connection.
+/// Draw one route per remote, and remove any whose remote has gone.
 ///
-/// Local and remote need different queries. A Quack-attached catalog is lazy --
-/// it resolves a table name on demand but enumerates nothing, so
-/// `duckdb_tables()`, `SHOW TABLES FROM laptop` and `information_schema` are all
-/// empty for it. `sqlite_master` is the one listing Quack pushes down to the
-/// remote DuckDB, which answers it from its own catalog.
-async function tablesIn(conn) {
-  const sql =
-    conn.kind === 'local'
-      ? `SELECT table_name AS name FROM duckdb_tables() ORDER BY name`
-      : `SELECT name FROM ${conn.name}.sqlite_master ORDER BY name`;
-  try {
-    return rowsOf(await session.conn.query(sql)).map((r) => r.name);
-  } catch {
-    return null;
+/// One wire per remote rather than one wire with several ends: each is reached
+/// through its own relay, and they are not the same relay. A single diagram
+/// would have to pick one to name.
+///
+/// Derived from the session's list rather than edited alongside it, so there is
+/// no second place that has to be told a connection went away.
+function syncWires() {
+  for (const [name, view] of views) {
+    if (session.connections.some((c) => c.name === name)) continue;
+    view.el.remove();
+    views.delete(name);
   }
+  $('#wire-panel').hidden = views.size === 0;
 }
 
-/// Drop remotes that are no longer attached.
-///
-/// The rail is a claim about what this session holds, and a visitor can type
-/// `DETACH laptop2` into a cell and make it false. duckdb_databases() is the
-/// only thing that knows -- and it answers locally, with no round trip, so
-/// reconciling against it costs nothing.
-async function syncConnections() {
-  let live;
-  try {
-    const rows = rowsOf(await session.conn.query('SELECT database_name FROM duckdb_databases()'));
-    live = new Set(rows.map((r) => r.database_name));
-  } catch {
-    return;
-  }
-  for (const c of [...connections]) {
-    if (c.kind !== 'remote' || live.has(c.name)) continue;
-    connections.splice(connections.indexOf(c), 1);
-    c.el?.remove();
-  }
-  if (!$('#wire-list').children.length) $('#wire-panel').hidden = true;
-  renderConnections();
-  setRestingStatus();
+function addWire(conn) {
+  const li = $('#wire-tpl').content.firstElementChild.cloneNode(true);
+  li.dataset.name = conn.name;
+  li.querySelector('.wire-peer-name').textContent = conn.name;
+  // Appended before createWire, which resolves the relay legend by walking up
+  // to .wire-frame -- cheap to get wrong, and it fails by silently leaving the
+  // placeholder in place.
+  $('#wire-list').append(li);
+  $('#wire-panel').hidden = false;
+
+  const wire = createWire(li.querySelector('.wire-mount'), conn.name);
+  wire.setRelayLabel(conn.relayUrl);
+  wire.setState('connecting');
+  const view = { wire, el: li };
+  views.set(conn.name, view);
+  return view;
 }
 
-/// Redraw the table rail, and hand back what it found.
+/// Redraw everything the session's state decides, and hand back its tables.
 ///
 /// Returning the listing is what keeps a newly attached remote to one metadata
 /// round trip: the rail needs its tables and so does the seed below, and asking
 /// twice would put a second relay round trip in front of the first result.
 async function refreshSchema() {
-  await syncConnections();
-  const list = $('#schema-list');
-  const groups = await Promise.all(connections.map(async (c) => [c, await tablesIn(c)]));
+  // Reconciles against duckdb_databases() on the way, so a remote detached by
+  // hand is already gone from the list by the time anything is drawn from it.
+  const groups = await session.tables();
+  syncWires();
+  renderConnections();
+  setRestingStatus();
 
+  const list = $('#schema-list');
   list.replaceChildren();
   let any = false;
-  for (const [conn, names] of groups) {
-    if (!names || names.length === 0) continue;
-    any = true;
-    for (const name of names) {
+  for (const conn of session.connections) {
+    for (const name of groups.get(conn.name) ?? []) {
+      any = true;
       const qualified = `${conn.name}.${name}`;
       const li = document.createElement('li');
       li.innerHTML = `<button class="schema-item" type="button"></button>`;
@@ -262,106 +234,44 @@ async function refreshSchema() {
     }
   }
   if (!any) list.innerHTML = '<li class="schema-empty">no tables yet</li>';
-  return new Map(groups.map(([c, names]) => [c.name, names ?? []]));
+  return groups;
 }
 
 // --- remotes -----------------------------------------------------------------
 
-/// Draw this remote's own route in the rail.
+/// Attach a remote described by a ticket, and draw its route while it dials.
 ///
-/// One wire per remote rather than one wire with several ends: each remote is
-/// reached through its own relay, and they are not the same relay. A single
-/// diagram would have to pick one to name.
-function addWire(conn) {
-  const li = $('#wire-tpl').content.firstElementChild.cloneNode(true);
-  li.dataset.name = conn.name;
-  li.querySelector('.wire-peer-name').textContent = conn.name;
-  // Appended before createWire, which resolves the relay legend by walking up
-  // to .wire-frame -- cheap to get wrong, and it fails by silently leaving the
-  // placeholder in place.
-  $('#wire-list').append(li);
-  $('#wire-panel').hidden = false;
-
-  const w = createWire(li.querySelector('.wire-mount'), conn.name);
-  w.setRelayLabel(conn.relayUrl);
-  w.setState('connecting');
-  return { wire: w, el: li };
-}
-
-/// Attach a remote described by a ticket, into the session that already exists.
-async function addRemote(peer) {
-  const { endpointId, relayUrl, token } = peer;
-
-  // Attaching the same laptop twice would work and would be a lie: two catalog
-  // names over one connection, listed as if they were two machines.
-  const already = connections.find((c) => c.endpointId === endpointId);
-  if (already) throw new Error(`That laptop is already attached, as "${already.name}".`);
-
-  const conn = {
-    name: uniqueName('laptop'),
-    // Named after the peer, not after the catalog: that is the name the
-    // extension prints too, so the two sides of the demo spell one thing once.
-    secretName: peer.secretName,
-    kind: 'remote',
-    endpointId,
-    relayUrl,
-    detail: `${endpointId.slice(0, 8)}… via relay`,
-  };
-
+/// The route goes up on onDialing rather than on the result, because the dial
+/// is the second the visitor is waiting through -- drawing it afterwards would
+/// show the connection only once there was nothing left to watch.
+async function addRemote(ticket) {
   setStatus('connecting', 'dialling');
-  Object.assign(conn, addWire(conn));
-
+  let drawn = null;
   try {
-    // Before the ATTACH, and on the same path it takes, so the dial cannot be
-    // made before the bridge knows which relay reaches this laptop.
-    registerPeer(endpointId, relayUrl);
-
-    // Named and scoped to this one endpoint. An unnamed secret is a single
-    // global, so the second remote would either collide on the name or quietly
-    // hand the first remote's token to a different machine. Quack resolves the
-    // secret by the ATTACH path, so the scope is what routes the right token to
-    // the right laptop -- a secret scoped elsewhere is not found at all.
-    //
-    // Both strings come off the peer, which is what makes them the same string:
-    // a scope that disagrees with the ATTACH path by one character fails as
-    // "Could not find a Quack authentication token".
-    if (token) {
-      await session.conn.query(
-        `CREATE SECRET ${conn.secretName} (TYPE quack, TOKEN ${sqlString(token)}, SCOPE ${sqlString(peer.address)})`,
-      );
-    }
-    const t0 = performance.now();
-    await session.conn.query(`ATTACH ${sqlString(peer.address)} AS ${conn.name}`);
-    conn.attachMs = performance.now() - t0;
+    const conn = await session.attach(ticket, { onDialing: (record) => (drawn = addWire(record)) });
+    drawn.wire.setState('live');
+    renderConnections();
+    setRestingStatus();
+    return conn;
   } catch (err) {
-    conn.wire.setState('failed');
-    conn.el.remove();
-    if (!$('#wire-list').children.length) $('#wire-panel').hidden = true;
-    await session.conn.query(`DROP SECRET IF EXISTS ${conn.secretName}`).catch(() => {});
+    // A route for a remote that is not attached would be a claim the session
+    // cannot back, and the session did not keep the record -- so deriving the
+    // routes from it again is all the cleanup there is. Nothing is drawn at all
+    // when the ticket itself is the problem, which is the common case and would
+    // otherwise flicker.
+    syncWires();
     throw err;
   }
-
-  connections.push(conn);
-  renderConnections();
-  conn.wire.setState('live');
-  setRestingStatus();
-  return conn;
 }
 
 /// Detach a remote and give its name back.
 ///
-/// The secret goes with it, so re-attaching the same laptop later works --
-/// otherwise its `CREATE SECRET` would collide with the one left behind.
-///
-/// The rail is not edited here: refreshSchema reconciles it against
-/// duckdb_databases(), which is the same path a hand-typed DETACH takes. Two
-/// ways to remove a connection would be two things to keep agreeing.
+/// Nothing is removed from the rail here: refreshSchema redraws it from the
+/// session, which reconciles against duckdb_databases() -- the same path a
+/// hand-typed DETACH takes. Two ways to remove a connection would be two things
+/// to keep agreeing.
 async function dropRemote(conn) {
-  // If the DETACH fails, the catalog really is still attached and the rail
-  // should keep saying so -- which is better feedback than an exception nobody
-  // sees.
-  await session.conn.query(`DETACH ${conn.name}`).catch(() => {});
-  await session.conn.query(`DROP SECRET IF EXISTS ${conn.secretName}`).catch(() => {});
+  await session.detach(conn);
   await refreshSchema();
 }
 
@@ -468,7 +378,7 @@ function addCell(sql = '', { run = false, focus = false } = {}) {
     art.querySelector('.cell-ms').textContent = 'running…';
     const t0 = performance.now();
     try {
-      const table = await session.conn.query(text);
+      const table = await session.query(text);
       const ms = performance.now() - t0;
       renderResult(art.querySelector('.cell-out'), table, ms);
       art.dataset.state = 'ok';
@@ -477,10 +387,12 @@ function addCell(sql = '', { run = false, focus = false } = {}) {
       // report which catalogs a query touched, and with several remotes
       // attached, pulsing all of them would claim traffic that never happened.
       // A qualified reference is the only way to reach a remote, so `laptop.`
-      // in the text is the signal. Names come from uniqueName(), so there is
-      // nothing to escape.
-      for (const c of connections) {
-        if (c.kind === 'remote' && new RegExp(`\\b${c.name}\\s*\\.`, 'i').test(text)) c.wire.pulse(ms);
+      // in the text is the signal. The session uniquifies names from a fixed
+      // base, so there is nothing to escape.
+      for (const c of session.connections) {
+        if (c.kind === 'remote' && new RegExp(`\\b${c.name}\\s*\\.`, 'i').test(text)) {
+          views.get(c.name)?.wire.pulse(ms);
+        }
       }
       // DDL in a cell changes what the rail should show.
       if (/^\s*(create|drop|attach|detach|alter)\b/i.test(text)) refreshSchema();
@@ -531,7 +443,7 @@ $('#add-remote').addEventListener('click', () => {
   // The second time through, the dialog is not onboarding any more -- the
   // visitor has done this once and needs the command and the field, not the
   // explanation of what they are about to do.
-  if (connections.some((c) => c.kind === 'remote')) {
+  if (session?.connections.some((c) => c.kind === 'remote')) {
     $('#onboard-title').textContent = 'Add another remote';
     $('#onboard-lede').textContent =
       'Run this on the next machine. Each remote is attached under its own name and reached over its own relay.';
@@ -548,7 +460,7 @@ $('#paste-form').addEventListener('submit', async (e) => {
   const btn = $('#paste-go');
   btn.disabled = true;
   try {
-    const conn = await addRemote(await decodeTicket($('#ticket').value));
+    const conn = await addRemote($('#ticket').value);
     pasteNote.textContent =
       `Attached in ${Math.round(conn.attachMs)}ms as "${conn.name}".` +
       ' That is three round trips through the relay.';
@@ -559,7 +471,7 @@ $('#paste-form').addEventListener('submit', async (e) => {
     // Leave the dialog open: the error is about the ticket, and the field it
     // refers to is in here. The pill only goes red when nothing is attached --
     // a failed second remote does not make the first one stop working.
-    if (connections.some((c) => c.kind === 'remote')) setRestingStatus();
+    if (session?.connections.some((c) => c.kind === 'remote')) setRestingStatus();
     else setStatus('failed', 'no route');
     showError(String(err?.message ?? err));
   } finally {
@@ -592,7 +504,6 @@ async function seedFor(conn) {
 // --- boot --------------------------------------------------------------------
 
 renderLaptopCommand();
-renderConnections();
 
 // A ticket can arrive in the fragment, which never leaves the browser -- it is
 // not sent to GitHub's servers and does not appear in their logs. That is what

@@ -19,8 +19,9 @@ resolved off the worker global *at call time*, so replacing
 | `qh-worker.js` | Worker bootstrap. `importScripts` the shim ahead of the stock duckdb worker. |
 | `shim.js` | The `XMLHttpRequest` replacement, and the blocking half of the bridge. |
 | `bridge-worker.js` | The async half: owns the iroh endpoint, answers over shared memory. |
-| `protocol.js` | The shared-memory layout and budgets. Loaded by both halves. |
+| `protocol.js` | The shared-memory layout, the control frames, and the budgets. Loaded by both halves. |
 | `peer.js` | Ticket, address and secret name, from the core. Loads `wasm/` on demand. |
+| `session.js` | The connection model: attach, detach, list, and keeping the list honest. |
 | `wasm/` | Built from `crates/quackhole-web` — iroh, plus the framing and peer identity from the core. |
 
 `peer.js` exists for the same reason `protocol.js` does, one level up. A ticket,
@@ -69,6 +70,33 @@ await conn.query(`ATTACH 'quack:${endpointId}.iroh:9494' AS laptop`);
 No acknowledgement to wait for. The frame and the `ATTACH` travel the same two
 ports in that order, and postMessage preserves it, so the dial cannot be made
 before the bridge knows where to make it.
+
+## The session
+
+Holding several remotes is more than the transport. The names have to be unique
+and the secrets named and scoped to their peers, the relay has to be registered
+before the dial, and the list has to stay true when someone types `DETACH
+laptop2` into a query box. `session.js` is that, so an app is a view over it:
+
+```js
+import { QuackholeSession } from './session.js';
+
+// You boot DuckDB-Wasm -- bundle, logger and paths are yours, and a session
+// that chose them for you would be harder to vendor, not easier.
+const session = new QuackholeSession({ conn, worker });
+
+const laptop = await session.attach('qh1_…');   // secret, scope, relay, ATTACH
+const tables = await session.tables();          // Map: catalog -> table names
+await session.detach(laptop);
+```
+
+`session.connections` is the model to render. `tables()` reconciles it against
+`duckdb_databases()` first — the one listing a Quack catalog answers locally —
+so a remote detached by hand has already left the list by the time you draw it.
+
+[`site/app.js`](../site/README.md) is exactly this and nothing else, which is
+what makes the demo evidence that the shipped client works rather than a
+lookalike.
 
 ## Constraints
 

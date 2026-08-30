@@ -100,7 +100,7 @@ strings that have to match.
 | | |
 |---|---|
 | `index.html` | The workbench shell, plus the onboarding and notes dialogs |
-| `app.js` | The DuckDB-Wasm boot, the connection list, the notebook, the dialogs. Reads tickets through `web/peer.js` |
+| `app.js` | A view over `web/session.js`: the DuckDB-Wasm boot, the rail, the notebook, the dialogs. No connection model of its own |
 | `wire.js` | The topology diagram, one per remote. Opens broken; pulses per query at the measured latency |
 | `styles.css` | Yellow is DuckDB, periwinkle is iroh. Nothing else is coloured |
 | `public/coi-serviceworker.js` | See below. In `public/` so it ships unhashed at the root — it registers itself by its own URL, so a move into `assets/` would scope it there |
