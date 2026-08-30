@@ -56,6 +56,13 @@ pub struct Core {
     serve: Mutex<Option<serve::ServeHandle>>,
     conns: dial::ConnCache,
     peers: PeerMap,
+    /// Where to reach each peer, keyed by endpoint id.
+    ///
+    /// The browser has always had this (`web/bridge-worker.js`); the native
+    /// side had one global `quackhole_relay_url` setting instead, so a second
+    /// remote on a second relay was dialled through the first one's. A relay
+    /// belongs to a peer, not to a process.
+    relays: Mutex<HashMap<EndpointId, String>>,
 }
 
 /// What `quackhole_status()` knows about one peer.
@@ -155,6 +162,7 @@ impl Core {
             serve: Mutex::new(None),
             conns: dial::ConnCache::default(),
             peers: PeerMap::default(),
+            relays: Mutex::new(HashMap::new()),
         })
     }
 
@@ -167,6 +175,44 @@ impl Core {
         let mut peers: Vec<_> = map.iter().map(|(id, e)| (*id, e.clone())).collect();
         peers.sort_by(|(a, _), (b, _)| a.as_bytes().cmp(b.as_bytes()));
         peers
+    }
+
+    /// Remember the relay to reach one peer through.
+    ///
+    /// Set from a ticket, which carries the relay the peer actually published
+    /// on. An empty `relay_url` forgets the peer rather than registering
+    /// nothing, so re-attaching with a relay-less handoff does not silently
+    /// keep dialling through a relay that peer has since left.
+    pub fn set_peer_relay(&self, endpoint_id: &str, relay_url: &str) -> Result<()> {
+        let id = parse_endpoint_id(endpoint_id)?;
+        let relay_url = relay_url.trim();
+        // Rejected here rather than at dial time: an unusable relay registered
+        // now would surface as a failure on some later query, a long way from
+        // the ATTACH that supplied it.
+        if !relay_url.is_empty() {
+            let _: iroh::RelayUrl = relay_url
+                .parse()
+                .with_context(|| format!("'{relay_url}' is not a valid relay url"))?;
+        }
+        let mut relays = self
+            .relays
+            .lock()
+            .map_err(|_| anyhow::anyhow!("quackhole relay map is poisoned"))?;
+        if relay_url.is_empty() {
+            relays.remove(&id);
+        } else {
+            relays.insert(id, relay_url.to_string());
+        }
+        Ok(())
+    }
+
+    /// The relay registered for `id`, or "" if none is.
+    pub(crate) fn peer_relay(&self, id: &EndpointId) -> String {
+        self.relays
+            .lock()
+            .ok()
+            .and_then(|relays| relays.get(id).cloned())
+            .unwrap_or_default()
     }
 
     pub fn endpoint_id_z32(&self) -> &str {

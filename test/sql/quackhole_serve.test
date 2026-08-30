@@ -26,28 +26,24 @@ SET GLOBAL quackhole_relay_wait_ms = 0;
 
 # auto_serve := false because this test is about quackhole's own lifecycle, not
 # about whether a Quack server happens to come up. Captured rather than CALLed
-# so the attach_sql assertions below have something to read -- serve can only be
-# called once, so there is no second chance to look at its output.
+# so the assertions below have something to read -- serve can only be called
+# once, so there is no second chance to look at its output.
 statement ok
 CREATE TABLE srv AS SELECT * FROM quackhole_serve(auto_serve := false, target := '127.0.0.1:9494');
 
-# attach_sql has to be paste-ready into a DuckDB that already holds another
-# remote, which means naming the secret after the peer: an unnamed quack secret
-# is really `__default_quack`, so a second CREATE SECRET fails on the name
-# whatever its scope says.
+# The handoff is the ticket and nothing else. There used to be an attach_sql
+# column here as well, spelling out a CREATE SECRET and an ATTACH that between
+# them carried no relay -- so a native client that pasted it still resolved
+# through pkarr, and its fixed `AS remote` collided on a second remote.
 query I
-SELECT attach_sql LIKE 'CREATE SECRET qh_' || endpoint_id || ' (TYPE quack,%' FROM srv;
+SELECT list_sort(list(column_name)) FROM (DESCRIBE SELECT * FROM srv);
 ----
-true
+[endpoint_id, relay_url, ticket, token, url]
 
-# The invariant that is not obvious from reading the string: the scope and the
-# address dialled are the same. If they drift, the token is filed under a path
-# nothing attaches to and the failure reads "Could not find a Quack
-# authentication token", which does not sound like a scope problem.
+# relay_wait_ms is 0 above, so a ticket is not guaranteed here. If one was
+# minted it is the qh1_ form quackhole_attach reads back; nothing else is.
 query I
-SELECT regexp_extract(attach_sql, 'SCOPE ''([^'']*)''', 1)
-     = regexp_extract(attach_sql, 'ATTACH ''([^'']*)''', 1)
-FROM srv;
+SELECT ticket IS NULL OR starts_with(ticket, 'qh1_') FROM srv;
 ----
 true
 
@@ -113,3 +109,19 @@ true
 
 statement ok
 CALL quackhole_stop();
+
+# A ticket whose relay will not parse is refused before anything is attached.
+# Accepting it would push the failure out to whichever query first crossed the
+# wire, a long way from the ATTACH that supplied the bad relay.
+statement error
+CALL quackhole_attach('qh1_eyJlIjoiZXQ4dTZ3c3l6N3FpcW0xcGI1cTN6Z255NDNvcm80Z2JyOHJrZmRrc2twdHM3bXRtZWh3eSIsInIiOiJub25zZW5zZSIsInQiOiJ4In0', name := 'somewhere');
+----
+<REGEX>:.*not a valid relay url.*
+
+# ... and it leaves nothing behind: no catalog under that name, and no secret
+# whose next CREATE would collide with the retry.
+query II
+SELECT (SELECT count(*) FROM duckdb_databases() WHERE database_name = 'somewhere'),
+       (SELECT count(*) FROM duckdb_secrets() WHERE starts_with(name, 'qh_'));
+----
+0	0

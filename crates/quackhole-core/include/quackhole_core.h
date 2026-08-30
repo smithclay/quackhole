@@ -208,9 +208,11 @@ bool qh_is_serving(const QhCore *core);
 //! Content-Length. `content_type` is used only when the caller supplied none
 //! and there is a body; pass "" for the default.
 //!
-//! `relay_url` may be "" to resolve the peer by address lookup. Supplying it
-//! skips that round trip and works for a peer that has not finished
-//! publishing, which lookup does not.
+//! `relay_url` is the fallback relay: one registered for this peer with
+//! qh_peer_relay_set wins, because that one came from the peer itself. With
+//! neither, the peer is resolved by address lookup -- a round trip to a third
+//! party that must also have seen it publish, which a server started seconds
+//! ago routinely has not.
 //!
 //! The underlying QUIC connection is cached per endpoint id and held open
 //! across calls, so only the first request to a peer pays a handshake. This is
@@ -225,6 +227,22 @@ QhResponse *qh_request(QhCore *core, const char *endpoint_id, const char *relay_
                        const char *path, const char *host, const char *port, const char *const *header_names,
                        const char *const *header_values, size_t n_headers, const uint8_t *body, size_t body_len,
                        bool has_body, const char *content_type, uint32_t timeout_ms, char *err, size_t err_len);
+
+//! Remember the relay to reach one peer through, overriding the per-call
+//! fallback in qh_request.
+//!
+//! A relay belongs to a peer, not to a process: a client holding two remotes
+//! reaches them through two different relays, and one global setting cannot
+//! say that. The browser bridge has always keyed its relays this way.
+//!
+//! Set from a ticket, which carries the relay the peer actually published on.
+//! An empty `relay_url` forgets the peer rather than registering nothing.
+//!
+//! Returns QH_OK, or QH_ERR with `err` if the id or the URL will not parse.
+//! Rejecting here rather than at dial time is deliberate: an unusable relay
+//! accepted now would surface as a failure on some later query, a long way
+//! from the ATTACH that supplied it.
+int qh_peer_relay_set(QhCore *core, const char *endpoint_id, const char *relay_url, char *err, size_t err_len);
 
 //! Status code, or 0 if the status line was unreadable. A 0 here means the peer
 //! answered with something that is not HTTP; it is not a transport failure.

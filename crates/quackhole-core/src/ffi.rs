@@ -506,6 +506,34 @@ unsafe fn collect_headers(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn qh_peer_relay_set(
+    core: *mut Core,
+    endpoint_id: *const c_char,
+    relay_url: *const c_char,
+    err: *mut c_char,
+    err_len: usize,
+) -> i32 {
+    // SAFETY: core is null or a live handle, the strings are null or
+    // NUL-terminated, and err holds err_len bytes -- per quackhole_core.h.
+    unsafe {
+        let Some(core) = core.as_ref() else {
+            write_err(err, err_len, "null quackhole core");
+            return QH_ERR;
+        };
+        let result = guard(err, err_len, || {
+            let Some(endpoint_id) = cstr(endpoint_id) else {
+                anyhow::bail!("endpoint id must not be null");
+            };
+            core.set_peer_relay(endpoint_id, cstr(relay_url).unwrap_or(""))
+        });
+        match result {
+            Some(()) => QH_OK,
+            None => QH_ERR,
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn qh_response_status(response: *const QhResponse) -> u16 {
     // SAFETY: null or a live handle from this library, per quackhole_core.h.
     unsafe { response.as_ref() }.map(|r| r.status).unwrap_or(0)

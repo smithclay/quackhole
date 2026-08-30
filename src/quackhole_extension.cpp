@@ -162,11 +162,14 @@ unique_ptr<FunctionData> QuackholeServeBind(ClientContext &context, TableFunctio
 	bind_data->ephemeral = GetBool(input, "ephemeral", false);
 	bind_data->auto_serve = GetBool(input, "auto_serve", true);
 
-	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
-	                LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
-	// ticket and url are appended rather than inserted: attach_sql is documented
-	// by position in more than one place, and moving it would break them quietly.
-	names = {"endpoint_id", "relay_url", "token", "attach_sql", "ticket", "url"};
+	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+	                LogicalType::VARCHAR};
+	// The ticket is the handoff, and quackhole_attach is what consumes it. There
+	// used to be an attach_sql column here spelling out a CREATE SECRET and an
+	// ATTACH -- three lines a reader had to trust, a fixed `AS remote` alias that
+	// collided on a second remote, and no relay in it, so a native client that
+	// pasted it was still resolving through pkarr.
+	names = {"endpoint_id", "relay_url", "token", "ticket", "url"};
 	return std::move(bind_data);
 }
 
@@ -245,14 +248,6 @@ void QuackholeServeFunction(ClientContext &context, TableFunctionInput &data_p, 
 
 	auto endpoint_id = EndpointId(core);
 	auto effective_token = bind_data.token.empty() ? quack_token : bind_data.token;
-	// Named and scoped to this one peer, which is what lets a native client hold
-	// more than one remote -- the same shape site/app.js builds. Only the `AS
-	// remote` alias is still fixed, and a second one collides loudly on the
-	// catalog name rather than quietly on the token; renaming it is a one-word
-	// edit that the scope survives.
-	auto quack_url = PeerAddress(endpoint_id);
-	auto attach_sql = "CREATE SECRET " + PeerSecretName(endpoint_id) + " (TYPE quack, TOKEN '" + effective_token +
-	                  "', SCOPE '" + quack_url + "'); ATTACH '" + quack_url + "' AS remote;";
 
 	// Wait, rather than read once: a link is the whole point of this function's
 	// output now, and a link minted before the relay is known does not work.
@@ -287,9 +282,113 @@ void QuackholeServeFunction(ClientContext &context, TableFunctionInput &data_p, 
 	output.SetValue(0, 0, Value(endpoint_id));
 	output.SetValue(1, 0, relay.empty() ? Value(LogicalType::VARCHAR) : Value(relay));
 	output.SetValue(2, 0, effective_token.empty() ? Value(LogicalType::VARCHAR) : Value(effective_token));
-	output.SetValue(3, 0, Value(attach_sql));
-	output.SetValue(4, 0, ticket.empty() ? Value(LogicalType::VARCHAR) : Value(ticket));
-	output.SetValue(5, 0, url.empty() ? Value(LogicalType::VARCHAR) : Value(url));
+	output.SetValue(3, 0, ticket.empty() ? Value(LogicalType::VARCHAR) : Value(ticket));
+	output.SetValue(4, 0, url.empty() ? Value(LogicalType::VARCHAR) : Value(url));
+}
+
+//===--------------------------------------------------------------------===//
+// quackhole_attach
+//===--------------------------------------------------------------------===//
+
+struct QuackholeAttachBindData : public TableFunctionData {
+	string ticket;
+	string name;
+	bool finished = false;
+};
+
+unique_ptr<FunctionData> QuackholeAttachBind(ClientContext &context, TableFunctionBindInput &input,
+                                             vector<LogicalType> &return_types, vector<string> &names) {
+	auto bind_data = make_uniq<QuackholeAttachBindData>();
+	if (input.inputs.empty() || input.inputs[0].IsNull()) {
+		throw InvalidInputException("quackhole_attach: pass the ticket quackhole_serve printed");
+	}
+	bind_data->ticket = input.inputs[0].GetValue<string>();
+	// `as :=` would read better and does not parse -- AS is a reserved word, so
+	// DuckDB rejects it as a named argument however it is quoted.
+	bind_data->name = GetVarchar(input, "name", "remote");
+	if (bind_data->name.empty()) {
+		throw InvalidInputException("quackhole_attach: name must not be empty");
+	}
+
+	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
+	names = {"name", "endpoint_id", "relay_url"};
+	return std::move(bind_data);
+}
+
+//! Attach the peer a ticket names: secret, scope, relay and ATTACH, in one call.
+//!
+//! The ticket is the only handoff either client needs, which is the point. A
+//! browser already worked this way; a native client had to paste a CREATE SECRET
+//! and an ATTACH that between them carried no relay, so the dial fell back to
+//! resolving through pkarr -- a round trip to a third party that must also have
+//! seen the peer publish, which a server started seconds ago routinely has not.
+//! Registering the ticket's relay first is what removes that.
+void QuackholeAttachFunction(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
+	auto &bind_data = data_p.bind_data->CastNoConst<QuackholeAttachBindData>();
+	if (bind_data.finished) {
+		return;
+	}
+	auto &db = DatabaseInstance::GetDatabase(context);
+
+	char endpoint_id[QH_ENDPOINT_ID_LEN] = {0};
+	char relay_url[QH_RELAY_URL_LEN] = {0};
+	char token[QH_TOKEN_LEN] = {0};
+	char err[QH_ERR_LEN] = {0};
+	// The core's errors here are written for whoever pasted the ticket, so they
+	// are passed through rather than wrapped in prose of our own.
+	if (qh_ticket_parse(bind_data.ticket.c_str(), endpoint_id, sizeof(endpoint_id), relay_url, sizeof(relay_url), token,
+	                    sizeof(token), err, sizeof(err)) != QH_OK) {
+		throw InvalidInputException("quackhole_attach: %s", err);
+	}
+
+	// Binds the endpoint if this is the first thing to need one, exactly as an
+	// ATTACH to a .iroh host would.
+	auto &state = QuackholeState::Get(db);
+	auto *core = state.GetOrCreateCoreFromSettings(db);
+	// Before the ATTACH, not after: the ATTACH dials, and a dial made before the
+	// relay is known goes to pkarr instead.
+	if (qh_peer_relay_set(core, endpoint_id, relay_url, err, sizeof(err)) != QH_OK) {
+		throw InvalidInputException("quackhole_attach: %s", err);
+	}
+	bind_data.finished = true;
+
+	auto address = PeerAddress(endpoint_id);
+	auto secret_name = PeerSecretName(endpoint_id);
+	auto alias = KeywordHelper::WriteOptionallyQuoted(bind_data.name);
+
+	// A fresh Connection rather than the caller's ClientContext, for the reason
+	// given on MaybeStartQuackServer: issuing a query on the context currently
+	// executing a table function invites re-entrancy problems. Both the secret
+	// and the catalog are per-database, so they outlive this connection.
+	Connection con(db);
+	if (token[0] != '\0') {
+		// OR REPLACE because this is meant to be the one call you make: attaching
+		// the same peer again after a DETACH must not fail on the secret its own
+		// last attach left behind.
+		auto secret_sql = "CREATE OR REPLACE SECRET " + secret_name + " (TYPE quack, TOKEN " +
+		                  KeywordHelper::WriteQuoted(token, '\'') + ", SCOPE " +
+		                  KeywordHelper::WriteQuoted(address, '\'') + ")";
+		auto result = con.Query(secret_sql);
+		if (result->HasError()) {
+			throw InvalidInputException("quackhole_attach: could not create the secret: %s", result->GetError());
+		}
+	}
+
+	auto result = con.Query("ATTACH " + KeywordHelper::WriteQuoted(address, '\'') + " AS " + alias);
+	if (result->HasError()) {
+		// Take the secret back out. Leaving it would make the next attempt look
+		// like it half-worked, and the name is derived from the peer rather than
+		// from the alias, so it would collide with a retry under another name.
+		if (token[0] != '\0') {
+			con.Query("DROP SECRET IF EXISTS " + secret_name);
+		}
+		throw InvalidInputException("quackhole_attach: %s", result->GetError());
+	}
+
+	output.SetCardinality(1);
+	output.SetValue(0, 0, Value(bind_data.name));
+	output.SetValue(1, 0, Value(string(endpoint_id)));
+	output.SetValue(2, 0, Value(string(relay_url)));
 }
 
 //===--------------------------------------------------------------------===//
@@ -438,6 +537,10 @@ static void LoadInternal(ExtensionLoader &loader) {
 	serve.named_parameters["ephemeral"] = LogicalType::BOOLEAN;
 	serve.named_parameters["auto_serve"] = LogicalType::BOOLEAN;
 	loader.RegisterFunction(serve);
+
+	TableFunction attach("quackhole_attach", {LogicalType::VARCHAR}, QuackholeAttachFunction, QuackholeAttachBind);
+	attach.named_parameters["name"] = LogicalType::VARCHAR;
+	loader.RegisterFunction(attach);
 
 	TableFunction stop("quackhole_stop", {}, QuackholeStopFunction, QuackholeStopBind);
 	loader.RegisterFunction(stop);

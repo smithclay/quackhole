@@ -1,5 +1,5 @@
 # name: test/sql/quackhole.test
-# description: Load, catalog surface, and the not-yet-bound status/stop paths
+# description: Load, catalog surface, and the not-yet-bound status/stop/attach paths
 # group: [sql]
 
 # Before loading, none of the functions exist.
@@ -10,12 +10,12 @@ Catalog Error
 
 require quackhole
 
-# All three table functions are registered.
+# All four table functions are registered.
 query I
 SELECT count(*) FROM duckdb_functions()
-WHERE function_name IN ('quackhole_serve', 'quackhole_stop', 'quackhole_status');
+WHERE function_name IN ('quackhole_serve', 'quackhole_attach', 'quackhole_stop', 'quackhole_status');
 ----
-3
+4
 
 # Asking for status must not bind an endpoint as a side effect: before anything
 # has dialed or served, we report an empty status rather than creating a key and
@@ -36,3 +36,37 @@ query I
 SELECT serving FROM quackhole_status();
 ----
 false
+
+# quackhole_attach reads the ticket before it binds anything, so a typo is
+# rejected without an endpoint key being created and an address published as a
+# side effect. That ordering is what lets these live in the ungated file.
+statement error
+CALL quackhole_attach('not a ticket at all, just some prose about tickets');
+----
+<REGEX>:.*Look for the string starting with qh1_.*
+
+# The mistake worth naming, because it is the string someone who has read the
+# README reaches for -- and it is exactly the one that carries no relay.
+statement error
+CALL quackhole_attach('et8u6wsyz7qiqm1pb5q3zgny43oro4gbr8rkfdkskpts7mtmehwy');
+----
+<REGEX>:.*endpoint id, not a ticket.*
+
+# base64url of `notjson`: shaped like a ticket, decodes to nothing.
+statement error
+CALL quackhole_attach('qh1_bm90anNvbg');
+----
+<REGEX>:.*damaged.*
+
+# The alias is interpolated into ATTACH ... AS, so an empty one is refused at
+# bind rather than producing a statement that will not parse.
+statement error
+CALL quackhole_attach('qh1_bm90anNvbg', name := '');
+----
+<REGEX>:.*name must not be empty.*
+
+# None of that bound an endpoint.
+query II
+SELECT endpoint_id IS NULL, serving FROM quackhole_status();
+----
+true	false

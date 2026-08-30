@@ -29,12 +29,13 @@ On the machine you want to reach, behind NAT:
 INSTALL quack; LOAD quack;
 LOAD quackhole;
 
-CALL quackhole_serve(token := 'your-shared-token');
-FROM quackhole_status();
+SELECT ticket FROM quackhole_serve(token := 'your-shared-token');
 ```
 
 `quackhole_serve` starts Quack on loopback if nothing is listening there, binds an iroh
-endpoint, and prints a paste-ready `attach_sql`.
+endpoint, waits for it to learn a home relay, and prints a **ticket** — one word carrying the
+endpoint id, the relay and the token. It also prints a `url`: the same ticket in a link that
+opens the browser workbench already connecting.
 
 From anywhere else — a different network, a different continent:
 
@@ -42,18 +43,24 @@ From anywhere else — a different network, a different continent:
 INSTALL quack; LOAD quack;
 LOAD quackhole;
 
-CREATE SECRET (TYPE quack, TOKEN 'your-shared-token');
-ATTACH 'quack:<endpoint-id>.iroh:9494' AS laptop;
+CALL quackhole_attach('qh1_…', name := 'laptop');
 
 FROM laptop.logs WHERE ts > now() - INTERVAL '1 hour';
 ```
 
-That is an ordinary Quack `ATTACH` — no new syntax. Roles are per call, not per machine: a
-DuckDB can serve and attach to others at the same time.
+`quackhole_attach` creates the secret, scopes it to the peer, registers the relay the ticket
+carries, and runs the `ATTACH` — one call, so there is nothing to keep in agreement by hand.
+Everything after it is ordinary Quack. Roles are per call, not per machine: a DuckDB can serve
+and attach to others at the same time, and `name :=` is what lets it hold several remotes at
+once.
 
-For a second remote, the secret has to be named and scoped to its peer — an unnamed one is
-really `__default_quack`, so the second `CREATE SECRET` fails on the name. That is the form
-`attach_sql` prints, so paste that rather than the short version above:
+Registering the relay is not a nicety. Without it iroh has to resolve the peer through pkarr
+— a round trip to a third party that must also have seen the peer publish, which a server
+that started seconds ago routinely has not.
+
+If you only have an endpoint id and no ticket, the long form still works. Name and scope the
+secret to its peer: an unnamed one is really `__default_quack`, so a second `CREATE SECRET`
+fails on the name whatever its scope says.
 
 ```sql
 CREATE SECRET qh_<endpoint-id> (TYPE quack, TOKEN 'your-shared-token',
@@ -91,7 +98,8 @@ to issue, renew, or trust.
 
 | Function | What it does |
 |---|---|
-| `quackhole_serve([token], [target], [allow], [ephemeral], [auto_serve])` | Start Quack on `target` (default `127.0.0.1:9494`) if needed, bind an iroh endpoint, accept streams into it |
+| `quackhole_serve([token], [target], [allow], [ephemeral], [auto_serve])` | Start Quack on `target` (default `127.0.0.1:9494`) if needed, bind an iroh endpoint, accept streams into it. Returns the ticket and a workbench link |
+| `quackhole_attach(ticket, [name])` | Secret, scope, relay and `ATTACH`, for the peer a ticket names. `name` is the catalog it lands under (default `remote`) |
 | `quackhole_stop()` | Stop the accept loop. Cached outbound connections stay usable |
 | `quackhole_status()` | Endpoint id, relay URL, whether serving, and one row per known peer with its path (`direct` or `relay`) |
 
@@ -99,7 +107,7 @@ to issue, renew, or trust.
 |---|---|
 | `quackhole_key_path` | Where the endpoint key lives (default `~/.quackhole/key`) |
 | `quackhole_ephemeral` | Use a throwaway key instead of the persisted one |
-| `quackhole_relay_url` | Reach peers through this relay, skipping address lookup |
+| `quackhole_relay_url` | Fallback relay for peers with none registered. A ticket's relay wins over it |
 
 Settings are read when the endpoint binds, which can happen implicitly on the first `ATTACH`
 to a `.iroh` host, so set them **globally**:

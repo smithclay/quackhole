@@ -57,11 +57,13 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
   from one endpoint id, and all three used to be spelled out in the C++ and
   again in the browser. Same trade as the HTTP framing above: both clients link
   the crate, so a shape defined there cannot drift.
-- **The ticket exists because a browser needs the relay URL.** `attach_sql`
-  carries the endpoint id and the token but not the relay, and without it iroh
-  resolves through pkarr, which routinely has not seen a server this new. The
-  shell script and the page's by-hand SQL each used to hand-roll the format,
-  which meant three encoders agreeing on a shape none of them owned.
+- **The ticket is the whole handoff, and `quackhole_attach` is what consumes
+  it.** It carries the relay, which is why it exists: without one iroh resolves
+  through pkarr, which routinely has not seen a server this new. There used to
+  be an `attach_sql` column printing a CREATE SECRET and an ATTACH instead --
+  carrying no relay, with a fixed `AS remote` that collided on a second remote.
+  The shell script and the page's by-hand SQL each hand-rolled the ticket format
+  too, which meant three encoders agreeing on a shape none of them owned.
 - **`quackhole_serve` blocks until the endpoint learns its home relay**, up to
   `quackhole_relay_wait_ms` (default 10s), because a ticket minted before then
   omits the relay and sends the browser to pkarr, which routinely has not seen
@@ -80,11 +82,14 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
   the secret up by the ATTACH path, so `SCOPE 'quack:<id>.iroh:9494'` is what
   routes a token to one peer; a secret scoped elsewhere is not found at all and
   the error is `Could not find a Quack authentication token`, which does not
-  sound like a scope problem. `attach_sql` and `site/app.js` both emit the named,
-  scoped form, and `QuackUrl`/`quackUrl` exist so the ATTACH path and the SCOPE
-  cannot drift apart. The one thing `attach_sql` cannot make unique is its `AS
-  remote` alias, because it is a fixed string -- a second one collides on the
-  catalog name, which is loud and is a one-word edit the scope survives.
+  sound like a scope problem. `quackhole_attach` and `site/app.js` both build
+  the named, scoped form out of `Peer::address` and `Peer::secret_name`, so the
+  ATTACH path and the SCOPE cannot be two strings that drift.
+- **The relay is per peer on both sides now.** `Core::set_peer_relay` keys it by
+  endpoint id, exactly as `web/bridge-worker.js` does, and `quackhole_attach`
+  fills it in from the ticket before the ATTACH dials. `quackhole_relay_url` is
+  the fallback for peers with none registered, not an override -- one relay per
+  process is what could not describe two remotes.
 - **The bridge's relay is per-peer, keyed by endpoint id.** `web/bridge-worker.js`
   keeps a map the page fills over a `BroadcastChannel`, because the bridge is
   nested inside the DuckDB worker and cannot be reached by postMessage. The

@@ -195,9 +195,15 @@ impl Core {
     /// Framing lives in `crate::http` rather than in the caller because the
     /// browser client needs the identical bytes; see the note there.
     ///
-    /// `relay_url` may be empty, in which case the peer is resolved by address
-    /// lookup. Supplying it skips that round trip -- and works for a peer that
-    /// has not finished publishing, which lookup does not.
+    /// `relay_url` is the *fallback*: a relay registered for this peer with
+    /// `set_peer_relay` wins, because that one came from the peer itself. With
+    /// neither, the peer is resolved by address lookup -- a round trip to a
+    /// third party that must also have seen it publish, which a server started
+    /// seconds ago routinely has not.
+    ///
+    /// Same precedence the browser bridge uses, deliberately: `peerRelays.get(peer)
+    /// ?? defaultRelay`. One relay per process is the thing that could not
+    /// describe two remotes.
     pub fn request(
         &self,
         endpoint_id: &str,
@@ -205,7 +211,15 @@ impl Core {
         req: &crate::http::Request,
         timeout: Duration,
     ) -> Result<crate::http::Response> {
-        let addr = crate::peer_addr(endpoint_id, relay_url)?;
+        let registered = self.peer_relay(&crate::parse_endpoint_id(endpoint_id)?);
+        let addr = crate::peer_addr(
+            endpoint_id,
+            if registered.is_empty() {
+                relay_url
+            } else {
+                &registered
+            },
+        )?;
         let bytes = crate::http::build_request(req)?;
         let endpoint = self.endpoint.clone();
         let cache = self.conns.clone();

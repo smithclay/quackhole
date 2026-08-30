@@ -76,12 +76,11 @@ to sit:
 
 ## The ticket
 
-`quackhole_serve` also returns an `attach_sql`, and it is the wrong string to
-hand a browser: it carries the endpoint id and the token but **not the relay
-URL**. Without the relay, iroh resolves the peer through pkarr over HTTPS — a
-round trip to a third party that must also have seen the peer publish, which a
-server started seconds ago routinely has not. Native clients survive that
-because they can retry later. A person clicking a link will not.
+An endpoint id and a token are not enough to hand a browser. Without the relay
+URL, iroh resolves the peer through pkarr over HTTPS — a round trip to a third
+party that must also have seen the peer publish, which a server started seconds
+ago routinely has not. Native clients survive that because they can retry later.
+A person clicking a link will not.
 
 So `quackhole_serve` waits for the home relay and mints a ticket:
 `qh1_` + base64url of `{"e": endpoint_id, "r": relay_url, "t": token}`. One word,
