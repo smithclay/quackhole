@@ -8,7 +8,7 @@
 // module. The DuckDB worker above it stays classic, since it needs importScripts.
 // Side-effect import: protocol.js assigns to globalThis, so one file serves
 // both this module and the shim's classic script.
-import '/protocol.js';
+import './protocol.js';
 
 const P = globalThis.QH_PROTO;
 
@@ -112,7 +112,7 @@ self.onmessage = async (ev) => {
     fault = msg.fault || null;
     try {
       if (mode === 'iroh') {
-        const wasm = await import('/wasm/quackhole.js');
+        const wasm = await import('./wasm/quackhole.js');
         await wasm.default();
         client = await wasm.connect();
         console.log(`[qh-bridge] iroh endpoint ${client.endpointId()}`);

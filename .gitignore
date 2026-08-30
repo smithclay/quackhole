@@ -30,3 +30,8 @@ vcpkg_installed/
 test/browser/node_modules/
 test/browser/public/bundle.js
 web/wasm/
+
+# The GitHub Pages demo is assembled, not committed: dist/ is built by
+# site/build.mjs out of site/, web/, web/wasm/ and node_modules.
+site/node_modules/
+site/dist/

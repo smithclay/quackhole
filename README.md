@@ -11,6 +11,11 @@ peer-to-peer connection.
 No port forwarding, no VPN, no reverse tunnel, no certificates to manage, and no relay
 infrastructure of your own. You need a shared token and a 52-character address.
 
+**Try it without installing anything first:**
+[smithclay.github.io/quackhole](https://smithclay.github.io/quackhole/) runs DuckDB-Wasm in
+your browser and walks you through connecting it to a DuckDB on your own laptop — one command
+there, one paste back. See [`site/`](site).
+
 Quackhole is a **transport bridge and nothing else**.
 [Quack](https://duckdb.org/docs/stable/core_extensions/quack) stays the database protocol; we
 carry its bytes over [iroh](https://www.iroh.computer/) QUIC streams, which supply identity,
@@ -67,7 +72,8 @@ to issue, renew, or trust.
 - Restrict who may connect with an `allow` list of endpoint ids, checked before any Quack
   traffic.
 - Reach a laptop from a **browser** — DuckDB-Wasm can attach to an unmodified
-  `quackhole_serve`. See [`web/`](web).
+  `quackhole_serve`. See [`web/`](web) for the client, or
+  [the demo](https://smithclay.github.io/quackhole/) to watch it happen.
 - Keep working on networks that block UDP: iroh's relay connection runs over HTTPS/443, so a
   captive portal is a slower path, not a failure.
 
@@ -135,7 +141,8 @@ about a second, warm queries 0.14–0.21s, a 200k-row scan under 2.5s.
 
 - [Architecture](docs/ARCHITECTURE.md) — where the seam is, and the constraints that shaped it
 - [Contributing](CONTRIBUTING.md) — build, test, formatting
-- [Browser client](web/README.md)
+- [Browser client](web/README.md) — the shim, the bridge, and why it cannot be an extension
+- [Demo site](site/README.md) — the guided page, and cross-origin isolation on GitHub Pages
 - [Cross-network test](test/docker/README.md)
 - [Deferred work](docs/DEFERRED.md)
 

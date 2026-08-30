@@ -1,0 +1,407 @@
+/* quackhole demo.
+ *
+ * Two accents, and they mean something rather than decorate: yellow is DuckDB,
+ * so it marks both endpoints and every artifact you copy; periwinkle is iroh,
+ * so it marks the wire and the relay you do not run. Nothing else is coloured.
+ * Fonts are self-hosted (see build.mjs) because the page runs under
+ * COEP: require-corp, where a cross-origin stylesheet is a coin flip. */
+
+:root {
+  --ink: #0e111a;
+  --ink-2: #151a27;
+  --ink-3: #1b2131;
+  --line: #262e42;
+  --dim: #78839b;
+  --paper: #e9ecf3;
+  --signal: #fff000;   /* DuckDB. The endpoints, and anything you copy. */
+  --relay: #7c8cff;    /* iroh. The wire. */
+  --bad: #ff7a6b;
+
+  --display: 'Martian Mono', ui-monospace, 'SF Mono', monospace;
+  --body: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --data: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
+
+  --gut: clamp(1.25rem, 4vw, 3rem);
+  --col: 74ch;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--paper);
+  font: 400 16px/1.65 var(--body);
+  -webkit-font-smoothing: antialiased;
+  /* A faint vertical gradient so the ground is not a flat slab, and so the
+     hero reads as the lit end of the page. */
+  background-image: radial-gradient(120% 60% at 50% 0%, #161b2b 0%, var(--ink) 62%);
+  background-repeat: no-repeat;
+}
+
+a { color: var(--relay); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { color: var(--paper); }
+
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+code, kbd { font-family: var(--data); font-size: 0.9em; }
+kbd {
+  background: var(--ink-3); border: 1px solid var(--line);
+  border-radius: 3px; padding: 0.05em 0.4em; font-size: 0.8em;
+}
+
+/* --- instrument bar ------------------------------------------------------ */
+
+.bar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 0.85rem var(--gut);
+  background: color-mix(in srgb, var(--ink) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+
+.wordmark {
+  font: 700 0.82rem/1 var(--display);
+  letter-spacing: -0.03em;
+  color: var(--paper); text-decoration: none;
+}
+.wordmark:hover { color: var(--signal); }
+
+.bar-status {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  font: 400 0.7rem/1 var(--data);
+  letter-spacing: 0.06em; text-transform: lowercase;
+  color: var(--dim);
+}
+.bar-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--line); box-shadow: 0 0 0 3px color-mix(in srgb, var(--line) 40%, transparent);
+}
+.bar-status[data-state="connecting"] { color: var(--relay); }
+.bar-status[data-state="connecting"] .bar-dot {
+  background: var(--relay);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--relay) 25%, transparent);
+  animation: throb 1.1s ease-in-out infinite;
+}
+.bar-status[data-state="live"] { color: var(--signal); }
+.bar-status[data-state="live"] .bar-dot {
+  background: var(--signal);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal) 22%, transparent);
+}
+.bar-status[data-state="failed"] { color: var(--bad); }
+.bar-status[data-state="failed"] .bar-dot { background: var(--bad); }
+
+@keyframes throb { 50% { opacity: 0.35; } }
+
+/* --- hero ---------------------------------------------------------------- */
+
+main { padding: 0 var(--gut) 6rem; }
+
+.hero {
+  max-width: var(--col);
+  margin: clamp(2.5rem, 7vw, 5rem) auto 0;
+}
+
+.wire-frame {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: linear-gradient(var(--ink-2), var(--ink));
+  padding: 1.25rem 1rem 0.9rem;
+}
+
+.wire { display: block; width: 100%; height: auto; overflow: visible; }
+
+.wire-leg {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 2;
+  stroke-dasharray: 3 7;
+  stroke-linecap: round;
+  transition: stroke 0.5s ease, stroke-dasharray 0.5s ease;
+}
+.wire-node {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 2;
+  transition: stroke 0.45s ease, fill 0.45s ease;
+}
+.wire-node--relay { stroke: var(--line); }
+.wire-pulse { fill: var(--signal); opacity: 0; }
+
+/* Focus: which machine the step on screen is talking about. */
+.wire[data-focus="laptop"] .wire-node:not(.wire-node--relay):last-of-type,
+.wire[data-focus="browser"] .wire-node:not(.wire-node--relay):first-of-type {
+  stroke: var(--signal);
+}
+
+.wire[data-state="connecting"] .wire-leg {
+  stroke: var(--relay);
+  animation: march 0.9s linear infinite;
+}
+.wire[data-state="live"] .wire-leg { stroke: var(--relay); stroke-dasharray: none; }
+.wire[data-state="live"] .wire-node { stroke: var(--signal); fill: color-mix(in srgb, var(--signal) 16%, transparent); }
+.wire[data-state="live"] .wire-node--relay { stroke: var(--relay); fill: color-mix(in srgb, var(--relay) 20%, transparent); }
+.wire[data-state="failed"] .wire-leg { stroke: var(--bad); }
+
+@keyframes march { to { stroke-dashoffset: -20; } }
+
+.wire-legend {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  margin-top: 0.35rem;
+}
+.wire-label { display: flex; flex-direction: column; gap: 0.15rem; text-align: center; }
+.wire-label:first-child { text-align: left; }
+.wire-label:last-child { text-align: right; }
+.wire-label b {
+  font: 500 0.68rem/1.2 var(--data);
+  letter-spacing: 0.02em;
+  color: var(--paper);
+}
+.wire-label i {
+  font: 400 0.63rem/1.2 var(--data);
+  font-style: normal;
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
+
+h1 {
+  font: 700 clamp(2rem, 7.5vw, 3.4rem)/1.05 var(--display);
+  letter-spacing: -0.055em;
+  margin: 2.5rem 0 1.25rem;
+  text-wrap: balance;
+}
+
+.lede { font-size: 1.06rem; color: #c3cadb; margin: 0 0 1rem; }
+.fineprint { font-size: 0.85rem; color: var(--dim); margin: 0; }
+
+/* --- steps --------------------------------------------------------------- */
+
+.steps {
+  list-style: none;
+  max-width: var(--col);
+  margin: clamp(3rem, 8vw, 5.5rem) auto 0;
+  padding: 0;
+}
+
+.step {
+  display: grid;
+  grid-template-columns: 6.5rem 1fr;
+  gap: 0 1.5rem;
+  align-items: start;
+  padding: 2.25rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.step-where {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  font: 400 0.68rem/1 var(--data);
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--dim);
+  /* Aligned to the heading it labels. Sticky drifted it down tall steps. */
+  margin-top: 0.3rem;
+}
+/* The marker repeats the wire's shape language: square is the laptop, circle
+   is this browser. Both yellow, because both of them are DuckDB. */
+.step-where::before {
+  content: ''; width: 9px; height: 9px; flex: none;
+  border: 1.5px solid var(--signal);
+}
+.step[data-where="browser"] .step-where::before { border-radius: 50%; }
+
+.step h2 {
+  font: 600 1.18rem/1.25 var(--display);
+  letter-spacing: -0.035em;
+  margin: 0 0 0.6rem;
+}
+.step p { margin: 0 0 1.1rem; color: #b9c1d4; font-size: 0.95rem; }
+
+.step[data-locked="true"] .step-body { opacity: 0.42; }
+.step[data-locked="true"] h2 { color: var(--dim); }
+.step:not([data-locked="true"]) .locked-note { display: none; }
+
+/* --- command blocks ------------------------------------------------------ */
+
+.cmd {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--ink-2);
+  overflow: hidden;
+}
+.cmd-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.4rem 0.5rem 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--ink-3);
+}
+.cmd-os {
+  font: 400 0.66rem/1 var(--data);
+  letter-spacing: 0.09em; text-transform: uppercase; color: var(--dim);
+}
+.cmd pre {
+  margin: 0; padding: 0.85rem 0.75rem;
+  overflow-x: auto;
+  font: 400 0.8rem/1.7 var(--data);
+  color: var(--signal);
+  white-space: pre;
+  tab-size: 2;
+}
+
+button {
+  font: 500 0.78rem/1 var(--body);
+  color: var(--ink);
+  background: var(--signal);
+  border: 1px solid var(--signal);
+  border-radius: 3px;
+  padding: 0.5rem 0.9rem;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+button:hover { background: #fff759; border-color: #fff759; }
+button:disabled { background: var(--line); border-color: var(--line); color: var(--dim); cursor: not-allowed; }
+
+.copy {
+  font-family: var(--data);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: transparent;
+  color: var(--dim);
+  border-color: var(--line);
+  padding: 0.3rem 0.6rem;
+}
+.copy:hover { background: transparent; color: var(--signal); border-color: var(--signal); }
+
+.aside { margin-top: 1.25rem; }
+.aside summary {
+  cursor: pointer;
+  font: 400 0.85rem/1.5 var(--body);
+  color: var(--dim);
+}
+.aside summary:hover { color: var(--paper); }
+.aside > p { margin: 0.9rem 0; font-size: 0.88rem; }
+.aside .fineprint { margin-top: 0.75rem; }
+
+/* --- paste --------------------------------------------------------------- */
+
+.paste { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.paste input {
+  flex: 1 1 22ch;
+  min-width: 0;
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--paper);
+  font: 400 0.85rem/1 var(--data);
+  padding: 0.6rem 0.7rem;
+}
+.paste input::placeholder { color: #4d566d; }
+.paste input:focus { border-color: var(--relay); }
+
+.slot-error, .slot-note { font-size: 0.85rem; margin: 0.85rem 0 0; }
+.slot-error { color: var(--bad); }
+.slot-note { color: var(--dim); }
+
+/* --- tour + console ------------------------------------------------------ */
+
+.probes { list-style: none; margin: 1.25rem 0 0; padding: 0; }
+.probe {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.15rem 1rem;
+  align-items: baseline;
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--line);
+}
+.probe-sql {
+  font: 400 0.78rem/1.5 var(--data);
+  color: var(--paper);
+  overflow-wrap: anywhere;
+}
+.probe-ms {
+  font: 500 0.78rem/1 var(--data);
+  color: var(--relay);
+  white-space: nowrap;
+}
+.probe-why { grid-column: 1 / -1; font-size: 0.82rem; color: var(--dim); }
+.probe-out {
+  grid-column: 1 / -1;
+  font: 400 0.78rem/1.6 var(--data);
+  color: var(--signal);
+  overflow-wrap: anywhere;
+}
+.probe[data-state="pending"] .probe-ms { color: var(--dim); }
+.probe[data-state="failed"] .probe-out { color: var(--bad); }
+
+.console { margin-top: 2rem; }
+.console-label { display: block; font-size: 0.85rem; color: var(--dim); margin-bottom: 0.5rem; }
+.console textarea {
+  width: 100%;
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--paper);
+  font: 400 0.82rem/1.6 var(--data);
+  padding: 0.7rem;
+  resize: vertical;
+}
+.console textarea:focus { border-color: var(--relay); }
+.console-actions {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  margin-top: 0.6rem;
+}
+.console-hint { font-size: 0.75rem; color: var(--dim); }
+
+.result { margin-top: 1rem; overflow-x: auto; }
+.result table { border-collapse: collapse; font: 400 0.78rem/1.5 var(--data); width: 100%; }
+.result th, .result td {
+  text-align: left; padding: 0.35rem 0.9rem 0.35rem 0;
+  border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+.result th { color: var(--dim); font-weight: 400; text-transform: uppercase; font-size: 0.68rem; letter-spacing: 0.08em; }
+.result-meta { font: 400 0.75rem/1.5 var(--data); color: var(--dim); margin: 0.6rem 0 0; }
+.result-error { color: var(--bad); font: 400 0.8rem/1.6 var(--data); white-space: pre-wrap; }
+
+/* --- explain -------------------------------------------------------------- */
+
+.explain {
+  max-width: var(--col);
+  margin: clamp(3.5rem, 9vw, 6rem) auto 0;
+  border-top: 1px solid var(--line);
+  padding-top: 2.5rem;
+}
+.explain > h2 {
+  font: 600 0.72rem/1 var(--data);
+  letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--dim); margin: 0 0 2rem;
+}
+.explain-grid { display: grid; gap: 2rem; grid-template-columns: repeat(auto-fit, minmax(24ch, 1fr)); }
+.explain h3 {
+  font: 600 0.95rem/1.3 var(--display);
+  letter-spacing: -0.03em; margin: 0 0 0.5rem;
+}
+.explain p { margin: 0; font-size: 0.88rem; color: #a9b2c7; }
+.explain-foot { margin: 3.25rem 0 0; font-size: 0.82rem; color: var(--dim); overflow-wrap: anywhere; }
+
+.noscript { max-width: var(--col); margin: 3rem auto; padding: 0 var(--gut); color: var(--bad); }
+
+/* --- narrow -------------------------------------------------------------- */
+
+@media (max-width: 34rem) {
+  .step { grid-template-columns: 1fr; gap: 0.75rem; }
+  .step-where { margin-top: 0; }
+  .wire-label i { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

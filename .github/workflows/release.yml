@@ -1,0 +1,80 @@
+# Publishes the extension binaries the demo downloads.
+#
+# scripts/quackhole-demo.sh fetches
+#   releases/latest/download/quackhole-<platform>.duckdb_extension
+# so the asset names below are load-bearing: renaming one breaks the first step
+# of the onboarding on https://smithclay.github.io/quackhole/.
+#
+# The build is repeated here rather than reusing MainDistributionPipeline's
+# artifacts, because artifacts do not cross workflow runs without a fragile
+# fetch-from-another-run dance. Tags are rare; a duplicated matrix on a tag is
+# the cheaper trade.
+#
+# duckdb_version and exclude_archs must stay identical to
+# .github/workflows/MainDistributionPipeline.yml and description.yml, so that
+# what CI proves is what gets published.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and publish (leave empty to build without publishing)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build extension binaries
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5-variegata
+    with:
+      duckdb_version: v1.5.5
+      ci_tools_version: v1.5-variegata
+      extension_name: quackhole
+      extra_toolchains: 'rust'
+      exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64_mingw;linux_amd64_musl'
+
+  publish:
+    name: Publish binaries
+    needs: build
+    # A dispatch with no tag is a way to exercise the matrix without cutting a
+    # release, so publishing is opt-in rather than the default.
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # Lets the gh CLI work without a checkout.
+      GH_REPO: ${{ github.repository }}
+      DUCKDB_VERSION: v1.5.5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: quackhole-${{ env.DUCKDB_VERSION }}-extension-*
+          path: artifacts
+
+      - name: Name each binary after its platform
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          prefix="artifacts/quackhole-${DUCKDB_VERSION}-extension-"
+          for dir in "$prefix"*/; do
+            arch="${dir#"$prefix"}"
+            arch="${arch%/}"
+            cp "$dir/quackhole.duckdb_extension" "dist/quackhole-$arch.duckdb_extension"
+          done
+          ls -l dist
+
+      - name: Upload to the release
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag || github.ref_name }}"
+          gh release view "$tag" >/dev/null 2>&1 ||
+            gh release create "$tag" --title "$tag" --generate-notes
+          gh release upload "$tag" dist/* --clobber

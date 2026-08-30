@@ -13,6 +13,13 @@
   const NativeXHR = self.XMLHttpRequest;
   const params = new URLSearchParams(self.location.search);
 
+  // Layout and constants live in protocol.js, loaded by both sides. Declared
+  // up here because TIMEOUT_MS below falls back to it: when a caller omits
+  // `timeout` -- which web/README.md documents as optional -- reading it from
+  // further down the IIFE is a temporal-dead-zone error, and the whole worker
+  // dies before duckdb ever loads.
+  const P = globalThis.QH_PROTO;
+
   // Hosts to intercept. `.iroh` is the real target; the extra pattern lets the
   // bridge be tested against an ordinary HTTP server, with no iroh involved.
   const EXTRA = params.get('intercept') || '';
@@ -34,8 +41,6 @@
   }
 
   // --- shared state -------------------------------------------------------
-  // Layout and constants live in protocol.js, loaded by both sides.
-  const P = globalThis.QH_PROTO;
   // Deliberately overridable: the harness shrinks this so that ordinary
   // responses span several chunks and the reassembly path is actually run.
   const DATA_BYTES = Number(params.get('chunk')) || 8 * 1024 * 1024;
@@ -47,7 +52,7 @@
   // Nested worker: the shim owns the bridge, so the page does not have to know
   // it exists and there is no handshake to race against duckdb's own onmessage.
   // A module worker, because the wasm glue is an ES module.
-  const bridge = new Worker(params.get('bridge') || '/bridge-worker.js', { type: 'module' });
+  const bridge = new Worker(params.get('bridge') || './bridge-worker.js', { type: 'module' });
   bridge.postMessage({
     __qh: 'init',
     sab,
