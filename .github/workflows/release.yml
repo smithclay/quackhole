@@ -80,3 +80,66 @@ jobs:
           gh release view "$tag" >/dev/null 2>&1 ||
             gh release create "$tag" --title "$tag" --generate-notes
           gh release upload "$tag" dist/* --clobber
+
+  # After the binaries, never alongside them. `npx quackhole` downloads the
+  # extension from this tag's release assets, so a package published before they
+  # exist is a package that fails on first run for as long as the matrix takes.
+  #
+  # Needs an NPM_TOKEN secret with publish rights on `quackhole`. Without one
+  # this job fails and the binaries are still published, which is the right way
+  # round: the release is usable by every path except npx.
+  npm:
+    name: Publish to npm
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # For npm provenance, which is worth having on a package whose whole point
+      # is that strangers run it with npx.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # The package ships web/wasm/, which is gitignored and built here -- the
+      # same three steps pages.yml takes, for the same reason.
+      - name: Install a wasm-capable C toolchain
+        run: sudo apt-get update && sudo apt-get install -y clang llvm lld
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - name: Build the iroh transport
+        run: web/build-wasm.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Assemble the package
+        run: node npm/build.mjs
+
+      # The npm version is derived from crates/Cargo.toml, and the CLI resolves
+      # its download tag from the npm version. So a tag that disagrees would
+      # publish a package that downloads from a release that is not this one.
+      - name: Check the version is this tag
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./npm/package.json').version")"
+          [ "v$version" = "${GITHUB_REF_NAME}" ] || {
+            echo "npm/package.json is $version but the tag is ${GITHUB_REF_NAME}." >&2
+            echo "The version comes from crates/Cargo.toml -- see docs/UPDATING.md." >&2
+            exit 1
+          }
+
+      - name: Publish
+        working-directory: npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

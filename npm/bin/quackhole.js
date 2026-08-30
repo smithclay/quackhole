@@ -31,7 +31,7 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import { createServer } from 'node:net';
 import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, hostname, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
@@ -125,12 +125,26 @@ async function extensionPath() {
   if (process.env.QH_EXT) {
     const local = process.env.QH_EXT;
     if (!(await stat(local).catch(() => null))) die(`QH_EXT is set to '${local}', which does not exist.`);
+    // DuckDB derives the entrypoint symbol from the basename, so a copy under
+    // any other name fails at LOAD talking about entrypoints rather than about
+    // its name.
+    if (basename(local) !== 'quackhole.duckdb_extension') {
+      die(`QH_EXT must be named quackhole.duckdb_extension -- DuckDB reads the entrypoint\n  out of the filename. '${basename(local)}' will not load.`);
+    }
     say(`using the local extension ${local}`);
     return local;
   }
 
   const target = platform();
-  const cached = join(cacheDir(), `quackhole-${pkg.version}-${target}.duckdb_extension`);
+  // A directory per version and platform, with the file itself named
+  // `quackhole.duckdb_extension`. The name is not cosmetic: DuckDB derives the
+  // entrypoint symbol it looks for from the basename, so a cache keyed by
+  // filename -- quackhole-0.0.1-osx_arm64.duckdb_extension -- fails at LOAD
+  // with "did not contain the expected entrypoint function
+  // 'quackhole-0-0-1-osx_arm64_duckdb_cpp_init'". The key has to go in the
+  // path.
+  const home = join(cacheDir(), pkg.version, target);
+  const cached = join(home, 'quackhole.duckdb_extension');
   if (await stat(cached).catch(() => null)) {
     say(`using the cached extension for ${target}`);
     return cached;
@@ -156,11 +170,11 @@ async function extensionPath() {
 
   // Written beside the final name and renamed, so an interrupted download
   // cannot leave a truncated binary in the cache to be trusted next time.
-  await mkdir(cacheDir(), { recursive: true });
+  await mkdir(home, { recursive: true });
   const partial = `${cached}.${process.pid}.part`;
   await writeFile(partial, bytes);
   await rename(partial, cached);
-  say(`cached ${(bytes.length / 1e6).toFixed(0)} MB in ${cacheDir()}`);
+  say(`cached ${(bytes.length / 1e6).toFixed(0)} MB in ${home}`);
   return cached;
 }
 
@@ -243,8 +257,9 @@ if (Number(known[0].n) === 0) {
       '  quackhole_workbench_url, which is what aims the link this prints.\n\n' +
       (process.env.QH_EXT
         ? `  QH_EXT is set to ${process.env.QH_EXT}. Rebuild it:\n\n    make release`
-        : `  Remove ${cacheDir()} and run this again. If it persists, the\n` +
-          `  v${pkg.version} release and this package disagree -- please open an issue.`),
+        : `  The v${pkg.version} release and this package disagree about what the extension\n` +
+          `  has. Try 'npx quackhole@latest'; if that says the same thing, please open an\n` +
+          `  issue. The download is cached under ${cacheDir()}.`),
   );
 }
 

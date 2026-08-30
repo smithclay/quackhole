@@ -1,3 +1,42 @@
+# Where the version lives
+
+The extension's version is stated twice and derived everywhere else. Bumping it
+means editing exactly these two, in the same commit:
+
+- `description.yml` — `extension.version`, the community-extensions entry.
+- `crates/Cargo.toml` — `[workspace.package] version`, which both Rust crates
+  inherit.
+
+Derived from those, and not to be edited by hand:
+
+- `web/wasm/package.json` — written by `wasm-pack` out of the crate version.
+- The C++ `EXTENSION_VERSION` — set by the build.
+- `npm/package.json` — written by `npm/build.mjs` out of `crates/Cargo.toml`.
+  `node npm/build.mjs --check` asserts they agree and changes nothing.
+
+The npm one is derived rather than maintained because `npm/bin/quackhole.js`
+resolves the GitHub release tag it downloads the extension from out of its own
+`package.json`. An npm version that drifted would send `npx quackhole` to a
+release whose binaries it was not written for — and since npm and GitHub
+releases are two publishing surfaces, nothing else would catch it.
+
+## Cutting a release
+
+Order matters, and it is enforced in
+[`release.yml`](../.github/workflows/release.yml): the `npm` job `needs` the
+binary upload. `npx quackhole` downloads the extension from the tag's release
+assets, so a package on npm before those assets exist fails on first run for as
+long as the build matrix takes.
+
+    # bump description.yml and crates/Cargo.toml, then
+    node npm/build.mjs        # syncs npm/package.json
+    git commit -am 'chore: bump to 0.0.2'
+    git tag v0.0.2 && git push --tags
+
+Publishing needs an `NPM_TOKEN` repository secret with publish rights on
+`quackhole`. Without it the binaries still publish and only `npx` is missing,
+which is the right way round.
+
 # Extension updating 
 When cloning this template, the target version of DuckDB should be the latest stable release of DuckDB. However, there 
 will inevitably come a time when a new DuckDB is released and the extension repository needs updating. This process goes
