@@ -1,0 +1,27 @@
+build
+.idea
+cmake-build-debug
+duckdb_unittest_tempdir/
+.DS_Store
+testext
+__pycache__/
+.Rhistory
+
+# Rust core build output
+crates/target/
+# Persisted iroh endpoint key (the address); never commit
+.quackhole/
+
+# Editor / tooling artifacts
+.cache/
+# .clang-format and .clang-tidy are symlinks into the duckdb submodule, and they
+# are COMMITTED. CI's format-check job never builds, so nothing recreates them
+# there; without them clang-format falls back to its LLVM default and demands
+# two-space indent for a codebase DuckDB formats with tabs. Git stores the
+# symlink and the submodule supplies the target.
+/.editorconfig
+
+# Browser test dependencies (duckdb-wasm bundles + playwright)
+test/browser/node_modules/
+test/browser/public/bundle.js
+web/wasm/

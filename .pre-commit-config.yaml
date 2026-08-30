@@ -1,0 +1,55 @@
+# Runs the gates CI runs, before the commit rather than after the matrix.
+#
+#   pip install pre-commit && pre-commit install
+#   pre-commit run --all-files      # first time, or after changing this file
+#
+# The C++ hooks mirror `make format-check`; the Rust hooks are new, because
+# until now the C++ side had two gates and the side containing every unsafe
+# block had none.
+exclude: '^(duckdb|extension-ci-tools)/'
+
+repos:
+  # Exactly 11.0.1. DuckDB's format.py pins this version and newer releases
+  # disagree about line breaking, so a newer clang-format produces a diff that
+  # CI then rejects.
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v11.0.1
+    hooks:
+      - id: clang-format
+        types_or: [c++, c]
+
+  - repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+        language_version: python3
+        types_or: [python, pyi]
+        args: [--line-length=120, --skip-string-normalization]
+
+  - repo: https://github.com/cheshirekow/cmake-format-precommit
+    rev: v0.6.13
+    hooks:
+      # 100 rather than the default 80, which rewraps prose comments
+      # mid-sentence and collapses readable multi-line calls onto one line.
+      - id: cmake-format
+        args: [--line-width=100]
+      - id: cmake-lint
+        args: [--line-width=100]
+
+  # Whole-workspace rather than per-file: cargo takes a manifest, not a list of
+  # paths, and clippy needs the whole crate graph to say anything useful.
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --manifest-path crates/Cargo.toml --all
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy --manifest-path crates/Cargo.toml --all-targets -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false

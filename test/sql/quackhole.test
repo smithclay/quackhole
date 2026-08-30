@@ -1,0 +1,38 @@
+# name: test/sql/quackhole.test
+# description: Load, catalog surface, and the not-yet-bound status/stop paths
+# group: [sql]
+
+# Before loading, none of the functions exist.
+statement error
+CALL quackhole_status();
+----
+Catalog Error
+
+require quackhole
+
+# All three table functions are registered.
+query I
+SELECT count(*) FROM duckdb_functions()
+WHERE function_name IN ('quackhole_serve', 'quackhole_stop', 'quackhole_status');
+----
+3
+
+# Asking for status must not bind an endpoint as a side effect: before anything
+# has dialed or served, we report an empty status rather than creating a key and
+# publishing an address.
+query III
+SELECT endpoint_id, serving, peer_id FROM quackhole_status();
+----
+NULL	false	NULL
+
+# Stopping when nothing is serving is a clean false, not an error.
+query I
+SELECT stopped FROM quackhole_stop();
+----
+false
+
+# Status is repeatable and still does not bind.
+query I
+SELECT serving FROM quackhole_status();
+----
+false

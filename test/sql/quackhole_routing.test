@@ -1,0 +1,50 @@
+# name: test/sql/quackhole_routing.test
+# description: .iroh hosts route through quackhole, and keep doing so after httpfs loads
+# group: [sql]
+
+#
+# Binding an iroh endpoint opens a UDP socket and publishes an address, so this
+# file is gated on QUACKHOLE_NET_TESTS to keep the default suite hermetic.
+
+require quackhole
+
+require httpfs
+
+require-env QUACKHOLE_NET_TESTS
+
+# httpfs is loaded AFTER quackhole here. httpfs unconditionally calls
+# SetHTTPUtil when it loads, so without the ExtensionCallback re-arm this ATTACH
+# would reach httpfs and fail at getaddrinfo with "Could not resolve host".
+# The quackhole-specific message is what proves we still own the .iroh route.
+statement error
+ATTACH 'quack:not-a-real-endpoint-id.iroh:9494' AS remote;
+----
+<REGEX>:.*not a valid iroh endpoint id.*
+
+# Scope note: only Quack traffic is intercepted. httpfs builds its own
+# HTTPParams holding a reference to the httpfs util, so read_csv/read_parquet
+# reach httpfs directly and never see QuackholeHTTPUtil -- a .iroh URL there
+# fails with "Could not resolve hostname", which is httpfs, not us. Verified by
+# hand; asserting it here would just pin someone else's error message.
+statement error
+SELECT * FROM read_csv('https://not-a-real-endpoint-id.iroh:9494/x.csv');
+----
+<REGEX>:.*(resolve|HTTP|IO).*
+
+# Ordinary hosts still belong to httpfs.
+statement error
+SELECT * FROM read_csv('https://localhost:1/nope.csv');
+----
+<REGEX>:.*(HTTP|IO|Connection|Could not|error).*
+
+# Now that an endpoint is bound, status reports it.
+query I
+SELECT endpoint_id IS NOT NULL FROM quackhole_status();
+----
+true
+
+# The endpoint id we print is z-base-32: 52 characters, so it fits a DNS label.
+query I
+SELECT length(endpoint_id) FROM quackhole_status();
+----
+52

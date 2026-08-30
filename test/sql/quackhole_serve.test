@@ -1,0 +1,87 @@
+# name: test/sql/quackhole_serve.test
+# description: serve/stop lifecycle, key_path persistence, and the ephemeral guard
+# group: [sql]
+
+#
+# Binding an iroh endpoint opens a UDP socket and publishes an address, so this
+# file is gated like the other live tests.
+
+require quackhole
+
+require-env QUACKHOLE_NET_TESTS
+
+# Keep the endpoint key out of ~/.quackhole so the suite never touches the
+# developer's real identity.
+statement ok
+SET GLOBAL quackhole_key_path = '__TEST_DIR__/quackhole_test_key';
+
+statement ok
+SET GLOBAL quackhole_ephemeral = false;
+
+# auto_serve := false because this test is about quackhole's own lifecycle, not
+# about whether a Quack server happens to come up.
+statement ok
+CALL quackhole_serve(auto_serve := false, target := '127.0.0.1:9494');
+
+query I
+SELECT serving FROM quackhole_status();
+----
+true
+
+# The printed id is z-base-32, which fits a DNS label.
+query I
+SELECT length(endpoint_id) FROM quackhole_status();
+----
+52
+
+# quackhole_key_path was honoured: the key exists where we asked for it, not in
+# the default location.
+query I
+SELECT count(*) FROM glob('__TEST_DIR__/quackhole_test_key');
+----
+1
+
+# Asking for a throwaway identity once an endpoint is already bound must fail
+# loudly. Silently serving on the long-lived, published key instead is exactly
+# the surprise someone passing `ephemeral` is trying to avoid.
+statement error
+CALL quackhole_serve(ephemeral := true, auto_serve := false);
+----
+<REGEX>:.*ephemeral.*
+
+# Starting twice is refused rather than silently replacing the accept loop.
+statement error
+CALL quackhole_serve(auto_serve := false, target := '127.0.0.1:9494');
+----
+<REGEX>:.*already serving.*
+
+# Stopping while actually serving reports true (the not-serving case is covered
+# in quackhole.test, which reports false).
+query I
+SELECT stopped FROM quackhole_stop();
+----
+true
+
+# is_serving reflects the accept loop, not merely "stop was never called".
+query I
+SELECT serving FROM quackhole_status();
+----
+false
+
+# The endpoint stays bound after stopping, so outbound dials still work.
+query I
+SELECT endpoint_id IS NOT NULL FROM quackhole_status();
+----
+true
+
+# Serving again on the same core is allowed once stopped.
+statement ok
+CALL quackhole_serve(auto_serve := false, target := '127.0.0.1:9494');
+
+query I
+SELECT serving FROM quackhole_status();
+----
+true
+
+statement ok
+CALL quackhole_stop();

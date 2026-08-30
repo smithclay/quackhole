@@ -1,0 +1,59 @@
+# Workspace root for the Rust half of the extension.
+#
+# Here rather than at the repo root, which is a DuckDB extension: a Cargo.toml
+# there would suggest the whole repository is a Rust project.
+#
+# The point is one Cargo.lock. quackhole-core and quackhole-web previously
+# resolved their dependencies independently, so nothing stopped `cargo update`
+# in one directory from leaving the native and browser clients on different iroh
+# versions -- disagreeing about the wire, which is exactly what sharing the
+# transport code is meant to make impossible. One target/ directory is the
+# incidental benefit; iroh was being compiled twice.
+[workspace]
+members = ["quackhole-core", "quackhole-web"]
+resolver = "2"
+
+# Stated once so a bump cannot be applied inconsistently.
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"
+
+# No [workspace.dependencies]. The obvious candidate is iroh, whose version is
+# stated in three places, but it cannot be inherited: the native build needs
+# iroh's default features (portmapper, which does UPnP/NAT-PMP and is directly
+# useful to us, plus fast-apple-datapath and metrics) while the wasm build needs
+# them off. Cargo ignores a member's `default-features` when the dependency is
+# inherited -- it warns "this could become a hard error in the future" -- so
+# inheriting would silently hand the browser build the native feature set.
+# Stated per target instead, which is longer but says what is true.
+
+# Inherited by both crates via `[lints] workspace = true`.
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+# Not style: these mark work that was never finished, and should not reach a
+# release build of a transport.
+todo = "warn"
+unimplemented = "warn"
+
+# Profiles only take effect at the workspace root, so both crates' settings live
+# here. They differ on purpose: the static library is linked into DuckDB and
+# wants speed, while the wasm module is downloaded by a browser and wants size.
+#
+# Known cost of joining the workspace: a per-package profile covers only that
+# crate's own code, not its dependencies, so the wasm module went from 2.78 MB
+# to 3.54 MB -- iroh and ring are now built at opt-level 2 for the browser too.
+# There is no clean fix available: `profile.release.package."*"` would also
+# change how the native transport's crypto is compiled, and a dedicated
+# `wasm-release` profile cannot be selected because wasm-pack exposes only
+# --dev/--release/--profiling. Left as is deliberately; 760 KB before gzip does
+# not justify pessimising the native build or dropping wasm-pack for cargo plus
+# a wasm-bindgen-cli install. Revisit if browser download size starts to matter.
+[profile.release]
+opt-level = 2
+
+[profile.release.package.quackhole-web]
+opt-level = "s"

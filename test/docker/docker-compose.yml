@@ -1,0 +1,61 @@
+# Two DuckDBs on networks that cannot reach each other, both NAT'd to the
+# internet. The only way the client can see the server's database is the thing
+# under test: iroh, hole-punching through the host's NAT or falling back to an
+# n0 relay.
+#
+# The subnets are pinned because each container firewalls off the other one by
+# address. Docker's own inter-network isolation is not enough -- OrbStack routes
+# between bridge networks -- and client.sh refuses to run until it has confirmed
+# the split actually holds.
+#
+# Driven by run.sh; see README.md in this directory for what it does and does
+# not prove.
+
+name: quackhole-nat
+
+x-peer: &peer
+  image: quackhole-nat:latest
+  # iptables, for the network split and for the relay-only scenario.
+  cap_add: [NET_ADMIN]
+  volumes:
+    # Stands in for the out-of-band channel a real user has -- the endpoint id
+    # has to reach the client somehow, and it is not secret.
+    - handoff:/handoff
+
+services:
+  server:
+    <<: *peer
+    build:
+      context: ../..
+      dockerfile: test/docker/Dockerfile
+    command: /opt/qh/server.sh
+    networks: [cafe]
+    environment:
+      QH_TOKEN: ${QH_TOKEN:-quackhole-docker-token}
+      QH_BLOCK_UDP: ${QH_BLOCK_UDP:-0}
+      QH_PEER_SUBNET: 10.77.20.0/24
+
+  client:
+    <<: *peer
+    command: /opt/qh/client.sh
+    networks: [office]
+    depends_on: [server]
+    environment:
+      QH_TOKEN: ${QH_TOKEN:-quackhole-docker-token}
+      QH_BLOCK_UDP: ${QH_BLOCK_UDP:-0}
+      QH_PEER_SUBNET: 10.77.10.0/24
+      QH_BUDGET_MS: ${QH_BUDGET_MS:-1000}
+      QH_ENFORCE_BUDGET: ${QH_ENFORCE_BUDGET:-0}
+      QH_EXPECT_PATH: ${QH_EXPECT_PATH:-}
+      QH_IDLE_SECONDS: ${QH_IDLE_SECONDS:-0}
+
+networks:
+  cafe:
+    ipam:
+      config: [{subnet: 10.77.10.0/24}]
+  office:
+    ipam:
+      config: [{subnet: 10.77.20.0/24}]
+
+volumes:
+  handoff:
