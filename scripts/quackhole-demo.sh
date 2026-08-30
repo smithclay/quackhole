@@ -21,6 +21,9 @@
 # so no sudo and no PATH changes -- no cryptographic identity is persisted (the
 # endpoint is ephemeral), and nothing is left running after Ctrl-C.
 #
+# If the DuckDB CLI does have to be fetched, it asks before doing it. QH_YES=1
+# answers yes in advance, for anyone driving this from another script.
+#
 # POSIX sh on purpose: this runs on whatever a stranger happens to have.
 #
 # Two overrides exist for developing on this repo, and they are what let the
@@ -42,6 +45,31 @@ SERVER_PID=""
 
 die() { printf '\n  %s\n\n' "$*" >&2; exit 1; }
 step() { printf '  %s\n' "$*"; }
+
+# Ask a yes/no question, defaulting to yes.
+#
+# Reads from /dev/tty rather than stdin, because the page tells people to run
+# this as `curl ... | sh` -- which hands the script itself to sh on stdin, so a
+# plain `read` would swallow the rest of the script instead of waiting for an
+# answer. With no terminal at all there is nobody to ask, so it says so and
+# carries on rather than blocking a pipeline forever.
+confirm() {
+  if [ -n "${QH_YES:-}" ]; then return 0; fi
+  # `[ -r /dev/tty ]` is not enough to tell: the device exists and tests
+  # readable even when this process has no controlling terminal, and only
+  # opening it says otherwise. The subshell is what keeps that attempt from
+  # being fatal when it fails.
+  if ! (: > /dev/tty) 2>/dev/null; then
+    step "(no terminal to ask on -- continuing; set QH_YES=1 to skip this note)"
+    return 0
+  fi
+  printf '  %s [Y/n] ' "$1" > /dev/tty
+  read -r reply < /dev/tty || return 0
+  case "$reply" in
+    '' | [Yy] | [Yy][Ee][Ss]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 cleanup() {
   [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true
@@ -114,10 +142,34 @@ else
   command -v unzip >/dev/null 2>&1 ||
     die "Need unzip to unpack the DuckDB CLI, or install DuckDB $WANT_DUCKDB yourself:
   https://duckdb.org/docs/installation/"
+  # Sizes are approximate and only there so the question below can be answered
+  # without guessing; they drift a little with each DuckDB release. osx is the
+  # larger of the two because the CLI is a universal binary.
   case "$OS" in
-    osx)   CLI_ZIP="duckdb_cli-osx-universal.zip" ;;
-    linux) CLI_ZIP="duckdb_cli-linux-${ARCH}.zip" ;;
+    osx)   CLI_ZIP="duckdb_cli-osx-universal.zip"; CLI_SIZE="about 35 MB" ;;
+    linux) CLI_ZIP="duckdb_cli-linux-${ARCH}.zip"; CLI_SIZE="about 20 MB" ;;
   esac
+
+  cat <<EXPLAIN
+
+  To run the demo this needs the DuckDB $WANT_DUCKDB command-line binary,
+  downloaded from github.com/duckdb/duckdb ($CLI_SIZE) into
+
+    $WORKDIR
+
+  which is a temp directory this script deletes on the way out. Nothing is
+  installed, nothing needs sudo, your PATH is untouched, and whatever DuckDB
+  you already have keeps the version it has.
+
+EXPLAIN
+  confirm "Download it?" || die "Nothing was downloaded.
+
+  Install DuckDB $WANT_DUCKDB yourself and run this again --
+  https://duckdb.org/docs/installation/ -- or point the script at a copy you
+  already have:
+
+    QH_DUCKDB=/path/to/duckdb sh quackhole-demo.sh"
+
   step "fetching DuckDB $WANT_DUCKDB into $WORKDIR (nothing is installed)"
   fetch "https://github.com/duckdb/duckdb/releases/download/$WANT_DUCKDB/$CLI_ZIP" "$WORKDIR/duckdb.zip" ||
     die "Could not download the DuckDB CLI for $PLATFORM."
@@ -189,6 +241,12 @@ cat >&3 <<SQL
 INSTALL quack; LOAD quack;
 LOAD '$EXT';
 
+-- This script needs a quackhole new enough to mint the workbench link itself.
+-- Asking the extension what it has beats matching on DuckDB's error prose
+-- later, and it is what turns 'unrecognized configuration parameter' into a
+-- sentence naming which of the two halves is out of date.
+SELECT 'QH_CAP ' || count(*) FROM duckdb_settings() WHERE name = 'quackhole_workbench_url';
+
 CREATE TABLE laptop_info AS SELECT
   '$HOSTNAME_' AS host, '$OS_DESC' AS os, version() AS duckdb_version, now() AS started_at;
 
@@ -229,23 +287,49 @@ SELECT 'QH_URL ' || coalesce(url, '') FROM qh;
 DROP TABLE qh;
 SQL
 
-step "starting the endpoint"
-
 # serve blocks internally until the relay is known, so this is waiting on one
 # statement rather than polling for a value that arrives late. The bound is
 # still generous: the extension gives up on the relay well before this does.
+#
+# It also prints as it goes. This is where the script spends its time -- a
+# round trip to n0's infrastructure -- and a silent pause here is
+# indistinguishable from a hang.
+printf '  starting the endpoint, waiting for a home relay'
 i=0
 while [ "$i" -lt 60 ]; do
   grep -q '^QH_URL ' "$LOG" 2>/dev/null && break
+  # An extension too old to know about the link is not going to grow one, so
+  # stop rather than spending the full minute finding that out.
+  grep -q '^QH_CAP 0$' "$LOG" 2>/dev/null && break
   # A LOAD failure means the process is already gone; do not wait out the loop.
   kill -0 "$SERVER_PID" 2>/dev/null || break
+  printf '.'
   sleep 1
   i=$((i + 1))
 done
+printf '\n'
 
 ENDPOINT_ID="$(sed -n 's/^QH_ID //p' "$LOG" | head -1)"
 RELAY="$(sed -n 's/^QH_RELAY //p' "$LOG" | grep . | head -1 || true)"
 URL="$(sed -n 's/^QH_URL //p' "$LOG" | grep . | head -1 || true)"
+
+if [ "$(sed -n 's/^QH_CAP //p' "$LOG" | head -1)" = "0" ]; then
+  die "The quackhole extension that loaded is older than this script.
+
+  quackhole_serve grew the 'url' column -- the ready-to-open workbench link
+  this script hands you -- and the quackhole_workbench_url setting that aims
+  it, both after the latest release. The published build has nothing to print
+  here, which is why it failed on a setting it has never heard of.
+
+  In a checkout of the repo, build the extension and point the script at it:
+
+    make release
+    QH_EXT=build/release/extension/quackhole/quackhole.duckdb_extension \\
+      sh scripts/quackhole-demo.sh
+
+  Otherwise this copy of the script is ahead of the release it was published
+  alongside -- see $PAGE."
+fi
 
 if [ -z "$URL" ]; then
   printf '\n  DuckDB never reported a usable endpoint. Its output:\n\n' >&2
