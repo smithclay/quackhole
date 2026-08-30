@@ -34,8 +34,17 @@ const TYPES = {
  */
 export function startStaticServer(root, { isolate = true, port = 0 } = {}) {
   const server = createServer(async (req, res) => {
-    const path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname));
-    const rel = path === '/' ? 'index.html' : path.slice(1);
+    let rel;
+    try {
+      const path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname));
+      rel = path === '/' ? 'index.html' : path.slice(1);
+    } catch {
+      // decodeURIComponent throws on a truncated escape (`GET /%`). This
+      // handler is async, so letting it propagate is an unhandled rejection --
+      // which by default terminates the process and takes the dev server, or a
+      // verify run in progress, down with it.
+      return void res.writeHead(400).end('bad request');
+    }
     // normalize() has already collapsed '..', so a leading '..' is the only
     // way out of the root and rejecting it is enough.
     if (rel.startsWith('..')) return void res.writeHead(403).end('forbidden');
@@ -56,7 +65,17 @@ export function startStaticServer(root, { isolate = true, port = 0 } = {}) {
     }
   });
 
-  return new Promise((resolve) =>
-    server.listen(port, '127.0.0.1', () => resolve({ server, port: server.address().port })),
-  );
+  return new Promise((resolve, reject) => {
+    // Without this, a busy port emits 'error' with nobody listening: Node
+    // rethrows it as an uncaught exception and this promise never settles, so
+    // the caller hangs after a full build instead of being told what is wrong.
+    server.once('error', (err) =>
+      reject(
+        err.code === 'EADDRINUSE'
+          ? new Error(`port ${port} is already in use; stop what is on it, or pass port: 0`)
+          : err,
+      ),
+    );
+    server.listen(port, '127.0.0.1', () => resolve({ server, port: server.address().port }));
+  });
 }

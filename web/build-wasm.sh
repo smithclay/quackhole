@@ -2,8 +2,9 @@
 #
 # Builds the browser transport into web/wasm/.
 #
-# getrandom's browser backend is selected by a cfg in
-# crates/quackhole-web/.cargo/config.toml.
+# getrandom's browser backend is selected by a cfg in crates/.cargo/config.toml
+# -- the workspace root, which cargo finds by walking up from the cd below, not
+# a file in quackhole-web itself.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
