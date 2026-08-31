@@ -22,7 +22,7 @@ flowchart LR
     R{{"n0 public relay<br/>forwards ciphertext"}}
     S["Server<br/>quackhole_serve<br/>Quack on 127.0.0.1:9494<br/>your DuckDB"]
 
-    C -->|"ATTACH 'quack:&lt;public-key&gt;endpoint-id.iroh:9494'"| R
+    C -->|"ATTACH 'quack:&lt;endpoint-id&gt;.iroh:9494'"| R
     R -->|"iroh QUIC, encrypted end to end"| S
     C -.->|"direct path, native to native only"| S
 ```
@@ -31,16 +31,35 @@ Neither side opens an inbound port. The address *is* the server's ed25519 public
 
 ## Quickstart
 
-[smithclay.github.io/quackhole](https://smithclay.github.io/quackhole/) walks you through an example that connects a remote duckdb session to one running in your browser tab (really!). Otherwise, on the machine you want to reach, behind NAT:
+The fastest path needs Node 20+ and nothing else. On the machine you want to reach, behind
+NAT:
+
+```sh
+npx quackhole
+```
+
+It downloads the extension for your platform, seeds a sample database, starts serving, and
+prints a link that opens the [browser workbench](https://smithclay.github.io/quackhole/)
+already connecting — plus the `qh1_…` ticket for attaching from another DuckDB. Nothing is
+installed, and Ctrl-C cleans up.
+
+### Or from SQL, in a DuckDB you already have open
+
+The extension is in [community-extensions](https://community-extensions.duckdb.org/), signed,
+so no flags and no downloads:
 
 ```sql
 INSTALL quack; LOAD quack;
--- Not in community-extensions yet: download the binary from the GitHub release
--- and start DuckDB with -unsigned. `npx quackhole` does both for you.
+INSTALL quackhole FROM community;
 LOAD quackhole;
 
 SELECT ticket FROM quackhole_serve(token := 'your-shared-token');
 ```
+
+(Prefer a pinned binary? The [GitHub release](https://github.com/smithclay/quackhole/releases)
+assets work too — save one as exactly `quackhole.duckdb_extension` and start DuckDB with
+`-unsigned`; the filename and the flag both matter, see
+[Troubleshooting](docs/TROUBLESHOOTING.md).)
 
 `quackhole_serve` starts Quack on loopback if nothing is listening there, binds an iroh
 endpoint, and waits for it to learn a home relay. It returns a ticket: one string carrying
@@ -85,7 +104,7 @@ ATTACH 'quack:<endpoint-id>.iroh:9494' AS laptop;
 ## Uses
 
 - Connect duckdb running in a browser or sandboxed to data sources behind NAT or firewalls.
-- Easy send data between two copies of duckdb anywhere in the world over an encrypted channel.
+- Easily send data between two copies of duckdb anywhere in the world over an encrypted channel.
 - Attach several remote DuckDBs at once and join across them.
 - Share a duckdb instance on your laptop with friends and agents.
 
@@ -178,12 +197,19 @@ under 2.5s.
 
 ## Documentation
 
+- [npm package](npm/README.md): `npx quackhole`, and the browser client for embedding in
+  your own page — start here to put this in an app
+- [Troubleshooting](docs/TROUBLESHOOTING.md): fixes, keyed by the exact error text you see
 - [Architecture](docs/ARCHITECTURE.md): the seam, and the constraints that shaped it
 - [Contributing](CONTRIBUTING.md): build, test, formatting
 - [Browser client](web/README.md): the shim, the bridge, and why it cannot be an extension
 - [Demo site](site/README.md): the guided page, and cross-origin isolation on GitHub Pages
 - [Cross-network test](test/docker/README.md)
 - [Deferred work](docs/DEFERRED.md)
+
+Every page is plain Markdown. If you are an LLM or an agent (or feeding one),
+[smithclay.github.io/quackhole/llms.txt](https://smithclay.github.io/quackhole/llms.txt)
+indexes these docs and carries the invariants that are easy to get wrong.
 
 ## License
 

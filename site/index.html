@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>quackhole — a workbench for DuckDBs with no address</title>
 <meta name="description" content="A DuckDB workbench that runs entirely in your browser and queries DuckDBs behind NAT over iroh.">
+<!-- The primary way this page is reached is a link pasted into a chat, so the
+     unfurl is part of the product. Unfurlers fetch without the fragment, so the
+     ticket in #qh1_... never reaches them. -->
+<meta property="og:title" content="quackhole — a workbench for DuckDBs with no address">
+<meta property="og:description" content="A DuckDB workbench that runs entirely in your browser and queries DuckDBs behind NAT over an encrypted iroh relay. Open the link to connect.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://smithclay.github.io/quackhole/">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🦆</text></svg>">
 <!-- fonts.css is fetched at build time and injected by vite.config.js; it has
      no on-disk source for Vite to resolve a <link> against. -->
 <link rel="stylesheet" href="./styles.css">
@@ -172,8 +181,8 @@
       <pre id="cmd-manual"><code></code></pre>
     </div>
     <p class="fineprint">
-      The extension is not in community-extensions yet, so this needs a DuckDB started
-      with <code>-unsigned</code> and the downloaded binary. The command above handles that.
+      <code>INSTALL … FROM community</code> fetches the signed build, so no flags and no
+      downloads. What the npx command adds is a sample table to look at.
     </p>
   </details>
 

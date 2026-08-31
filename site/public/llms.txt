@@ -1,0 +1,67 @@
+# quackhole
+
+> Query a DuckDB that has no address — behind NAT, in a sandbox, on cafe Wi-Fi — from a
+> browser or from another DuckDB. A DuckDB extension that carries Quack's HTTP over iroh
+> QUIC streams, end-to-end encrypted. No open ports, no VPN, no certificates, no accounts.
+> The address is the server's ed25519 public key: `quack:<endpoint-id>.iroh:9494`.
+
+All documentation is plain Markdown; fetch the raw URLs below. The workbench at
+https://smithclay.github.io/quackhole/ is a live client, not documentation.
+
+## Instructions
+
+Things agents get wrong with quackhole, and what to do instead:
+
+- To make a machine's DuckDB reachable, run `npx quackhole` on it (Node 20+). It prints a
+  `qh1_…` ticket and a workbench link. In SQL: `INSTALL quackhole FROM community; LOAD
+  quackhole; SELECT ticket FROM quackhole_serve(token := '…');` — the community build is
+  signed, so no flags. Only a binary downloaded from GitHub releases needs `-unsigned`
+  and the exact filename `quackhole.duckdb_extension`.
+- To attach from another DuckDB, always prefer `CALL quackhole_attach('qh1_…', name :=
+  'r1');` over hand-writing CREATE SECRET + ATTACH. It names the secret, scopes it to the
+  peer, and registers the relay from the ticket — the three steps hand-written SQL gets
+  wrong. Then query with ordinary SQL: `FROM r1.some_table;`.
+- The ticket embeds the access token. Treat it as a password: anyone holding it can run SQL
+  against that machine until it stops serving. Do not log it, echo it, or commit it.
+- If a write (INSERT, UPDATE, DDL) fails with a transport error, it may still have reached
+  the server. Verify before re-running it; delivery is at-most-once by design.
+- An attached Quack catalog enumerates nothing: `duckdb_tables()`, `SHOW TABLES FROM <db>`
+  and `information_schema` are all empty for it. List remote tables with
+  `SELECT name FROM <db>.sqlite_master;`.
+- Running a client and a server on one machine? `SET GLOBAL quackhole_ephemeral = true;`
+  first, or both load the same key and the dial fails with "connecting to ourself is not
+  supported".
+- A second server on one machine needs its own Quack port (`quackhole_serve(target :=
+  '127.0.0.1:9495')` or `npx quackhole --port 9495`); the default reuses whatever is on
+  9494 and prints a token that server will not accept.
+- If you hand-write the long form anyway, the secret must be named and scoped:
+  `CREATE SECRET qh_<endpoint-id> (TYPE quack, TOKEN '…', SCOPE
+  'quack:<endpoint-id>.iroh:9494');` — an unnamed or mis-scoped secret fails as
+  "Could not find a Quack authentication token".
+- `.iroh` hosts work only through ATTACH and SQL. `read_csv('https://<id>.iroh:9494/…')`
+  goes to httpfs, which knows nothing about iroh, and cannot work.
+- A browser can only be a client, only over a relay, and only on a cross-origin-isolated
+  page (COOP `same-origin` + COEP `require-corp`). There is no fallback; call
+  `quackhole.check()` from the npm package to diagnose.
+
+## Docs
+
+- [README](https://raw.githubusercontent.com/smithclay/quackhole/main/README.md): what it
+  is, quickstart, API and settings, security model, measured limits
+- [npm package and browser client](https://raw.githubusercontent.com/smithclay/quackhole/main/npm/README.md):
+  `npx quackhole`, embedding the client in a page, cross-origin isolation requirements
+- [Troubleshooting](https://raw.githubusercontent.com/smithclay/quackhole/main/docs/TROUBLESHOOTING.md):
+  fixes keyed by the exact error text
+- [Architecture](https://raw.githubusercontent.com/smithclay/quackhole/main/docs/ARCHITECTURE.md):
+  where the seam is, the framing rules, at-most-once delivery, the two TLS layers
+- [Browser client internals](https://raw.githubusercontent.com/smithclay/quackhole/main/web/README.md):
+  the XHR shim, the bridge worker, sessions and multiple remotes
+- [Contributing](https://raw.githubusercontent.com/smithclay/quackhole/main/CONTRIBUTING.md):
+  build, test, formatting
+
+## Optional
+
+- [Demo site](https://raw.githubusercontent.com/smithclay/quackhole/main/site/README.md):
+  how the workbench is built and deployed
+- [Deferred work](https://raw.githubusercontent.com/smithclay/quackhole/main/docs/DEFERRED.md)
+- [Source](https://github.com/smithclay/quackhole)
