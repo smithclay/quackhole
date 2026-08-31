@@ -96,6 +96,12 @@
     // The relay for peers that have none registered. All a caller with one
     // remote needs; a caller with several sends a `peer` frame per remote.
     relay: config.relay || null,
+    // Which relays this page's own endpoint homes on, for a deployment that
+    // wants none of its traffic on n0's. Passed through as the string it was
+    // given -- the core parses it, the same way it parses the extension's
+    // `quackhole_relays` setting. An array from a loader stringifies to the
+    // comma-separated form the parser already reads.
+    relays: config.relays ? String(config.relays) : null,
     // Test-only: makes the bridge stop answering, so the deadline above can
     // be shown to fire rather than merely existing.
     fault: config.fault || null,

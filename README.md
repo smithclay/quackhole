@@ -120,6 +120,7 @@ server are one operation. You involve no certificate authority and renew nothing
 | `quackhole_key_path` | Path to the endpoint key (default `~/.quackhole/key`) |
 | `quackhole_ephemeral` | Use a throwaway key instead of the persisted one |
 | `quackhole_relay_url` | Fallback relay for peers with none registered. A ticket's relay wins over it |
+| `quackhole_relays` | Relay servers this endpoint homes on, comma-separated (default: n0's public relays) |
 
 Quackhole reads these when the endpoint binds, which can happen on your first `ATTACH` to a
 `.iroh` host, so set them globally:
@@ -131,6 +132,26 @@ SET GLOBAL quackhole_ephemeral = true;
 Set `quackhole_ephemeral` when you run a client and a server on one machine. Both would load
 the same key and share an endpoint id, and iroh refuses that dial with `connecting to ourself
 is not supported`. On two machines you can leave it alone.
+
+### Your own relays
+
+By default an endpoint homes on n0's public relays, which is why quackhole needs no
+infrastructure. `quackhole_relays` replaces that list with relays you run
+([`iroh-relay`](https://github.com/n0-computer/iroh)), so no traffic of yours touches n0's:
+
+```sql
+SET GLOBAL quackhole_relays = 'https://relay.example.org./';
+FROM quackhole_serve();
+```
+
+The relay it picks is the one the ticket carries, so the other side follows without being
+configured at all — a client dials whatever relay a ticket names, listed here or not. The
+same string is what the browser client takes as its `relays` setting (see [`web/`](web)), and
+`npx quackhole --relay <url>` is the demo server's flag for it.
+
+Two things this does not change. Address lookup still publishes to and resolves through n0's
+DNS, which the ticket makes unnecessary but does not disable. And a relay that needs an
+auth token is not expressible yet.
 
 ## Security
 

@@ -70,3 +70,24 @@ query II
 SELECT endpoint_id IS NULL, serving FROM quackhole_status();
 ----
 true	false
+
+# A relay list that will not parse is refused where the endpoint would have been
+# bound, and the message names the URL that did not parse. Left to iroh it would
+# have surfaced as a bind failure with the setting nowhere in it.
+statement ok
+SET GLOBAL quackhole_relays = 'nonsense';
+
+statement error
+CALL quackhole_serve(auto_serve := false);
+----
+<REGEX>:.*'nonsense' is not a valid relay url.*
+
+# And it bound nothing on the way out: a rejected relay list must not leave an
+# endpoint published on n0's relays instead.
+query II
+SELECT endpoint_id IS NULL, serving FROM quackhole_status();
+----
+true	false
+
+statement ok
+SET GLOBAL quackhole_relays = '';

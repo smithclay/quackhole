@@ -43,7 +43,7 @@ async function main() {
   // duckdb, quack, the SQL -- is identical either way; only the transport moves.
   const workerUrl =
     window.__mode !== 'direct'
-      ? `/qh-worker.js?target=${encodeURIComponent(bundle.mainWorker)}&intercept=${encodeURIComponent(window.__intercept)}&chunk=${window.__chunk}&mode=${window.__bridgeMode}&relay=${encodeURIComponent(window.__relay ?? '')}&debug=${window.__debug}&timeout=${window.__timeout}&fault=${window.__fault ?? ''}`
+      ? `/qh-worker.js?target=${encodeURIComponent(bundle.mainWorker)}&intercept=${encodeURIComponent(window.__intercept)}&chunk=${window.__chunk}&mode=${window.__bridgeMode}&relay=${encodeURIComponent(window.__relay ?? '')}&relays=${encodeURIComponent(window.__relays ?? '')}&debug=${window.__debug}&timeout=${window.__timeout}&fault=${window.__fault ?? ''}`
       : bundle.mainWorker;
   say(`mode: ${window.__mode}, crossOriginIsolated=${self.crossOriginIsolated}`);
 

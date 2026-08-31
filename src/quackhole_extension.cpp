@@ -229,7 +229,8 @@ void QuackholeServeFunction(ClientContext &context, TableFunctionInput &data_p, 
 		                            "honoured. Set 'quackhole_ephemeral' before the first ATTACH or "
 		                            "quackhole_serve() on this database.");
 	}
-	auto *core = bind_data.ephemeral ? state.GetOrCreateCore("", true) : state.GetOrCreateCoreFromSettings(db);
+	auto *core = bind_data.ephemeral ? state.GetOrCreateCore("", true, QuackholeState::RelaysFromSettings(db))
+	                                 : state.GetOrCreateCoreFromSettings(db);
 
 	vector<const char *> allow_ptrs;
 	allow_ptrs.reserve(bind_data.allow.size());
@@ -519,6 +520,18 @@ static void LoadInternal(ExtensionLoader &loader) {
 	// whoever hands out the id can hand out this too.
 	db.config.AddExtensionOption("quackhole_relay_url",
 	                             "Relay to reach peers through, skipping address lookup (default: look up)",
+	                             LogicalType::VARCHAR);
+	// Which relays this endpoint homes on, and therefore which relay the ticket
+	// quackhole_serve() prints carries. Read when the endpoint binds, so it has
+	// to be set before the first ATTACH or quackhole_serve() on this database --
+	// after that the endpoint is bound and the relay map cannot change under it.
+	//
+	// Not the same axis as quackhole_relay_url above, which says how to reach
+	// *someone else*. Nothing has to be listed here to dial a peer on it: iroh
+	// dials whatever relay a ticket names. This is for a deployment that wants
+	// no traffic of its own on n0's relays.
+	db.config.AddExtensionOption("quackhole_relays",
+	                             "Relay servers this endpoint homes on, comma-separated (default: n0's public relays)",
 	                             LogicalType::VARCHAR);
 	// Only affects the `url` column quackhole_serve() returns. Set it when you
 	// host web/ yourself; the ticket in the fragment is the same either way.

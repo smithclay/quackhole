@@ -146,7 +146,11 @@ self.onmessage = async (ev) => {
     try {
       if (mode === 'iroh') {
         wasm = await transport();
-        client = await wasm.connect();
+        // msg.relays is the endpoint's own relay map, and only that: a peer is
+        // still reached through the relay its ticket carried, listed here or
+        // not. Undefined rather than null when unset, so wasm-bindgen sees an
+        // absent Option and the endpoint keeps iroh's n0 defaults.
+        client = await wasm.connect(msg.relays ?? undefined);
         console.log(`[qh-bridge] iroh endpoint ${client.endpointId()}`);
       }
       // Only now is the bridge usable. The shim blocks on this flag, so setting

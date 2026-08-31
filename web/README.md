@@ -52,8 +52,15 @@ const worker = new Worker(
 then attach as usual — `ATTACH 'quack:<endpoint-id>.iroh:9494' AS remote`.
 
 Settings: `target` (required, the real duckdb worker), `mode` (`iroh`|`fetch`),
-`relay`, `timeout` (ms), `chunk` (shared buffer bytes), `intercept` (extra host
-to capture, for testing), `debug`, and `base` (below).
+`relay`, `relays`, `timeout` (ms), `chunk` (shared buffer bytes), `intercept`
+(extra host to capture, for testing), `debug`, and `base` (below).
+
+`relay` and `relays` are different axes. `relay` is how to reach *a peer*, and
+a ticket already carries one. `relays` is which relays this page's own endpoint
+homes on — comma-separated, n0's public relays by default, and the same string
+the extension's `quackhole_relays` setting takes. Nothing has to be listed there
+to dial a peer on it; set it when a deployment wants no traffic of its own going
+to n0.
 
 ### Or without a URL to read them off
 

@@ -144,12 +144,20 @@ unsafe fn guard<T>(
 pub unsafe extern "C" fn qh_core_new(
     key_path: *const c_char,
     ephemeral: bool,
+    relays: *const c_char,
     err: *mut c_char,
     err_len: usize,
 ) -> *mut Core {
-    // SAFETY: key_path is null or a NUL-terminated path; err holds err_len bytes.
-    let path = unsafe { cstr(key_path) }.map(PathBuf::from);
-    match unsafe { guard(err, err_len, || Core::new(path.as_deref(), ephemeral)) } {
+    // SAFETY: key_path and relays are null or NUL-terminated strings; err holds
+    // err_len bytes.
+    let owned = unsafe { cstr(key_path) }.map(PathBuf::from);
+    let path = owned.as_deref();
+    // One string rather than an array of them: the relay list arrives as a
+    // DuckDB setting, and splitting it in the core is what keeps C++ and the
+    // browser from each owning a copy of the format.
+    let relays = unsafe { cstr(relays) }.unwrap_or("");
+    let core = unsafe { guard(err, err_len, || Core::new(path, ephemeral, relays)) };
+    match core {
         Some(core) => Box::into_raw(Box::new(core)),
         None => std::ptr::null_mut(),
     }

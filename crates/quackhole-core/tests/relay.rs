@@ -23,9 +23,9 @@ fn a_relay_is_registered_per_peer_and_validated_up_front() {
     if skip() {
         return;
     }
-    let mut core = Core::new(None, true).expect("bind endpoint");
+    let mut core = Core::new(None, true, "").expect("bind endpoint");
     // Any valid endpoint id will do -- nothing is dialled here.
-    let peer = Core::new(None, true).expect("bind peer");
+    let peer = Core::new(None, true, "").expect("bind peer");
     let id = peer.endpoint_id_z32().to_string();
 
     core.set_peer_relay(&id, "https://relay.example./")

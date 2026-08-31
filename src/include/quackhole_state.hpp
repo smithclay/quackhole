@@ -33,14 +33,22 @@ public:
 	static QuackholeState &Get(DatabaseInstance &db);
 
 	//! Bind the iroh endpoint if it is not bound yet, and return the core.
-	//! `key_path` is ignored once a core exists -- the endpoint id is the
-	//! address, so it cannot change under a running session.
-	QhCore *GetOrCreateCore(const string &key_path, bool ephemeral);
+	//! `key_path` and `relays` are ignored once a core exists -- the endpoint id
+	//! is the address and the relay map is chosen at bind, so neither can change
+	//! under a running session.
+	QhCore *GetOrCreateCore(const string &key_path, bool ephemeral, const string &relays);
 	//! The core if one has been created, else nullptr. Never binds.
 	QhCore *TryGetCore();
 
 	//! Default key location: <home>/.quackhole/key
 	static string DefaultKeyPath(DatabaseInstance &db);
+
+	//! The `quackhole_relays` setting: relay URLs separated by commas or
+	//! whitespace, empty for n0's public relays. Parsed by the core, so this
+	//! only reads it. Public because quackhole_serve()'s `ephemeral := true`
+	//! path builds a core without going through the settings below, and both
+	//! paths have to home on the same relays.
+	static string RelaysFromSettings(DatabaseInstance &db);
 
 	//! Create the core using the `quackhole_key_path` / `quackhole_ephemeral`
 	//! settings. Used when a dial binds the endpoint implicitly, so a second
@@ -51,6 +59,9 @@ public:
 private:
 	std::mutex core_lock;
 	QhCore *core = nullptr;
+	//! The relay list the bound endpoint was created with, so a later change to
+	//! `quackhole_relays` is refused rather than silently ignored.
+	string bound_relays;
 };
 
 } // namespace duckdb

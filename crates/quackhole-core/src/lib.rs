@@ -113,6 +113,36 @@ pub fn peer_addr(endpoint_id: &str, relay_url: &str) -> Result<iroh::EndpointAdd
     Ok(addr)
 }
 
+/// Read a relay list into the relay mode an endpoint should bind with.
+///
+/// `spec` is what a user typed: relay URLs separated by commas or whitespace.
+/// Empty means "leave the preset alone", which is n0's public relays -- the
+/// default has to stay a default, so a blank setting cannot bind an endpoint
+/// with no relays at all and no way to be reached.
+///
+/// Shared by both clients for the same reason `peer_addr` is: the DuckDB
+/// setting and the browser's `relays` config are one string in one format, so
+/// there is nothing to disagree about. This is the *local* endpoint's relay
+/// map, which is where its home relay comes from and therefore what a minted
+/// ticket carries. Reaching a peer through a relay is a separate thing that
+/// needs no configuration at all -- iroh dials whatever relay URL the ticket
+/// names, in or out of this map.
+pub fn relay_mode(spec: &str) -> Result<Option<iroh::RelayMode>> {
+    let urls = spec
+        .split([',', ' ', '\t', '\n', '\r'])
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .map(|url| {
+            url.parse::<iroh::RelayUrl>()
+                .with_context(|| format!("'{url}' is not a valid relay url"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if urls.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(iroh::RelayMode::custom(urls)))
+}
+
 /// Record or refresh a peer. Never overwrites a known path with "unknown".
 pub(crate) fn record_peer(
     peers: &PeerMap,
@@ -132,7 +162,15 @@ pub(crate) fn record_peer(
 
 #[cfg(not(target_family = "wasm"))]
 impl Core {
-    pub fn new(key_path: Option<&Path>, ephemeral: bool) -> Result<Self> {
+    /// Bind an endpoint.
+    ///
+    /// `relays` is the relay list this endpoint homes on, in the format
+    /// `relay_mode` reads; empty is n0's public relays. Parsed before the
+    /// runtime is started so a typo in the setting is a bind-time error rather
+    /// than an endpoint that came up on relays nobody asked for.
+    pub fn new(key_path: Option<&Path>, ephemeral: bool, relays: &str) -> Result<Self> {
+        let relay_mode = relay_mode(relays)?;
+
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(worker_threads())
             .thread_name("quackhole")
@@ -146,11 +184,15 @@ impl Core {
         };
 
         let endpoint = runtime.block_on(async {
-            Endpoint::builder(presets::N0)
+            let mut builder = Endpoint::builder(presets::N0)
                 .secret_key(secret)
-                .alpns(vec![ALPN.to_vec()])
-                .bind()
-                .await
+                .alpns(vec![ALPN.to_vec()]);
+            // After the preset, not instead of it: N0 also configures address
+            // lookup, and only the relay half of it is being replaced here.
+            if let Some(mode) = relay_mode {
+                builder = builder.relay_mode(mode);
+            }
+            builder.bind().await
         })?;
 
         let id = endpoint.id();
@@ -457,5 +499,36 @@ mod tests {
 
         assert!(parse_endpoint_id("not-an-endpoint-id").is_err());
         assert!(parse_endpoint_id("").is_err());
+    }
+
+    #[test]
+    fn a_relay_list_is_read_the_same_way_wherever_it_was_typed() {
+        // Nothing said means the preset's relays, which is n0's. Binding an
+        // endpoint with no relays because a setting was left blank would leave
+        // it unreachable and say nothing about why.
+        assert!(relay_mode("").unwrap().is_none());
+        assert!(relay_mode("   ").unwrap().is_none());
+
+        // A DuckDB setting is one string, so several relays are separated in
+        // the string. Commas are what a person types; whitespace is what
+        // survives copying a list out of a config file.
+        let two = relay_mode("https://relay-a.example./, https://relay-b.example./")
+            .unwrap()
+            .expect("two relays");
+        assert_eq!(two.relay_map().len(), 2);
+        assert_eq!(
+            relay_mode("https://relay-a.example./\nhttps://relay-b.example./")
+                .unwrap()
+                .expect("two relays")
+                .relay_map()
+                .len(),
+            2
+        );
+
+        // Refused here, where the message can name the URL. Left to the
+        // endpoint builder it would surface as a bind failure a long way from
+        // the setting that caused it.
+        let err = format!("{:#}", relay_mode("not a relay").unwrap_err());
+        assert!(err.contains("not a valid relay url"), "{err}");
     }
 }

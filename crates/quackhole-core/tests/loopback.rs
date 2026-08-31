@@ -65,12 +65,12 @@ fn request_round_trips_over_iroh() {
 
     let (target, server) = spawn_http_server();
 
-    let serving = Core::new(None, true).expect("serving core");
+    let serving = Core::new(None, true, "").expect("serving core");
     serving.serve_start(&target, Vec::new()).expect("serve");
     let peer_id = serving.endpoint_id_z32().to_string();
     assert_eq!(peer_id.len(), 52, "z-base-32 endpoint id fits a DNS label");
 
-    let dialing = Core::new(None, true).expect("dialing core");
+    let dialing = Core::new(None, true, "").expect("dialing core");
 
     // Address lookup has to propagate before the dial can resolve the id.
     let deadline = Instant::now() + Duration::from_secs(60);

@@ -66,9 +66,11 @@ export function check() {
 /// here awaits.
 ///
 /// Options are the settings `web/README.md` documents -- `mode`, `relay`,
-/// `timeout`, `chunk`, `intercept`, `debug`. `relay` is the fallback for peers
-/// with none registered; with more than one remote, register each instead
-/// (`QuackholeSession` does it for you).
+/// `relays`, `timeout`, `chunk`, `intercept`, `debug`. `relay` is the fallback
+/// for peers with none registered; with more than one remote, register each
+/// instead (`QuackholeSession` does it for you). `relays` is a different axis:
+/// which relays this page's own endpoint homes on, for a deployment that wants
+/// none of its traffic on n0's.
 export async function createWorker(target, options = {}) {
   const { ok, reason } = check();
   if (!ok) throw new Error(reason);

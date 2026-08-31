@@ -62,6 +62,7 @@ const HELP = `
     --token <t>   Shared token. A fresh random one by default
     --port <n>    Quack's local port (default 9494)
     --page <url>  Aim the printed link at another workbench
+    --relay <url> Home on your own iroh relay instead of n0's. Repeatable
     --version     Print the version and exit
     --help        This
 
@@ -70,7 +71,7 @@ const HELP = `
 `;
 
 function parseArgs(argv) {
-  const opts = { token: randomBytes(12).toString('hex'), port: 9494, page: PAGE };
+  const opts = { token: randomBytes(12).toString('hex'), port: 9494, page: PAGE, relays: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     const value = () => argv[++i] ?? die(`${arg} needs a value.`);
@@ -83,6 +84,9 @@ function parseArgs(argv) {
     } else if (arg === '--token') opts.token = value();
     else if (arg === '--port') opts.port = Number(value());
     else if (arg === '--page') opts.page = value();
+    // Repeatable rather than comma-separated: a shell flag per relay is what
+    // the rest of these are, and the extension takes the joined form anyway.
+    else if (arg === '--relay') opts.relays.push(value());
     else die(`Unknown option ${arg}. Try --help.`);
   }
   if (!Number.isInteger(opts.port) || opts.port < 1 || opts.port > 65535) die(`--port ${opts.port} is not a port.`);
@@ -299,11 +303,22 @@ await conn.run('SET GLOBAL quackhole_ephemeral = true');
 // link the extension mints can never disagree.
 await conn.run(`SET GLOBAL quackhole_workbench_url = ${sqlString(opts.page)}`);
 
+// Which relays this endpoint homes on. Read when it binds, like the key above,
+// so this has to precede the serve call. The ticket carries whichever relay is
+// picked, so the browser follows without being told anything.
+if (opts.relays.length) {
+  await conn.run(`SET GLOBAL quackhole_relays = ${sqlString(opts.relays.join(','))}`);
+}
+
 // serve blocks internally until the endpoint learns its home relay, which is a
 // round trip to n0's infrastructure and where this spends its time. A ticket
 // minted before then omits the relay and sends the browser to pkarr, which
 // routinely has not seen a server this new.
-say('starting the endpoint, waiting for a home relay…');
+say(
+  opts.relays.length
+    ? `starting the endpoint, waiting for a home relay among ${opts.relays.join(', ')}…`
+    : 'starting the endpoint, waiting for a home relay…',
+);
 const served = await rows(
   `SELECT * FROM quackhole_serve(token := ${sqlString(opts.token)}, target := ${sqlString(`127.0.0.1:${opts.port}`)})`,
 ).catch(async (err) => {

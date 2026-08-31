@@ -68,8 +68,18 @@ typedef struct QhResponse QhResponse;
 //! The key IS the address, so persisting it is what makes an endpoint id
 //! survive a restart.
 //!
+//! `relays` is the relay list this endpoint homes on: relay URLs separated by
+//! commas or whitespace. Pass NULL or "" for n0's public relays. It is parsed
+//! here rather than by the caller so that this setting and the browser's
+//! `relays` config are one format with one parser; an unparsable URL fails the
+//! call before the endpoint binds.
+//!
+//! This is only where *this* endpoint homes, which is the relay a minted ticket
+//! carries. Reaching a peer through a relay needs nothing here: iroh dials the
+//! relay URL a ticket names whether or not it is in this list.
+//!
 //! Returns NULL on failure and writes to `err`.
-QhCore *qh_core_new(const char *key_path, bool ephemeral, char *err, size_t err_len);
+QhCore *qh_core_new(const char *key_path, bool ephemeral, const char *relays, char *err, size_t err_len);
 
 //! Stop the accept loop, close cached connections, and shut the runtime down
 //! within `deadline_ms`, then free the handle. Safe on NULL. Idempotent.
