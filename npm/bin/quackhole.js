@@ -242,9 +242,10 @@ workdir = await mkdtemp(join(tmpdir(), 'quackhole-'));
 process.on('SIGINT', () => void cleanup().then(() => process.exit(0)));
 process.on('SIGTERM', () => void cleanup().then(() => process.exit(0)));
 
-// The extension is not signed, and is loaded from a path rather than a
-// repository, which is the only way to load one that is not in
-// community-extensions yet.
+// The signed build in community-extensions is there now, but the CLI loads the
+// release binary pinned to this package's version from a path instead, so the
+// CLI and the extension it drives are always the pair that shipped together. A
+// path load is an unsigned load, which is what this flag is for.
 instance = await DuckDBInstance.create(join(workdir, 'demo.db'), { allow_unsigned_extensions: 'true' });
 const conn = await instance.connect();
 
