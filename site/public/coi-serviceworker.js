@@ -22,6 +22,16 @@
 if (typeof window === 'undefined') {
   // --- service worker global ---
 
+  // Statuses whose response is defined to have no body. The Response
+  // constructor throws `Response with null body status cannot have body` if
+  // handed one anyway -- and `fetch` does hand us one: a conditional GET that
+  // revalidates comes back 304 with a (empty, but non-null) body stream, which
+  // is why this fired on reload rather than on first visit. Throwing inside
+  // respondWith fails the request, so a page that reloads twice loses
+  // subresources; the console fills with the same TypeError and nothing says
+  // it came from a 304.
+  const NULL_BODY_STATUS = new Set([101, 103, 204, 205, 304]);
+
   // Take over as soon as possible; the page is waiting on a reload.
   self.addEventListener('install', () => self.skipWaiting());
   self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
@@ -47,7 +57,7 @@ if (typeof window === 'undefined') {
           // require-corp check we just turned on.
           headers.set('Cross-Origin-Resource-Policy', 'cross-origin');
 
-          return new Response(response.body, {
+          return new Response(NULL_BODY_STATUS.has(response.status) ? null : response.body, {
             status: response.status,
             statusText: response.statusText,
             headers,

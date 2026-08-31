@@ -135,6 +135,20 @@ page.on('console', (m) => {
 });
 page.on('pageerror', (e) => console.log(`  pageerror  ${e.message}`));
 
+// The service worker's own console, which is not the page's. In --sw mode it
+// synthesises every response the page sees, so a throw inside its fetch handler
+// fails that request -- and lands nowhere a run would otherwise look. That is
+// how `new Response(body, {status: 304})` sat there: a TypeError per revalidated
+// subresource, in a console nobody opens.
+const swErrors = [];
+page.context().on('serviceworker', (worker) => {
+  worker.on('console', (m) => {
+    if (m.type() !== 'error') return;
+    swErrors.push(m.text());
+    console.log(`  sw error  ${m.text()}`);
+  });
+});
+
 let failed = null;
 try {
   await page.goto(`${base}#${TICKET}`, { waitUntil: 'domcontentloaded' });
@@ -310,6 +324,11 @@ try {
   const bare = (await page.textContent('#status-text')).trim();
   console.log(`  hand DETACH  rail back to memory only, status "${bare}"`);
   if (bare !== 'local only') failed = `after a hand-typed DETACH, status reads "${bare}"`;
+
+  // Checked last, so it covers the whole run. Nothing above asserts on the
+  // service worker directly -- it is meant to be invisible -- and "invisible"
+  // is exactly what makes an error thrown inside it worth failing on.
+  if (swErrors.length) failed = `the service worker logged ${swErrors.length} error(s): ${swErrors[0]}`;
 
 } catch (err) {
   failed = err.message;
