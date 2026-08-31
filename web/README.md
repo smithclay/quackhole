@@ -85,7 +85,7 @@ them to the bridge:
 
 ```js
 worker.postMessage({ __qh: 'peer', endpointId, relay: relayUrl });
-await conn.query(`ATTACH 'quack:${endpointId}.iroh:9494' AS laptop`);
+await conn.query(`ATTACH 'quack:${endpointId}.iroh:9494' AS remote`);
 ```
 
 No acknowledgement to wait for. The frame and the `ATTACH` travel the same two
@@ -97,7 +97,7 @@ before the bridge knows where to make it.
 Holding several remotes is more than the transport. The names have to be unique
 and the secrets named and scoped to their peers, the relay has to be registered
 before the dial, and the list has to stay true when someone types `DETACH
-laptop2` into a query box. `session.js` is that, so an app is a view over it:
+remote2` into a query box. `session.js` is that, so an app is a view over it:
 
 ```js
 import { QuackholeSession } from './session.js';
@@ -106,9 +106,9 @@ import { QuackholeSession } from './session.js';
 // that chose them for you would be harder to vendor, not easier.
 const session = new QuackholeSession({ conn, worker });
 
-const laptop = await session.attach('qh1_…');   // secret, scope, relay, ATTACH
+const remote = await session.attach('qh1_…');   // secret, scope, relay, ATTACH
 const tables = await session.tables();          // Map: catalog -> table names
-await session.detach(laptop);
+await session.detach(remote);
 ```
 
 `session.connections` is the model to render. `tables()` reconciles it against

@@ -1,5 +1,5 @@
 // A page that has never seen this repo, booting duckdb-wasm and attaching to a
-// live laptop.
+// live server.
 //
 //   node build.mjs
 //   QH_TICKET=qh1_... node test/scratch.mjs
@@ -158,7 +158,7 @@ try {
 <script type="module">
 ${snippet}
 // --- appended by npm/test/scratch.mjs; everything above is the README's ---
-globalThis.__result = { name: laptop.name, attachMs: laptop.attachMs, tables: [...tables] };
+globalThis.__result = { name: remote.name, attachMs: remote.attachMs, tables: [...tables] };
 globalThis.__done = true;
 </script>
 `;
@@ -171,7 +171,7 @@ globalThis.__done = true;
   browser = await chromium.launch();
   const tab = await browser.newPage();
   tab.on('console', (m) => {
-    if (m.type() === 'error' || /qh-shim|qh-bridge|laptop/.test(m.text())) console.log(`  console  ${m.text()}`);
+    if (m.type() === 'error' || /qh-shim|qh-bridge|attach/.test(m.text())) console.log(`  console  ${m.text()}`);
   });
   // A module that throws never sets __done, so this is the only place the
   // failure shows up -- and it is the failure this whole exercise is about.

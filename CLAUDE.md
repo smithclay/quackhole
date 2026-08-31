@@ -28,7 +28,7 @@ Body prose is ordinary sentence case; only the subject line is lowercased.
 `make lifecycle-check`, `test/docker/run.sh`, `test/browser/run.mjs`,
 `site/verify.mjs` and `npm/test/scratch.mjs` cover what those cannot; see the
 READMEs. The last one packs a tarball, serves it from a second origin, and runs
-the npm README's own quickstart block against a live laptop.
+the npm README's own quickstart block against a live server.
 
 ## Things that are easy to get wrong
 

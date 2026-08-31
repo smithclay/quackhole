@@ -26,9 +26,9 @@ Three things make this a usable loop rather than a fast one:
   they own workers and a wasm session, and hot-swapping a module that spawned a
   worker leaves the old one running.
 - **The ticket lives in the fragment, and the fragment survives a reload.** Open
-  the link one laptop printed, and every reload comes back already attached —
+  the link one server printed, and every reload comes back already attached —
   you are iterating on the connected page, not on the empty one.
-- **You do not need a laptop for most of it.** The notebook, the connection rail
+- **You do not need a second machine for most of it.** The notebook, the connection rail
   and the schema list all work against the local `memory` connection alone. Only
   the routes panel and remote queries need a real remote.
 
@@ -42,8 +42,8 @@ found.
 | Where | What |
 |---|---|
 | browser | DuckDB-Wasm boots on arrival; the notebook works before any remote exists |
-| laptop | `npx quackhole` — fetch the extension, seed a table, serve, print a link |
-| browser | opening that link `ATTACH`es the laptop into the session already running |
+| server | `npx quackhole` — fetch the extension, seed a table, serve, print a link |
+| browser | opening that link `ATTACH`es the remote into the session already running |
 
 Onboarding is a dialog, not a page: adding a remote is a task you finish once,
 and after that the page is a notebook. Arriving with `#qh1_...` skips the form
@@ -51,7 +51,7 @@ entirely and shows the dialog already connecting.
 
 ## More than one remote
 
-Repeat the flow and the second machine attaches beside the first, as `laptop2`,
+Repeat the flow and the second machine attaches beside the first, as `remote2`,
 with its own route drawn in the rail. One statement can then read both — which
 is the point, and is the thing a single DuckDB behind NAT cannot do for you.
 
@@ -64,16 +64,16 @@ to sit:
   otherwise both be dialled through whichever relay arrived first. The frame
   goes down the same channel as the ATTACH that follows it, so there is no ack
   to wait for and no way for the dial to arrive first.
-- **Secrets are named and scoped.** `CREATE SECRET laptop2 (TYPE quack, TOKEN
+- **Secrets are named and scoped.** `CREATE SECRET remote2 (TYPE quack, TOKEN
   …, SCOPE 'quack:<endpoint-id>.iroh:9494')`. An unnamed secret is a single
   global, so the second remote would collide on the name or be handed the first
   one's token. Quack resolves the secret by the ATTACH path, so the scope is
-  what routes the right token to the right laptop — a secret scoped anywhere
+  what routes the right token to the right peer — a secret scoped anywhere
   else is not found at all, and the failure reads `Could not find a Quack
   authentication token`.
 - **The rail is reconciled, not bookkept.** `duckdb_databases()` answers
   locally, with no round trip, and it is what the connection list is redrawn
-  from — so typing `DETACH laptop2` into a cell removes it from the rail exactly
+  from — so typing `DETACH remote2` into a cell removes it from the rail exactly
   the way the × does.
 
 ## The ticket
@@ -105,7 +105,7 @@ strings that have to match.
 | `styles.css` | Yellow is DuckDB, periwinkle is iroh. Nothing else is coloured |
 | `public/coi-serviceworker.js` | See below. In `public/` so it ships unhashed at the root — it registers itself by its own URL, so a move into `assets/` would scope it there |
 | `vite.config.js` | The build. Vite owns `index.html`, `styles.css` and `app.js`; two plugins own the verbatim copies and the fonts |
-| `verify.mjs` | Drives the built page against a real laptop, headless. `QH_URL` points it at a deployment instead of `dist/`; `QH_TICKET2` adds a second laptop |
+| `verify.mjs` | Drives the built page against a real server, headless. `QH_URL` points it at a deployment instead of `dist/`; `QH_TICKET2` adds a second server |
 
 ## Cross-origin isolation, on a host that cannot send headers
 
@@ -147,7 +147,7 @@ Set `QH_URL=https://smithclay.github.io/quackhole/` to run the same assertions
 against what is actually deployed. A passing local `dist/` says nothing about
 whether Pages is serving it.
 
-    # terminal 1 -- the laptop
+    # terminal 1 -- the machine being queried
     QH_EXT=build/release/extension/quackhole/quackhole.duckdb_extension \
       npx ../npm
 
@@ -155,7 +155,7 @@ whether Pages is serving it.
     npm run build
     QH_TICKET=qh1_… node verify.mjs
 
-Give it `QH_TICKET2` as well and it attaches a second laptop, queries both in
+Give it `QH_TICKET2` as well and it attaches a second server, queries both in
 one statement, refuses a duplicate ticket, and detaches one of them — the four
 things one remote cannot exercise. A second server needs a second machine, or a
 different Quack port locally: `quackhole_serve` binds `127.0.0.1:9494` by
