@@ -48,7 +48,7 @@ export class QuackholeSession {
   ///
   /// Auto-uniquified rather than demanded, because a ticket carries no name and
   /// refusing to connect until one is supplied is a worse first minute than a
-  /// second remote called `laptop2`. It is a DuckDB identifier and it is
+  /// second remote called `remote2`. It is a DuckDB identifier and it is
   /// interpolated unquoted into SQL below, so nothing but this may produce one.
   #uniqueName(base) {
     const taken = new Set(this.connections.map((c) => c.name));
@@ -75,13 +75,13 @@ export class QuackholeSession {
   /// before the dial. A dial over a relay takes a noticeable second, and a
   /// caller that wants to show it happening cannot wait for this to resolve to
   /// find out what to draw.
-  async attach(ticket, { name = 'laptop', onDialing } = {}) {
+  async attach(ticket, { name = 'remote', onDialing } = {}) {
     const peer = await parseTicket(ticket);
 
-    // Attaching the same laptop twice would work and would be a lie: two
+    // Attaching the same peer twice would work and would be a lie: two
     // catalog names over one connection, listed as if they were two machines.
     const already = this.connections.find((c) => c.endpointId === peer.endpointId);
-    if (already) throw new Error(`That laptop is already attached, as "${already.name}".`);
+    if (already) throw new Error(`That DuckDB is already attached, as "${already.name}".`);
 
     const record = {
       name: this.#uniqueName(name),
@@ -96,7 +96,7 @@ export class QuackholeSession {
     onDialing?.(record);
 
     // Before the ATTACH, and on the path the ATTACH takes, so the dial cannot
-    // be made before the bridge knows which relay reaches this laptop.
+    // be made before the bridge knows which relay reaches this peer.
     this.#registerPeer(peer);
 
     try {
@@ -104,7 +104,7 @@ export class QuackholeSession {
       // global, so a second remote would either collide on the name or quietly
       // be handed the first one's token. Quack resolves the secret by the
       // ATTACH path, so the scope is what routes the right token to the right
-      // laptop -- and both strings come off the peer, which is what makes them
+      // peer -- and both strings come off the peer, which is what makes them
       // the same string. A scope that disagrees by one character fails as
       // "Could not find a Quack authentication token".
       if (peer.token) {
@@ -129,7 +129,7 @@ export class QuackholeSession {
 
   /// Detach a remote and give its name back.
   ///
-  /// The secret goes with it, so re-attaching the same laptop later works --
+  /// The secret goes with it, so re-attaching the same peer later works --
   /// otherwise its `CREATE SECRET` collides with the one left behind.
   ///
   /// The list is not edited here: `reconcile` does that, against
@@ -147,7 +147,7 @@ export class QuackholeSession {
   /// Drop remotes that are no longer attached, and say which went.
   ///
   /// The list is a claim about what this session holds, and anyone can type
-  /// `DETACH laptop2` into a query box and make it false. `duckdb_databases()`
+  /// `DETACH remote2` into a query box and make it false. `duckdb_databases()`
   /// is the only thing that knows -- and it is the exception to the rule that a
   /// Quack catalog enumerates nothing: it answers locally, with no round trip,
   /// so reconciling against it costs nothing.
@@ -168,7 +168,7 @@ export class QuackholeSession {
   ///
   /// Local and remote need different queries. A Quack-attached catalog is lazy:
   /// it resolves a table name on demand but enumerates nothing, so
-  /// `duckdb_tables()`, `SHOW TABLES FROM laptop` and `information_schema` are
+  /// `duckdb_tables()`, `SHOW TABLES FROM remote` and `information_schema` are
   /// all empty for it. `sqlite_master` is the one listing Quack pushes down to
   /// the remote, which answers it from its own catalog.
   ///

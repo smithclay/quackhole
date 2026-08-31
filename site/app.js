@@ -42,6 +42,10 @@ function setRestingStatus() {
 /// `web/` is copied into the site verbatim, so this is the page reaching into
 /// the thing it ships rather than keeping a second copy of it.
 const { QuackholeSession } = await import(/* @vite-ignore */ asset('session.js'));
+// Same reach, for the same reason: the ticket format belongs to the crate, so
+// naming a peer on screen has to go through the binding rather than a second
+// decoder written here that would drift the first time the format moves.
+const { parseTicket } = await import(/* @vite-ignore */ asset('peer.js'));
 
 // --- what to run on the other machine ---------------------------------------
 
@@ -134,7 +138,7 @@ function renderConnections() {
     li.querySelector('.conn-name').textContent = c.name;
     li.querySelector('.conn-detail').textContent =
       c.kind === 'local' ? 'duckdb-wasm, this tab' : `${c.endpointId.slice(0, 8)}… via relay`;
-    // Only remotes can be removed. Without this a remote whose laptop has gone
+    // Only remotes can be removed. Without this a remote whose host has gone
     // away stays in the rail forever, and its name stays taken.
     if (c.kind === 'remote') {
       const x = document.createElement('button');
@@ -369,7 +373,7 @@ function addCell(sql = '', { run = false, focus = false } = {}) {
       // Which wire to pulse, decided by reading the SQL: duckdb-wasm does not
       // report which catalogs a query touched, and with several remotes
       // attached, pulsing all of them would claim traffic that never happened.
-      // A qualified reference is the only way to reach a remote, so `laptop.`
+      // A qualified reference is the only way to reach a remote, so `remote.`
       // in the text is the signal. The session uniquifies names from a fixed
       // base, so there is nothing to escape.
       for (const c of session.connections) {
@@ -462,19 +466,78 @@ $('#paste-form').addEventListener('submit', async (e) => {
   }
 });
 
+/// Offer a ticket that arrived in the link, instead of acting on it.
+///
+/// Attaching grants this tab query access to somebody else's machine, so the
+/// visitor sees whose before anything dials. Parsing up front is also what
+/// makes a mangled link explain itself: a truncated fragment fails here, next
+/// to a field that can hold it, rather than three round trips into an attach.
+async function offerConnect(ticket) {
+  const dialog = $('#connect');
+  const error = $('#connect-error');
+  const note = $('#connect-note');
+
+  let peer;
+  try {
+    peer = await parseTicket(ticket);
+  } catch (err) {
+    // Nothing to offer, so fall back to the form that can take a fresh one --
+    // with the ticket still in the field, since it is what needs correcting.
+    $('#ticket').value = ticket;
+    showError(String(err?.message ?? err));
+    onboard.showModal();
+    return;
+  }
+
+  $('#connect-id').textContent = peer.endpointId;
+  $('#connect-relay').textContent = new URL(peer.relayUrl).host;
+  dialog.showModal();
+
+  $('#connect-no').addEventListener('click', () => dialog.close(), { once: true });
+
+  $('#connect-go').addEventListener('click', async () => {
+    const btn = $('#connect-go');
+    btn.disabled = true;
+    error.hidden = true;
+    try {
+      const conn = await addRemote(ticket);
+      note.textContent =
+        `Attached in ${Math.round(conn.attachMs)}ms as "${conn.name}".` +
+        ' That is three round trips through the relay.';
+      note.hidden = false;
+      dialog.close();
+      seedFor(conn);
+    } catch (err) {
+      // Same reasoning as the paste form: the dialog stays open because the
+      // thing that failed is the ticket this dialog is about.
+      setStatus('failed', 'no route');
+      error.textContent = String(err?.message ?? err);
+      error.hidden = false;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 /// Fill the notebook from what the remote actually has.
 ///
 /// The first thing a visitor should see is their own data, not an empty box --
-/// but only the demo script's laptop is known to have `laptop_info` and
-/// `events`. A second remote is somebody's real database, and opening it on two
-/// cells that guessed wrong is worse than opening it on one that guessed
-/// nothing. So the listing the rail needs anyway decides what to run.
+/// but only the demo script's host is known to have `host_info` and `events`. A
+/// second remote is somebody's real database, and opening it on two cells that
+/// guessed wrong is worse than opening it on one that guessed nothing. So the
+/// listing the rail needs anyway decides what to run.
+///
+/// Both spellings of the info table are accepted because the page and the npm
+/// package deploy on different clocks: this site ships on a push to main, the
+/// CLI on a release tag, and `npx` resolves a pinned version. Until the release
+/// after the rename has spread, a visitor can arrive from either one.
 async function seedFor(conn) {
   const tables = (await refreshSchema()).get(conn.name) ?? [];
   const n = conn.name;
 
   const cells = [];
-  if (tables.includes('laptop_info')) cells.push(`SELECT host, os, duckdb_version FROM ${n}.laptop_info`);
+  const info = ['host_info', 'laptop_info'].find((t) => tables.includes(t));
+  if (info) cells.push(`SELECT host, os, duckdb_version FROM ${n}.${info}`);
   if (tables.includes('events')) cells.push(`SELECT level, count(*) AS n FROM ${n}.events GROUP BY level ORDER BY n DESC`);
   if (cells.length === 0 && tables.length) cells.push(`SELECT * FROM ${n}.${tables[0]} LIMIT 20`);
 
@@ -502,12 +565,19 @@ try {
 
 try {
   await bootLocal();
+  // Uncovered only once there is something under it worth looking at.
+  $('#boot').hidden = true;
   // Run it rather than leaving it primed: the workbench is useful before any
   // remote exists, and a result on screen says that far better than an empty box.
   addCell("SELECT 'hello from duckdb-wasm' AS msg, version() AS version", { run: true });
   await refreshSchema();
 } catch (err) {
   setStatus('failed', 'duckdb failed');
+  // The overlay stays up and turns into the error. Dismissing it would reveal a
+  // workbench with no database behind it, where every cell fails one at a time.
+  $('#boot').dataset.state = 'failed';
+  $('#boot-title').textContent = 'DuckDB did not start';
+  $('#boot-detail').textContent = String(err?.message ?? err);
   addCell('', { focus: false });
   const p = document.createElement('p');
   p.className = 'result-error';
@@ -516,13 +586,9 @@ try {
 }
 
 if (fragment.startsWith('qh1_')) {
-  // Arriving from the laptop's link: show the dialog already working rather than
-  // showing a form the visitor has no reason to read.
-  $('#ticket').value = fragment;
-  $('#onboard-title').textContent = 'Connecting to your laptop';
-  $('#onboard-lede').textContent = 'The link carried a ticket. Attaching it to this workbench now.';
-  onboard.showModal();
-  $('#paste-form').requestSubmit();
+  // Arriving from the link the server printed: ask about this one peer, rather than
+  // opening the setup story the visitor has already been through.
+  await offerConnect(fragment);
 } else if (session) {
   onboard.showModal();
 }

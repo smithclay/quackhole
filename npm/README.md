@@ -1,6 +1,6 @@
 # quackhole
 
-Query a DuckDB that has no address — a laptop on cafe Wi-Fi, a machine behind a
+Query a DuckDB that has no address — a laptop on cafe Wi-Fi, a server behind a
 corporate NAT, a home server with no public IP — from a browser or from another
 DuckDB. No port forward, no VPN, no certificates.
 
@@ -81,15 +81,15 @@ await conn.query('LOAD quack');
 // One ticket in, one catalog out: the named secret, its scope, the peer's relay
 // and the ATTACH. Holding several remotes at once is what the session is for.
 const session = new quackhole.QuackholeSession({ conn, worker });
-const laptop = await session.attach(ticket);
+const remote = await session.attach(ticket);
 
 // A Quack catalog enumerates nothing -- duckdb_tables() and information_schema
 // are both empty for it -- so this is the one listing it pushes to the remote.
 const tables = await session.tables();
-console.log(`${laptop.name} in ${Math.round(laptop.attachMs)}ms:`, tables.get(laptop.name));
+console.log(`${remote.name} in ${Math.round(remote.attachMs)}ms:`, tables.get(remote.name));
 ```
 
-Then it is ordinary SQL: `SELECT * FROM laptop.events`, joins against local
+Then it is ordinary SQL: `SELECT * FROM remote.events`, joins against local
 tables, whatever DuckDB does.
 
 **Pin the file path, and do not use jsDelivr's `/+esm`.** That transform bundles

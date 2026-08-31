@@ -4,30 +4,37 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![DuckDB](https://img.shields.io/badge/DuckDB-%E2%89%A5%201.5.5-FFF000?logo=duckdb&logoColor=black)](https://duckdb.org)
 
-Your DuckDB sits on a laptop on cafe Wi-Fi, or on a home server with no public IP. Query it
-from anywhere over an encrypted peer-to-peer connection.
+You might be running DuckDB on a laptop on home wi-fi, inside a sandbox with no public IP or even inside a browser session. `quackhole` makes it possible to connect to it from anywhere over an encrypted peer-to-peer connection: no open ports or VPN needed. Think of it like "ngrok, but for duckdb and quack"
 
-You open no ports and manage no certificates. n0's public relays cover the fallback path, so
-you run no server of your own either. Connecting takes a shared token and a 52-character
-address.
+This project is built on top of [iroh](https://www.iroh.computer/) which does a lot of clever networking and cryptography tricks to punch through firewalled networks. It leverages DuckDB's [new quack protocol](https://duckdb.org/quack/) for application-level duckdb-to-duckdb data transfer.
 
-Try it before you install anything.
-[smithclay.github.io/quackhole](https://smithclay.github.io/quackhole/) runs DuckDB-Wasm in
-your browser and connects it to a DuckDB on your own laptop. You run `npx quackhole` on the
-laptop, and it fetches the extension, seeds a sample database, and prints a link back to the
-page. See [`site/`](site) and [`npm/`](npm).
+To get started, you can run this in a browser and connect to a duckdb session running on your laptop or a sandbox.
 
-Quackhole moves bytes and leaves the database protocol alone.
-[Quack](https://duckdb.org/docs/stable/core_extensions/quack) speaks HTTP; Quackhole carries
-that HTTP over [iroh](https://www.iroh.computer/) QUIC streams, which supply identity, NAT
-traversal, relay fallback, and end-to-end encryption.
+Just open [smithclay.github.io/quackhole](https://smithclay.github.io/quackhole/) and follow the instructions.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    C["Client<br/>a browser session (duckdb-wasm)<br/>or any native DuckDB client"]
+    R{{"n0 public relay<br/>forwards ciphertext"}}
+    S["Server<br/>quackhole_serve<br/>Quack on 127.0.0.1:9494<br/>your DuckDB"]
+
+    C -->|"ATTACH 'quack:&lt;public-key&gt;endpoint-id.iroh:9494'"| R
+    R -->|"iroh QUIC, encrypted end to end"| S
+    C -.->|"direct path, native to native only"| S
+```
+
+Neither side opens an inbound port. The address *is* the server's ed25519 public key, so there is nothing to resolve and no certificate to issue. Quack is unchanged at both ends; quackhole only carries its bytes.
 
 ## Quickstart
 
-On the machine you want to reach, behind NAT:
+[smithclay.github.io/quackhole](https://smithclay.github.io/quackhole/) walks you through an example that connects a remote duckdb session to one running in your browser tab (really!). Otherwise, on the machine you want to reach, behind NAT:
 
 ```sql
 INSTALL quack; LOAD quack;
+-- Not in community-extensions yet: download the binary from the GitHub release
+-- and start DuckDB with -unsigned. `npx quackhole` does both for you.
 LOAD quackhole;
 
 SELECT ticket FROM quackhole_serve(token := 'your-shared-token');
@@ -92,7 +99,7 @@ server are one operation. You involve no certificate authority and renew nothing
 - Attach several remote DuckDBs at once and join across them.
 - Restrict who connects with an `allow` list of endpoint ids, which quackhole checks before
   it passes any Quack traffic.
-- Reach a laptop from a browser: DuckDB-Wasm attaches to an unmodified `quackhole_serve`. See
+- Reach one of them from a browser: DuckDB-Wasm attaches to an unmodified `quackhole_serve`. See
   [`web/`](web) for the client, [`npm/`](npm) for it packaged as
   `cdn.jsdelivr.net/npm/quackhole`, or [the demo](https://smithclay.github.io/quackhole/) to
   watch it happen.

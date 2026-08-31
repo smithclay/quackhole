@@ -1,8 +1,9 @@
-// The wire: browser -- relay -- laptop, drawn as it actually is.
+// The wire: browser -- relay -- peer, drawn as it actually is.
 //
 // This is the page's thesis rendered as a diagram. It opens broken, because
 // that is the true state of things when you arrive: there is no route between
-// this tab and your laptop. Every step on the page closes a bit more of it.
+// this tab and the machine you are after. Every step on the page closes a bit
+// more of it.
 //
 // One of these per remote. Each is reached over its own relay, so a single
 // diagram covering several would have to pick one relay to name.
@@ -23,10 +24,10 @@ const el = (name, attrs) => {
 
 // Geometry in viewBox units. The relay sits dead centre so the two halves read
 // as equal legs -- which they are, latency-wise.
-const X = { browser: 60, relay: 300, laptop: 540 };
+const X = { browser: 60, relay: 300, peer: 540 };
 const Y = 42;
 
-export function createWire(mount, peer = 'your laptop') {
+export function createWire(mount, peer = 'the remote DuckDB') {
   const svg = el('svg', { class: 'wire', viewBox: '0 0 600 84', role: 'img' });
   // Named, so several of these do not all announce themselves identically.
   svg.setAttribute('aria-label', `Connection from this browser through a relay to ${peer}`);
@@ -39,7 +40,7 @@ export function createWire(mount, peer = 'your laptop') {
   const GAP = 16;
   const legs = {
     left: el('path', { class: 'wire-leg', d: `M ${X.browser + GAP} ${Y} H ${X.relay - GAP}` }),
-    right: el('path', { class: 'wire-leg', d: `M ${X.relay + GAP} ${Y} H ${X.laptop - GAP}` }),
+    right: el('path', { class: 'wire-leg', d: `M ${X.relay + GAP} ${Y} H ${X.peer - GAP}` }),
   };
   svg.append(legs.left, legs.right);
 
@@ -56,12 +57,12 @@ export function createWire(mount, peer = 'your laptop') {
       x: X.relay - 9, y: Y - 9, width: 18, height: 18,
       transform: `rotate(45 ${X.relay} ${Y})`,
     }),
-    laptop: el('rect', {
-      class: 'wire-node wire-node--laptop',
-      x: X.laptop - 10, y: Y - 10, width: 20, height: 20, rx: 2,
+    peer: el('rect', {
+      class: 'wire-node wire-node--peer',
+      x: X.peer - 10, y: Y - 10, width: 20, height: 20, rx: 2,
     }),
   };
-  svg.append(nodes.browser, nodes.relay, nodes.laptop);
+  svg.append(nodes.browser, nodes.relay, nodes.peer);
 
   mount.replaceChildren(svg);
 
@@ -73,7 +74,7 @@ export function createWire(mount, peer = 'your laptop') {
   let pulseAnim = null;
 
   return {
-    // 'idle' | 'browser' | 'laptop' | 'connecting' | 'live' | 'failed'
+    // 'idle' | 'browser' | 'peer' | 'connecting' | 'live' | 'failed'
     setState(state) {
       svg.dataset.state = state;
     },
@@ -95,8 +96,8 @@ export function createWire(mount, peer = 'your laptop') {
         [
           { transform: 'translateX(0)', opacity: 0 },
           { transform: 'translateX(0)', opacity: 1, offset: 0.06 },
-          { transform: `translateX(${X.laptop - X.browser}px)`, opacity: 1, offset: 0.48 },
-          { transform: `translateX(${X.laptop - X.browser}px)`, opacity: 1, offset: 0.52 },
+          { transform: `translateX(${X.peer - X.browser}px)`, opacity: 1, offset: 0.48 },
+          { transform: `translateX(${X.peer - X.browser}px)`, opacity: 1, offset: 0.52 },
           { transform: 'translateX(0)', opacity: 1, offset: 0.94 },
           { transform: 'translateX(0)', opacity: 0 },
         ],

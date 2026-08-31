@@ -1,4 +1,4 @@
-// Drives the built workbench against a real laptop, headless.
+// Drives the built workbench against a real server, headless.
 //
 // The page has one job -- take a ticket and end up querying the machine that
 // minted it -- and that job crosses duckdb-wasm, the XHR shim, a
@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, 'dist');
 const TICKET = process.env.QH_TICKET;
-// A second laptop, optional. Attaching two proves the part one cannot: that the
+// A second server, optional. Attaching two proves the part one cannot: that the
 // bridge routes each peer over its own relay and the two catalogs stay apart.
 // It needs a second server, so it is opt-in rather than the default.
 const TICKET2 = process.env.QH_TICKET2;
@@ -37,7 +37,7 @@ if (!TICKET) {
   process.exit(2);
 }
 if (TICKET2 === TICKET) {
-  console.error('QH_TICKET2 is the same ticket -- the page refuses to attach one laptop twice, on purpose.');
+  console.error('QH_TICKET2 is the same ticket -- the page refuses to attach one peer twice, on purpose.');
   process.exit(2);
 }
 
@@ -143,8 +143,19 @@ try {
   await page.waitForFunction(() => self.crossOriginIsolated === true, null, { timeout: 20_000 });
   console.log('  cross-origin isolated');
 
+  // The link's ticket is offered, not acted on -- attaching grants query access
+  // to somebody's machine, so the page names the peer and waits for a click.
+  // Asserting the endpoint is on screen is what proves the offer describes the
+  // ticket it will dial, rather than being a confirm step over a blank.
+  await page.waitForSelector('#connect[open]', { timeout: 30_000 });
+  const offered = (await page.textContent('#connect-id')).trim();
+  const wantId = JSON.parse(Buffer.from(TICKET.slice(4), 'base64url')).e;
+  if (offered !== wantId) failed = `the offer names "${offered}", expected "${wantId}"`;
+  console.log(`  offered   ${offered}`);
+  await page.click('#connect-go');
+
   await page.waitForSelector('#status[data-state="live"]', { timeout: 90_000 });
-  console.log(`  ${(await page.textContent('#paste-note')).trim()}`);
+  console.log(`  ${(await page.textContent('#connect-note')).trim()}`);
 
   // The relay legend lives in a sibling of the SVG mount, so it is easy to
   // query from the wrong root -- which fails silently and leaves the
@@ -161,17 +172,17 @@ try {
   // same as one that did not connect.
   const conns = await page.$$eval('.conn .conn-name', (els) => els.map((e) => e.textContent.trim()));
   console.log(`  connections   ${conns.join(', ')}`);
-  if (!conns.includes('laptop')) failed = `rail does not list the remote: ${conns.join(', ')}`;
+  if (!conns.includes('remote')) failed = `rail does not list the remote: ${conns.join(', ')}`;
 
   // The rail's table list is a round trip too, and the page runs it first --
   // what it finds is what decides which cells get seeded. A workbench that
   // connects but never shows anything to query looks the same as one that did
   // not connect.
-  await waitForTables(page, 'laptop.');
+  await waitForTables(page, 'remote.');
 
   // Every seeded cell must land, not just the first: stopping at the first
   // failure would make "some cells ran" indistinguishable from success. Three,
-  // because the demo laptop has laptop_info and events and the local hello cell
+  // because the demo server has host_info and events and the local hello cell
   // ran on arrival -- waiting for "any settled cell" would be satisfied by the
   // hello cell alone, before the seeded ones exist.
   await settledCells(page, 3);
@@ -203,23 +214,23 @@ try {
 
   // The empty cell at the end is the half a visitor drives themselves, and it
   // is a different code path from the seeded ones, so exercise it too.
-  const own = await runOwnCell(page, 'SELECT count(*) AS n, max(ts) AS newest FROM laptop.events');
+  const own = await runOwnCell(page, 'SELECT count(*) AS n, max(ts) AS newest FROM remote.events');
   console.log(`\n  own cell  ${own.state}  ${own.meta}`);
   if (own.state !== 'ok') failed = `the hand-typed cell failed: ${own.meta}`;
 
-  // --- the second laptop, if one was offered -------------------------------
+  // --- the second server, if one was offered -------------------------------
   if (TICKET2) {
     await page.click('#add-remote');
     await page.fill('#ticket', TICKET2);
     await page.click('#paste-go');
 
     await page.waitForFunction(
-      () => [...document.querySelectorAll('.conn .conn-name')].some((e) => e.textContent.trim() === 'laptop2'),
+      () => [...document.querySelectorAll('.conn .conn-name')].some((e) => e.textContent.trim() === 'remote2'),
       null,
       { timeout: 90_000 },
     );
     console.log(`\n  ${(await page.textContent('#paste-note')).trim()}`);
-    await waitForTables(page, 'laptop2.');
+    await waitForTables(page, 'remote2.');
 
     // Each remote draws its own route, because each is reached over its own
     // relay. One diagram for two peers would have to name one of them.
@@ -232,14 +243,14 @@ try {
     if (!status.startsWith('2 remotes')) failed = `status reads "${status}", expected 2 remotes`;
 
     // One statement across both catalogs. sqlite_master rather than a table
-    // name, because the second laptop is allowed to be any DuckDB -- and this
+    // name, because the second server is allowed to be any DuckDB -- and this
     // is the assertion that says the two secrets and the two relays did not get
     // crossed, since a mix-up authenticates as the wrong peer or dials the
     // wrong one.
     const cross = await runOwnCell(
       page,
-      "SELECT 'laptop' AS remote, string_agg(name, ', ' ORDER BY name) AS tables FROM laptop.sqlite_master" +
-        " UNION ALL SELECT 'laptop2', string_agg(name, ', ' ORDER BY name) FROM laptop2.sqlite_master",
+      "SELECT 'remote' AS peer, string_agg(name, ', ' ORDER BY name) AS tables FROM remote.sqlite_master" +
+        " UNION ALL SELECT 'remote2', string_agg(name, ', ' ORDER BY name) FROM remote2.sqlite_master",
     );
     console.log(`  both      ${cross.state}  ${cross.meta}`);
     for (const r of cross.rows) console.log(`            ${r}`);
@@ -254,7 +265,7 @@ try {
   await page.screenshot({ path: join(OUT, 'verify.png') });
   console.log(`  screenshot -> site/dist/verify.png`);
 
-  // Attaching the same laptop twice is refused by name, and the refusal has to
+  // Attaching the same peer twice is refused by name, and the refusal has to
   // land in the dialog rather than anywhere else -- an error thrown past the
   // form leaves a modal open over a page that looks like it worked.
   await page.click('#add-remote');
@@ -266,14 +277,14 @@ try {
   if (!/already attached/i.test(dupe)) failed = `a duplicate ticket said "${dupe}"`;
   await page.click('#onboard .dialog-x button');
 
-  // Detaching gives the name and the route back. Without it a laptop that has
+  // Detaching gives the name and the route back. Without it a peer that has
   // gone away stays in the rail forever and its name stays taken.
   if (TICKET2) {
-    await page.click('.conn:has(.conn-name:text-is("laptop2")) .conn-x');
+    await page.click('.conn:has(.conn-name:text-is("remote2")) .conn-x');
     await page.waitForFunction(
       () =>
-        ![...document.querySelectorAll('.conn .conn-name')].some((e) => e.textContent.trim() === 'laptop2') &&
-        ![...document.querySelectorAll('.schema-item')].some((e) => e.textContent.startsWith('laptop2.')),
+        ![...document.querySelectorAll('.conn .conn-name')].some((e) => e.textContent.trim() === 'remote2') &&
+        ![...document.querySelectorAll('.schema-item')].some((e) => e.textContent.startsWith('remote2.')),
       null,
       { timeout: 30_000 },
     );
@@ -287,7 +298,7 @@ try {
   // The other way to detach: typing it. The rail has to notice, or it goes on
   // listing a connection the session no longer has -- which is the one thing a
   // list of connections must never do.
-  await runInLastCell(page, 'DETACH laptop');
+  await runInLastCell(page, 'DETACH remote');
   await page.waitForFunction(
     () => {
       const names = [...document.querySelectorAll('.conn .conn-name')].map((e) => e.textContent.trim());

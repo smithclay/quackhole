@@ -366,3 +366,86 @@ dialog hr { border: 0; border-top: 1px solid var(--line); margin: 1.6rem 0; }
     transition-duration: 0.001ms !important;
   }
 }
+
+/* --- booting ----------------------------------------------------------------
+ *
+ * Full-bleed on purpose. DuckDB-Wasm is megabytes and instantiating it takes
+ * seconds on a cold cache, during which the rail and the notebook are already
+ * drawn -- so a small pill in the bar leaves a page that looks finished and
+ * ignores you. Covering the workbench says the wait is the point. */
+#boot {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+  background: var(--ink);
+}
+/* Beats the display:grid above, which [hidden] alone would lose to. */
+#boot[hidden] { display: none; }
+
+.boot-card { max-width: 26rem; text-align: center; }
+
+.boot-spin {
+  width: 2.5rem;
+  height: 2.5rem;
+  margin: 0 auto;
+  border: 2px solid var(--line);
+  border-top-color: var(--signal);
+  border-radius: 50%;
+  animation: boot-spin 0.9s linear infinite;
+}
+@keyframes boot-spin { to { transform: rotate(360deg); } }
+
+#boot h2 {
+  font-family: var(--display);
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+  margin: 1.5rem 0 0.6rem;
+}
+#boot p { color: var(--dim); font-size: 0.88rem; line-height: 1.65; margin: 0; }
+
+/* Nothing is coming, so stop implying it is. */
+#boot[data-state="failed"] .boot-spin {
+  animation: none;
+  border-color: var(--bad);
+}
+#boot[data-state="failed"] p { color: var(--bad); white-space: pre-wrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-spin { animation-duration: 3s; }
+}
+
+/* --- the connect offer ------------------------------------------------------
+ *
+ * Same two accents as everywhere else: the endpoint is a DuckDB, the relay is
+ * iroh's. Colouring them here is what makes the wire drawn later legible. */
+.peer-facts { display: grid; gap: 0.6rem; margin: 0 0 1.2rem; }
+.peer-facts > div {
+  display: grid;
+  grid-template-columns: 5rem 1fr;
+  gap: 0.9rem;
+  align-items: baseline;
+}
+.peer-facts dt {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.peer-facts dd {
+  margin: 0;
+  font-family: var(--data);
+  font-size: 0.82rem;
+  word-break: break-all;
+}
+#connect-id { color: var(--signal); }
+#connect-relay { color: var(--relay); }
+
+.dialog-actions {
+  display: flex;
+  gap: 0.7rem;
+  justify-content: flex-end;
+  margin-top: 1.5rem;
+}

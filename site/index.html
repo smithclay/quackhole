@@ -18,6 +18,23 @@
 </head>
 <body>
 
+<!-- Covers the workbench until DuckDB-Wasm is up. In the markup rather than
+     built by app.js because the wait it covers starts before app.js runs: the
+     module is deferred and the bundle is megabytes on a cold cache. The pill in
+     the bar cannot carry this on its own -- the rail and the notebook are fully
+     drawn underneath, so the page reads as finished and broken rather than as
+     busy. -->
+<div id="boot" role="status" aria-live="polite">
+  <div class="boot-card">
+    <div class="boot-spin" aria-hidden="true"></div>
+    <h2 id="boot-title">Starting DuckDB</h2>
+    <p id="boot-detail">
+      Fetching the WebAssembly build into this tab. Nothing is installed, and no
+      data leaves your browser.
+    </p>
+  </div>
+</div>
+
 <!-- The workbench is the page. Everything that used to be prose lives either in
      the onboarding dialog (which is where a first-time visitor needs it) or in
      the notes panel (which is where a curious one goes looking). -->
@@ -71,11 +88,49 @@
   </li>
 </template>
 
+<!-- --- arriving with a ticket --------------------------------------------- -->
+<!--
+  Its own dialog rather than a retitled #onboard, because the visitor who
+  followed a link has already done the setup the onboarding explains: showing
+  them the npx command, the by-hand SQL and a paste field asks them to read past
+  all of it to reach the one button that matters.
+
+  It offers rather than acts. The fragment carries a token that grants query
+  access to somebody's machine, so naming the endpoint and the relay before
+  anything dials is what lets a visitor tell a link they expected from one they
+  did not.
+-->
+<dialog id="connect">
+  <h2>Connect to this DuckDB?</h2>
+  <p class="dialog-lede">
+    This link points at a DuckDB someone is running. Attaching it lets the workbench
+    query that machine directly, over an encrypted relay.
+  </p>
+
+  <dl class="peer-facts">
+    <div><dt>Machine</dt><dd id="connect-id">—</dd></div>
+    <div><dt>Relay</dt><dd id="connect-relay">—</dd></div>
+  </dl>
+
+  <p class="fineprint">
+    The link carries an access token, so connect only if you trust whoever sent it.
+    Queries run against their machine, not yours.
+  </p>
+
+  <p class="paste-error" id="connect-error" hidden></p>
+  <p class="paste-note" id="connect-note" hidden></p>
+
+  <div class="dialog-actions">
+    <button class="ghost" id="connect-no" type="button">Not now</button>
+    <button id="connect-go" type="button">Connect</button>
+  </div>
+</dialog>
+
 <!-- --- onboarding / add a remote ----------------------------------------- -->
 <!--
   This is the whole "getting started" story, and it is a dialog rather than a
-  page because it is a task you finish once. Arriving with #qh1_... skips
-  straight to connecting, so a link from the laptop never shows the form.
+  page because it is a task you finish once. Arriving with #qh1_... goes to
+  #connect above instead, so a link from the server never shows this form.
 -->
 <dialog id="onboard">
   <form method="dialog" class="dialog-x"><button value="cancel" aria-label="Close">×</button></form>
@@ -158,8 +213,8 @@
         quackhole is a transport bridge and nothing else.
         <a href="https://github.com/hafenkran/duckdb-quack">Quack</a> stays the database
         protocol; its HTTP rides <a href="https://www.iroh.computer/">iroh</a> QUIC streams,
-        which supply identity, NAT traversal, relay fallback and encryption. Your laptop
-        cannot tell this tab apart from a native DuckDB.
+        which supply identity, NAT traversal, relay fallback and encryption. The machine
+        you query cannot tell this tab apart from a native DuckDB.
       </p>
     </section>
     <section>

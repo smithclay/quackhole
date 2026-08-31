@@ -267,7 +267,12 @@ const version = (await rows('SELECT version() AS v'))[0].v;
 say(`duckdb ${version}, serving from ${workdir}`);
 say('building a sample database');
 
-await conn.run(`CREATE TABLE laptop_info AS SELECT
+// `host_info`, not `laptop_info`: a ticket says nothing about the hardware
+// behind it, and this runs just as happily on a VM or a Pi. site/app.js seeds
+// its opening cells off whichever name it finds, because the deployed page and
+// this package ship on different clocks -- the site on a push to main, this on
+// a release tag -- so for one release the page meets both.
+await conn.run(`CREATE TABLE host_info AS SELECT
   ${sqlString(hostname())} AS host,
   ${sqlString(`${process.platform} ${process.arch}`)} AS os,
   version() AS duckdb_version,
