@@ -16,18 +16,16 @@ Just open [smithclay.github.io/quackhole](https://smithclay.github.io/quackhole/
 
 ```mermaid
 flowchart LR
-    C["Client<br/>a browser session (DuckDB-Wasm)<br/>a DuckDB in a sandbox<br/>or any native DuckDB"]
-    R{{"n0 public relay<br/>forwards ciphertext<br/>you run nothing"}}
+    C["Client<br/>a browser session (duckdb-wasm)<br/>or any native DuckDB client"]
+    R{{"n0 public relay<br/>forwards ciphertext"}}
     S["Server<br/>quackhole_serve<br/>Quack on 127.0.0.1:9494<br/>your DuckDB"]
 
-    C -->|"ATTACH 'quack:&lt;public-key&gt;.iroh:9494'"| R
+    C -->|"ATTACH 'quack:&lt;public-key&gt;endpoint-id.iroh:9494'"| R
     R -->|"iroh QUIC, encrypted end to end"| S
     C -.->|"direct path, native to native only"| S
 ```
 
-Neither side opens an inbound port. The address *is* the server's ed25519 public
-key, so there is nothing to resolve and no certificate to issue. Quack is
-unchanged at both ends; quackhole only carries its bytes.
+Neither side opens an inbound port. The address *is* the server's ed25519 public key, so there is nothing to resolve and no certificate to issue. Quack is unchanged at both ends; quackhole only carries its bytes.
 
 ## Quickstart
 
@@ -35,6 +33,8 @@ unchanged at both ends; quackhole only carries its bytes.
 
 ```sql
 INSTALL quack; LOAD quack;
+-- Not in community-extensions yet: download the binary from the GitHub release
+-- and start DuckDB with -unsigned. `npx quackhole` does both for you.
 LOAD quackhole;
 
 SELECT ticket FROM quackhole_serve(token := 'your-shared-token');
