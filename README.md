@@ -1,16 +1,18 @@
-# Quackhole
+# quackhole
+
+> connect to duckdb instances running anywhere
 
 [![Build](https://github.com/smithclay/quackhole/actions/workflows/MainDistributionPipeline.yml/badge.svg)](https://github.com/smithclay/quackhole/actions/workflows/MainDistributionPipeline.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![DuckDB](https://img.shields.io/badge/DuckDB-%E2%89%A5%201.5.5-FFF000?logo=duckdb&logoColor=black)](https://duckdb.org)
 
-You might be running DuckDB on a laptop on home wi-fi, inside a sandbox with no public IP or even inside a browser session. `quackhole` makes it possible to connect to it from anywhere over an encrypted peer-to-peer connection: no open ports or VPN needed. Think of it like "ngrok, but for duckdb and quack"
+You might be running DuckDB on a laptop on home wi-fi, inside a sandbox with no public IP or even inside a browser. `quackhole` makes it possible to **connect to duckdb from anywhere over an encrypted peer-to-peer connection**: no open ports or VPN needed.
 
-This project is built on top of [iroh](https://www.iroh.computer/) which does a lot of clever networking and cryptography tricks to punch through firewalled networks. It leverages DuckDB's [new quack protocol](https://duckdb.org/quack/) for application-level duckdb-to-duckdb data transfer.
+This project is built on top of [iroh](https://www.iroh.computer/) which does a lot of clever networking and cryptography tricks to punch through restricted networks. It leverages DuckDB's [new quack protocol](https://duckdb.org/quack/) for application-level duckdb-to-duckdb data transfer.
 
-To get started, you can run this in a browser and connect to a duckdb session running on your laptop or a sandbox.
+To get started, you can run this in a browser and connect to a duckdb session running on your laptop (or a sandbox). Just open [smithclay.github.io/quackhole](https://smithclay.github.io/quackhole/) and follow the instructions.
 
-Just open [smithclay.github.io/quackhole](https://smithclay.github.io/quackhole/) and follow the instructions.
+This was inspired by prior work on [quackscale](https://github.com/Query-farm/quackscale), a way to connect duckdb to a tailscale network. The major benefit of iroh vs tailscale, at least as of August 2026, is that iroh is a easier to use for fast peer-to-peer connections without signing up for an external service (or running your own network infrastructure). It also works well in the browser without much extra code.
 
 ## Architecture
 
@@ -80,31 +82,12 @@ CREATE SECRET qh_<endpoint-id> (TYPE quack, TOKEN 'your-shared-token',
 ATTACH 'quack:<endpoint-id>.iroh:9494' AS laptop;
 ```
 
-## The address is a public key
-
-```
-quack:<endpoint-id>.iroh:9494
-```
-
-`<endpoint-id>` is a 32-byte ed25519 public key in z-base-32, which comes to 52 characters
-and fits inside a DNS label. No DNS record exists for it and no resolver sees it; Quackhole
-intercepts the name before DuckDB opens a socket.
-
-Because the address doubles as the identity, dialing the right address and authenticating the
-server are one operation. You involve no certificate authority and renew nothing.
-
 ## Uses
 
-- Query a DuckDB behind NAT from anywhere, with no inbound port open on either side.
+- Connect duckdb running in a browser or sandboxed to data sources behind NAT or firewalls.
+- Easy send data between two copies of duckdb anywhere in the world over an encrypted channel.
 - Attach several remote DuckDBs at once and join across them.
-- Restrict who connects with an `allow` list of endpoint ids, which quackhole checks before
-  it passes any Quack traffic.
-- Reach one of them from a browser: DuckDB-Wasm attaches to an unmodified `quackhole_serve`. See
-  [`web/`](web) for the client, [`npm/`](npm) for it packaged as
-  `cdn.jsdelivr.net/npm/quackhole`, or [the demo](https://smithclay.github.io/quackhole/) to
-  watch it happen.
-- Keep working on networks that block UDP. iroh's relay connection runs over HTTPS/443, so a
-  captive portal costs you latency and lets the query through.
+- Share a duckdb instance on your laptop with friends and agents.
 
 ## API at a glance
 
