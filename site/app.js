@@ -37,6 +37,58 @@ function setRestingStatus() {
   else setStatus('live', `${n} remote${n === 1 ? '' : 's'} · relay`);
 }
 
+// --- what to do about an error -----------------------------------------------
+
+// Known failures, matched against the raw message and paired with the one line
+// that unsticks them. The raw text stays on screen -- it is what a search or a
+// bug report needs -- and the remedy is view furniture, which is why this map
+// lives here rather than in the session. docs/TROUBLESHOOTING.md is the long
+// form, keyed by the same strings.
+const REMEDIES = [
+  [
+    /could not find a quack authentication token/i,
+    'A hand-written secret has to be named and scoped to the exact ATTACH address. "+ add remote" builds it that way from the ticket.',
+  ],
+  [
+    /unauthori[sz]ed|\b401\b/i,
+    'The server rejected the token. A second server on one machine reuses Quack on port 9494 and prints a token the first never issued — restart it with --port 9495 and use its new link.',
+  ],
+  [
+    /timed? ?out/i,
+    'The machine may have stopped serving, or this ticket predates its current run. Ask for a fresh link.',
+  ],
+  [
+    /sharedarraybuffer|cross-?origin/i,
+    'The page is not cross-origin isolated, which the transport needs. Serving this page yourself? Send the COOP/COEP headers, or put coi-serviceworker.js at your root.',
+  ],
+];
+
+const TROUBLESHOOTING = 'https://github.com/smithclay/quackhole/blob/main/docs/TROUBLESHOOTING.md';
+
+/// Show an error with its remedy, when the message is one the map knows.
+///
+/// `fallback` is for a call site that knows what failed better than the message
+/// says -- a ticket that would not parse is a copying problem whatever words
+/// the parser chose.
+function renderError(el, err, fallback = null) {
+  const msg = String(err?.message ?? err);
+  el.replaceChildren(document.createTextNode(msg));
+  const remedy = REMEDIES.find(([re]) => re.test(msg))?.[1] ?? fallback;
+  if (remedy) {
+    const hint = document.createElement('span');
+    hint.className = 'error-hint';
+    hint.append(`${remedy} `);
+    const a = document.createElement('a');
+    a.href = TROUBLESHOOTING;
+    a.target = '_blank';
+    a.rel = 'noreferrer';
+    a.textContent = 'troubleshooting →';
+    hint.append(a);
+    el.append(hint);
+  }
+  el.hidden = false;
+}
+
 /// The shipped client, imported at runtime rather than bundled.
 ///
 /// `web/` is copied into the site verbatim, so this is the page reaching into
@@ -63,9 +115,8 @@ const manualToken = (() => {
 function renderManualCommand() {
   $('#cmd-manual').querySelector('code').textContent = [
     'INSTALL quack; LOAD quack;',
-    '-- Note: not in community-extensions yet: download the binary from the GitHub release',
-    '-- and start DuckDB with -unsigned. `npx quackhole` does both for you.',
-    "LOAD './quackhole.duckdb_extension';",
+    'INSTALL quackhole FROM community;',
+    'LOAD quackhole;',
     '',
     '-- serve waits for the endpoint to learn its home relay, then returns the',
     '-- link to open. No ticket to assemble by hand.',
@@ -388,7 +439,7 @@ function addCell(sql = '', { run = false, focus = false } = {}) {
     } catch (err) {
       const p = document.createElement('p');
       p.className = 'result-error';
-      p.textContent = String(err?.message ?? err);
+      renderError(p, err);
       art.querySelector('.cell-out').replaceChildren(p);
       art.dataset.state = 'failed';
       art.querySelector('.cell-ms').textContent = 'failed';
@@ -420,9 +471,8 @@ const onboard = $('#onboard');
 const pasteError = $('#paste-error');
 const pasteNote = $('#paste-note');
 
-function showError(msg) {
-  pasteError.textContent = msg;
-  pasteError.hidden = false;
+function showError(err, fallback = null) {
+  renderError(pasteError, err, fallback);
 }
 
 $('#add-remote').addEventListener('click', () => {
@@ -462,7 +512,7 @@ $('#paste-form').addEventListener('submit', async (e) => {
     // a failed second remote does not make the first one stop working.
     if (session?.connections.some((c) => c.kind === 'remote')) setRestingStatus();
     else setStatus('failed', 'no route');
-    showError(String(err?.message ?? err));
+    showError(err);
   } finally {
     btn.disabled = false;
   }
@@ -486,7 +536,7 @@ async function offerConnect(ticket) {
     // Nothing to offer, so fall back to the form that can take a fresh one --
     // with the ticket still in the field, since it is what needs correcting.
     $('#ticket').value = ticket;
-    showError(String(err?.message ?? err));
+    showError(err, 'A ticket is one qh1_… word with no spaces, so check that the whole string was copied.');
     onboard.showModal();
     return;
   }
@@ -513,8 +563,7 @@ async function offerConnect(ticket) {
       // Same reasoning as the paste form: the dialog stays open because the
       // thing that failed is the ticket this dialog is about.
       setStatus('failed', 'no route');
-      error.textContent = String(err?.message ?? err);
-      error.hidden = false;
+      renderError(error, err);
     } finally {
       btn.disabled = false;
     }
@@ -579,7 +628,7 @@ try {
   // workbench with no database behind it, where every cell fails one at a time.
   $('#boot').dataset.state = 'failed';
   $('#boot-title').textContent = 'DuckDB did not start';
-  $('#boot-detail').textContent = String(err?.message ?? err);
+  renderError($('#boot-detail'), err);
   addCell('', { focus: false });
   const p = document.createElement('p');
   p.className = 'result-error';

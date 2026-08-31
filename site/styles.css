@@ -267,6 +267,9 @@ button:disabled { background: var(--line); border-color: var(--line); color: var
 }
 .result-meta { font: 400 0.72rem/1.5 var(--data); color: var(--dim); margin: 0.55rem 0 0; }
 .result-error { color: var(--bad); font: 400 0.78rem/1.6 var(--data); white-space: pre-wrap; margin: 0; }
+/* The remedy under a raw error message, in whichever surface showed it. Muted
+   rather than red: the message is the failure, the hint is the way out. */
+.error-hint { display: block; margin-top: 0.4em; color: var(--dim); white-space: normal; }
 
 /* --- dialogs ------------------------------------------------------------- */
 
