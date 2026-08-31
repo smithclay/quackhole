@@ -70,3 +70,45 @@ query II
 SELECT endpoint_id IS NULL, serving FROM quackhole_status();
 ----
 true	false
+
+# Nothing below may create ~/.quackhole/key or publish an address: this file is
+# ungated. The relay list is rejected before any of that happens, but that is an
+# ordering inside Core::new rather than a promise, so pin the key somewhere
+# harmless and let the status assertions below prove nothing bound.
+statement ok
+SET GLOBAL quackhole_key_path = '__TEST_DIR__/quackhole_relays_key';
+
+# A relay list that will not parse is refused where the endpoint would have been
+# bound, and the message names the URL that did not parse. Left to iroh it would
+# have surfaced as a bind failure with the setting nowhere in it.
+statement ok
+SET GLOBAL quackhole_relays = 'nonsense';
+
+statement error
+CALL quackhole_serve(auto_serve := false);
+----
+<REGEX>:.*'nonsense' is not a valid relay url.*
+
+# The mistake worth naming, because it is the one that looks right. A URL parser
+# reads `relay.example.org:443` as a *scheme* of "relay.example.org" and accepts
+# it, so iroh would bind on a relay map nothing can connect to and the only
+# symptom would be a home relay that never arrives.
+statement ok
+SET GLOBAL quackhole_relays = 'relay.example.org:443';
+
+statement error
+CALL quackhole_serve(auto_serve := false);
+----
+<REGEX>:.*http or https.*
+
+# And none of it bound anything: a rejected relay list must not leave an
+# endpoint published on n0's relays instead.
+query II
+SELECT endpoint_id IS NULL, serving FROM quackhole_status();
+----
+true	false
+
+query I
+SELECT count(*) FROM glob('__TEST_DIR__/quackhole_relays_key');
+----
+0

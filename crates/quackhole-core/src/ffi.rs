@@ -144,15 +144,60 @@ unsafe fn guard<T>(
 pub unsafe extern "C" fn qh_core_new(
     key_path: *const c_char,
     ephemeral: bool,
+    relays: *const c_char,
     err: *mut c_char,
     err_len: usize,
 ) -> *mut Core {
-    // SAFETY: key_path is null or a NUL-terminated path; err holds err_len bytes.
-    let path = unsafe { cstr(key_path) }.map(PathBuf::from);
-    match unsafe { guard(err, err_len, || Core::new(path.as_deref(), ephemeral)) } {
+    // SAFETY: key_path and relays are null or NUL-terminated strings; err holds
+    // err_len bytes.
+    let owned = unsafe { cstr(key_path) }.map(PathBuf::from);
+    let path = owned.as_deref();
+    // One string rather than an array of them: the relay list arrives as a
+    // DuckDB setting, and splitting it in the core is what keeps C++ and the
+    // browser from each owning a copy of the format.
+    //
+    // A relays pointer that will not decode is an error, not "". Every other
+    // string here degrades to empty, but empty is a *meaning* for this one --
+    // n0's relays -- so degrading would bind on exactly the relays the caller
+    // asked to avoid and report success.
+    let relays = if relays.is_null() {
+        Some("")
+    } else {
+        unsafe { cstr(relays) }
+    };
+    let core = unsafe {
+        guard(err, err_len, || match relays {
+            Some(relays) => Core::new(path, ephemeral, relays),
+            None => anyhow::bail!("the relay list is not valid UTF-8"),
+        })
+    };
+    match core {
         Some(core) => Box::into_raw(Box::new(core)),
         None => std::ptr::null_mut(),
     }
+}
+
+/// Write `relays` back in the canonical form two lists can be compared in.
+///
+/// See `quackhole_core::normalize_relays`: the C++ side has to be able to tell
+/// a changed `quackhole_relays` from the same list typed differently, and doing
+/// that by comparing raw strings would call a reordered list a change.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qh_relays_normalize(
+    relays: *const c_char,
+    out: *mut c_char,
+    out_len: usize,
+    err: *mut c_char,
+    err_len: usize,
+) -> i32 {
+    // SAFETY: relays is null or a NUL-terminated string; out and err are the
+    // caller's buffers, of the lengths given.
+    let spec = unsafe { cstr(relays) }.unwrap_or("");
+    let Some(normalized) = (unsafe { guard(err, err_len, || crate::normalize_relays(spec)) })
+    else {
+        return QH_ERR;
+    };
+    unsafe { write_str_or_err(out, out_len, &normalized, err, err_len) }
 }
 
 #[unsafe(no_mangle)]

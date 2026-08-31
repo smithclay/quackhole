@@ -45,19 +45,40 @@ QuackholeState &QuackholeState::Get(DatabaseInstance &db) {
 	return *static_cast<QuackholeState *>(extension->storage_info.get());
 }
 
-QhCore *QuackholeState::GetOrCreateCore(const string &key_path, bool ephemeral) {
+QhCore *QuackholeState::GetOrCreateCore(const string &key_path, bool ephemeral, const string &relays) {
 	std::lock_guard<std::mutex> guard(core_lock);
 	if (core) {
 		return core;
 	}
 	char err[QH_ERR_LEN] = {0};
-	// Binding is synchronous so a bad key path or a blocked UDP socket becomes a
-	// SQL error here, rather than a silent failure in a background thread.
-	core = qh_core_new(ephemeral ? nullptr : key_path.c_str(), ephemeral, err, sizeof(err));
+	// Binding is synchronous so a bad key path, an unparsable relay or a blocked
+	// UDP socket becomes a SQL error here, rather than a silent failure in a
+	// background thread.
+	core = qh_core_new(ephemeral ? nullptr : key_path.c_str(), ephemeral, relays.c_str(), err, sizeof(err));
 	if (!core) {
 		throw IOException("Failed to start quackhole endpoint: %s", err);
 	}
+	// Normalised, so that comparing it later answers "is this a different relay
+	// map" rather than "is this a different string". qh_core_new has just parsed
+	// the same list, so this cannot fail.
+	bound_relays = NormalizeRelays(relays);
 	return core;
+}
+
+string QuackholeState::NormalizeRelays(const string &relays) {
+	// One relay URL is QH_RELAY_URL_LEN; four is what n0 itself publishes, and
+	// nobody hand-lists more than that.
+	char out[QH_RELAY_URL_LEN * 4] = {0};
+	char err[QH_ERR_LEN] = {0};
+	if (qh_relays_normalize(relays.c_str(), out, sizeof(out), err, sizeof(err)) != QH_OK) {
+		throw InvalidInputException("quackhole: %s", err);
+	}
+	return string(out);
+}
+
+string QuackholeState::BoundRelays() {
+	std::lock_guard<std::mutex> guard(core_lock);
+	return bound_relays;
 }
 
 QhCore *QuackholeState::TryGetCore() {
@@ -78,7 +99,15 @@ QhCore *QuackholeState::GetOrCreateCoreFromSettings(DatabaseInstance &db) {
 	if (key_path.empty()) {
 		key_path = DefaultKeyPath(db);
 	}
-	return GetOrCreateCore(key_path, ephemeral);
+	return GetOrCreateCore(key_path, ephemeral, RelaysFromSettings(db));
+}
+
+string QuackholeState::RelaysFromSettings(DatabaseInstance &db) {
+	Value setting;
+	if (db.TryGetCurrentSetting("quackhole_relays", setting) && !setting.IsNull()) {
+		return setting.ToString();
+	}
+	return string();
 }
 
 string QuackholeState::DefaultKeyPath(DatabaseInstance &db) {

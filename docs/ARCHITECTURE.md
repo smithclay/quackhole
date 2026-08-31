@@ -11,7 +11,7 @@ quackhole — HTTPUtil out, iroh acceptor in; one bi-stream per request
  │
 iroh — QUIC, endpoint id = address, hole-punching, relay fallback, E2E encryption
  │
-n0 public relays + address lookup — we run none of it
+n0 public relays + address lookup — we run none of it (quackhole_relays swaps in your own)
 ```
 
 ## Where the seam is

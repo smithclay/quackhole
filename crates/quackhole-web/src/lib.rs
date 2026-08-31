@@ -31,13 +31,30 @@ pub struct QuackholeClient {
 
 /// Bind an endpoint. Resolves once the browser has one, which does not require
 /// a relay connection yet -- that happens on the first `request`.
+///
+/// `relays` is the relay list this endpoint homes on: relay URLs separated by
+/// commas or whitespace, empty for n0's public relays. It is the same string
+/// the `quackhole_relays` DuckDB setting takes, read by the same parser in the
+/// core -- one format, however it reached us.
+///
+/// It does not decide which relay a *peer* is reached through. That is the
+/// relay in the ticket, registered per peer and passed to `request` below;
+/// iroh dials it whether or not it appears here. Setting this matters when a
+/// deployment wants no traffic of its own going to n0's relays at all.
 #[wasm_bindgen]
-pub async fn connect() -> Result<QuackholeClient, JsValue> {
+pub async fn connect(relays: Option<String>) -> Result<QuackholeClient, JsValue> {
     console_error_panic_hook::set_once();
+
+    let relay_mode = quackhole_core::relay_mode(relays.as_deref().unwrap_or(""))
+        .map_err(|e| JsValue::from_str(&format!("{e:#}")))?;
 
     // No secret key argument: a browser has nowhere safe to persist one, and a
     // client never needs a stable address. Every page load is a new identity.
-    let endpoint = Endpoint::builder(presets::N0)
+    let mut builder = Endpoint::builder(presets::N0);
+    if let Some(mode) = relay_mode {
+        builder = builder.relay_mode(mode);
+    }
+    let endpoint = builder
         .bind()
         .await
         .map_err(|e| JsValue::from_str(&format!("failed to bind iroh endpoint: {e}")))?;

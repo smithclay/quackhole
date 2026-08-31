@@ -1,0 +1,101 @@
+# name: test/sql/quackhole_relays.test
+# description: quackhole_relays decides which relay the endpoint homes on
+# group: [sql]
+
+#
+# Binding an iroh endpoint opens a UDP socket and reaches a relay, so this file
+# is gated like the other live tests.
+
+require quackhole
+
+require-env QUACKHOLE_NET_TESTS
+
+# For the secret below, which is what carries an ATTACH past Quack's own token
+# check and into the code that binds a client. Loaded rather than `require`d:
+# quack is a community extension, so `require quack` skips this whole file --
+# including the relay assertions -- on a machine that has not installed it.
+statement ok
+LOAD quack;
+
+# Throwaway identity: this file publishes an address, and it should not be the
+# developer's own long-lived one.
+statement ok
+SET GLOBAL quackhole_ephemeral = true;
+
+# One relay, and deliberately not the one this machine would have chosen on
+# latency: with n0's four in the map the nearest wins, so naming the far one is
+# what makes the assertion below about the setting rather than about geography.
+#
+# An n0 relay rather than a self-hosted one because what is under test is that
+# the map came from here -- who runs the relay is exactly the part quackhole no
+# longer decides.
+statement ok
+SET GLOBAL quackhole_relays = 'https://euc1-1.relay.n0.iroh.link./';
+
+# auto_serve := false: this is about which relay the endpoint homed on, not
+# about whether a Quack server happens to come up.
+statement ok
+CREATE TABLE srv AS SELECT * FROM quackhole_serve(auto_serve := false, target := '127.0.0.1:9499');
+
+# The endpoint homed on the relay it was given. With one relay in the map there
+# is nothing else it could have picked -- and with the default map there is
+# nothing that would have picked this one.
+query I
+SELECT relay_url FROM quackhole_status();
+----
+https://euc1-1.relay.n0.iroh.link./
+
+# quackhole_serve waits for that relay and mints the ticket around it, which is
+# how the browser follows to a relay nobody told it about.
+query I
+SELECT relay_url FROM srv;
+----
+https://euc1-1.relay.n0.iroh.link./
+
+statement ok
+CALL quackhole_stop();
+
+# The relay map is chosen when the endpoint binds, so a later change cannot take
+# effect. Refused rather than ignored: the ticket would otherwise keep handing
+# out a relay the setting says not to use, with nothing saying so. The message
+# names the relays this endpoint is actually on.
+statement ok
+SET GLOBAL quackhole_relays = 'https://usw1-1.relay.n0.iroh.link./';
+
+statement error
+CALL quackhole_serve(auto_serve := false, target := '127.0.0.1:9499');
+----
+<REGEX>:.*quackhole_relays.*euc1-1.*
+
+# A dial does not consult the local relay map at all -- it uses the relay the
+# ticket carried -- so a stale setting must not fail queries against a remote
+# that is already attached. Raising the error above from the shared path would
+# have done exactly that, for a setting the query never reads.
+#
+# The secret is what carries this past Quack's own token check and into the
+# code that binds a client; the endpoint id is nonsense on purpose, because what
+# is asserted is which error arrives, not that a dial succeeds.
+statement ok
+CREATE SECRET nope_token (TYPE quack, TOKEN 'x', SCOPE 'quack:not-a-real-endpoint-id.iroh:9494');
+
+statement error
+ATTACH 'quack:not-a-real-endpoint-id.iroh:9494' AS nope;
+----
+<REGEX>:.*not a valid iroh endpoint id.*
+
+# The same relay map, spelled differently, is not a change. Two spellings of one
+# list normalize alike in the core, so re-issuing a setting with a space in it
+# or in another order does not read as an edit nobody made.
+statement ok
+SET GLOBAL quackhole_relays = '  https://euc1-1.relay.n0.iroh.link./ ';
+
+statement ok
+CALL quackhole_serve(auto_serve := false, target := '127.0.0.1:9499');
+
+query I
+SELECT serving FROM quackhole_status();
+----
+true
+
+statement ok
+CALL quackhole_stop();

@@ -20,6 +20,12 @@ globalThis.QH_PROTO = {
   TAG: '__qh',
   INIT: 'init',
   PEER: 'peer',
+  // The one frame that travels the other way: the bridge saying why it could
+  // not start. READY_FAILED below is a flag in shared memory and carries no
+  // words, so without this the shim can only say "failed to initialise" while
+  // the actual reason -- a relay URL that will not parse, a wasm module that
+  // will not load -- sits in a nested worker's console nobody opens.
+  FAILED: 'failed',
 
   // Control block: Int32Array indices.
   STATE: 0,

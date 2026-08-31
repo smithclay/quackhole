@@ -63,11 +63,11 @@ fn allow_list_admits_the_listed_peer_and_rejects_others() {
         return;
     }
 
-    let dialer = Core::new(None, true).expect("dialer");
+    let dialer = Core::new(None, true, "").expect("dialer");
     let dialer_id = dialer.endpoint_id_z32().to_string();
 
     // --- allowed ---------------------------------------------------------
-    let permitted = Core::new(None, true).expect("permitted core");
+    let permitted = Core::new(None, true, "").expect("permitted core");
     permitted
         .serve_start(&spawn_http_server(), vec![dialer_id.clone()])
         .expect("serve");
@@ -95,11 +95,11 @@ fn allow_list_admits_the_listed_peer_and_rejects_others() {
 
     // --- denied ----------------------------------------------------------
     // A different endpoint id, so the dialer is definitively not on the list.
-    let stranger = Core::new(None, true)
+    let stranger = Core::new(None, true, "")
         .expect("stranger")
         .endpoint_id_z32()
         .to_string();
-    let denied = Core::new(None, true).expect("denied core");
+    let denied = Core::new(None, true, "").expect("denied core");
     denied
         .serve_start(&spawn_http_server(), vec![stranger])
         .expect("serve");
@@ -141,13 +141,13 @@ fn empty_allow_list_admits_anyone() {
         return;
     }
 
-    let serving = Core::new(None, true).expect("serving");
+    let serving = Core::new(None, true, "").expect("serving");
     serving
         .serve_start(&spawn_http_server(), Vec::new())
         .expect("serve");
     let peer = serving.endpoint_id_z32().to_string();
 
-    let dialer = Core::new(None, true).expect("dialer");
+    let dialer = Core::new(None, true, "").expect("dialer");
     let deadline = Instant::now() + Duration::from_secs(60);
     let response = loop {
         match request(&dialer, &peer) {
@@ -166,7 +166,7 @@ fn a_malformed_allow_list_entry_fails_the_call() {
     if skip() {
         return;
     }
-    let serving = Core::new(None, true).expect("serving");
+    let serving = Core::new(None, true, "").expect("serving");
     // Parsed up front, so a typo is an error the caller sees rather than a
     // silent "nobody can connect".
     let err = serving

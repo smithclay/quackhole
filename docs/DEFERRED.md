@@ -116,4 +116,24 @@ Two things follow:
 
 Neither is worth acting on at this scale. If it becomes one, the fix is an idle eviction in
 `ConnCache` rather than anything in the transport: dropping a cached connection is already
-safe, because `Attempt::BeforeSend` redials.
+safe, because `Attempt::BeforeSend` redials. `quackhole_relays` moves the cost onto a relay
+you run rather than removing it.
+
+---
+
+## Your own relays, but still n0's address lookup
+
+**Status:** partly built. `quackhole_relays` (and the browser's `relays`) replaces the relay
+map; two adjacent things are still n0's.
+
+**Address lookup.** `presets::N0` also installs a pkarr publisher and resolver pointed at
+n0's DNS, and setting a custom relay map leaves those in place — so an endpoint on your own
+relay still publishes `endpoint id → relay url` to `iroh.link`. Nothing in quackhole needs
+it: the ticket carries the relay, which is why `quackhole_attach` resolves nothing. Removing
+it is a second setting and a second decision (an endpoint that publishes nowhere can only
+ever be reached by ticket), so it waits until someone wants it.
+
+**Relay auth tokens.** `RelayConfig::with_auth_token` is how iroh authenticates to a private
+relay, and a comma-separated list of URLs cannot express one. A relay that requires a token
+is therefore not usable yet. The list format would have to grow, which is worth doing when
+there is a deployment to shape it around rather than before.

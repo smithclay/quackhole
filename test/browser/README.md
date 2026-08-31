@@ -155,3 +155,8 @@ to match the server's build.
   arrives before the shim's blunter one.
 - `intercept=<host>` is a test hook: it is what lets step 2 exercise the bridge
   against plain HTTP. Real use matches on the trailing `.iroh` label alone.
+- `QH_RELAYS=<url>` homes both ends on relays of your own instead of n0's four:
+  the server takes it as `quackhole_relays`, the page as `relays=`. Off by
+  default, so what a plain `node run.mjs iroh` proves stays the default path.
+  A relay named in a ticket is dialled either way — this is only where each
+  endpoint homes, which is what decides the relay the ticket carries.

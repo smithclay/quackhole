@@ -112,6 +112,23 @@ the npm README's own quickstart block against a live server.
   fills it in from the ticket before the ATTACH dials. `quackhole_relay_url` is
   the fallback for peers with none registered, not an override -- one relay per
   process is what could not describe two remotes.
+- **Which relay you home on and which relay reaches a peer are two settings, not
+  one.** `quackhole_relays` (and the browser's `relays`) is the endpoint's own
+  relay map, read once by `Core::new` when it binds -- so it decides the home
+  relay, and therefore the relay the minted ticket carries. Nothing has to be
+  listed there to *dial* a peer on it: iroh connects to whatever relay URL a
+  ticket names, in the map or not, and consults the map only for that relay's
+  auth token. `quackhole_core::relay_mode` parses the list for both clients, so
+  the DuckDB setting and the browser config are one format -- and
+  `parse_relay_url` is where a relay is validated, because `RelayUrl: FromStr`
+  is `Url::parse` alone: `relay.example.org:443` parses happily, reading the
+  *host* as the scheme, and would bind on a relay map nothing can connect to.
+  Changing the setting after the endpoint is bound is refused, but only in
+  `quackhole_serve` (beside the `ephemeral` guard, and against
+  `QuackholeState::BoundRelays`): that is where the ticket is minted and so
+  where a stale setting lies. Raising it from `GetOrCreateCore` instead -- which
+  every `.iroh` dial calls -- failed ordinary queries against an already
+  attached remote over a setting the dial never reads.
 - **The bridge's relay is per-peer, keyed by endpoint id.** `web/bridge-worker.js`
   keeps a map the page fills with `peer` control frames (`web/protocol.js`).
   They travel the same shim-to-bridge channel as the dial, which is the whole

@@ -1,16 +1,18 @@
-# Quackhole
+# quackhole
+
+> connect to duckdb instances running anywhere
 
 [![Build](https://github.com/smithclay/quackhole/actions/workflows/MainDistributionPipeline.yml/badge.svg)](https://github.com/smithclay/quackhole/actions/workflows/MainDistributionPipeline.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![DuckDB](https://img.shields.io/badge/DuckDB-%E2%89%A5%201.5.5-FFF000?logo=duckdb&logoColor=black)](https://duckdb.org)
 
-You might be running DuckDB on a laptop on home wi-fi, inside a sandbox with no public IP or even inside a browser session. `quackhole` makes it possible to connect to it from anywhere over an encrypted peer-to-peer connection: no open ports or VPN needed. Think of it like "ngrok, but for duckdb and quack"
+You might be running DuckDB on a laptop on home wi-fi, inside a sandbox with no public IP or even inside a browser. `quackhole` makes it possible to **connect to duckdb from anywhere over an encrypted peer-to-peer connection**: no open ports or VPN needed.
 
-This project is built on top of [iroh](https://www.iroh.computer/) which does a lot of clever networking and cryptography tricks to punch through firewalled networks. It leverages DuckDB's [new quack protocol](https://duckdb.org/quack/) for application-level duckdb-to-duckdb data transfer.
+This project is built on top of [iroh](https://www.iroh.computer/) which does a lot of clever networking and cryptography tricks to punch through restricted networks. It leverages DuckDB's [new quack protocol](https://duckdb.org/quack/) for application-level duckdb-to-duckdb data transfer.
 
-To get started, you can run this in a browser and connect to a duckdb session running on your laptop or a sandbox.
+To get started, you can run this in a browser and connect to a duckdb session running on your laptop (or a sandbox). Just open [smithclay.github.io/quackhole](https://smithclay.github.io/quackhole/) and follow the instructions.
 
-Just open [smithclay.github.io/quackhole](https://smithclay.github.io/quackhole/) and follow the instructions.
+This was inspired by prior work on [quackscale](https://github.com/Query-farm/quackscale), a way to connect duckdb to a tailscale network. The major benefit of iroh vs tailscale, at least as of August 2026, is that iroh is a easier to use for fast peer-to-peer connections without signing up for an external service (or running your own network infrastructure). It also works well in the browser without much extra code.
 
 ## Architecture
 
@@ -80,31 +82,12 @@ CREATE SECRET qh_<endpoint-id> (TYPE quack, TOKEN 'your-shared-token',
 ATTACH 'quack:<endpoint-id>.iroh:9494' AS laptop;
 ```
 
-## The address is a public key
-
-```
-quack:<endpoint-id>.iroh:9494
-```
-
-`<endpoint-id>` is a 32-byte ed25519 public key in z-base-32, which comes to 52 characters
-and fits inside a DNS label. No DNS record exists for it and no resolver sees it; Quackhole
-intercepts the name before DuckDB opens a socket.
-
-Because the address doubles as the identity, dialing the right address and authenticating the
-server are one operation. You involve no certificate authority and renew nothing.
-
 ## Uses
 
-- Query a DuckDB behind NAT from anywhere, with no inbound port open on either side.
+- Connect duckdb running in a browser or sandboxed to data sources behind NAT or firewalls.
+- Easy send data between two copies of duckdb anywhere in the world over an encrypted channel.
 - Attach several remote DuckDBs at once and join across them.
-- Restrict who connects with an `allow` list of endpoint ids, which quackhole checks before
-  it passes any Quack traffic.
-- Reach one of them from a browser: DuckDB-Wasm attaches to an unmodified `quackhole_serve`. See
-  [`web/`](web) for the client, [`npm/`](npm) for it packaged as
-  `cdn.jsdelivr.net/npm/quackhole`, or [the demo](https://smithclay.github.io/quackhole/) to
-  watch it happen.
-- Keep working on networks that block UDP. iroh's relay connection runs over HTTPS/443, so a
-  captive portal costs you latency and lets the query through.
+- Share a duckdb instance on your laptop with friends and agents.
 
 ## API at a glance
 
@@ -120,6 +103,7 @@ server are one operation. You involve no certificate authority and renew nothing
 | `quackhole_key_path` | Path to the endpoint key (default `~/.quackhole/key`) |
 | `quackhole_ephemeral` | Use a throwaway key instead of the persisted one |
 | `quackhole_relay_url` | Fallback relay for peers with none registered. A ticket's relay wins over it |
+| `quackhole_relays` | Relay servers this endpoint homes on, comma-separated (default: n0's public relays) |
 
 Quackhole reads these when the endpoint binds, which can happen on your first `ATTACH` to a
 `.iroh` host, so set them globally:
@@ -131,6 +115,26 @@ SET GLOBAL quackhole_ephemeral = true;
 Set `quackhole_ephemeral` when you run a client and a server on one machine. Both would load
 the same key and share an endpoint id, and iroh refuses that dial with `connecting to ourself
 is not supported`. On two machines you can leave it alone.
+
+### Your own relays
+
+By default an endpoint homes on n0's public relays, which is why quackhole needs no
+infrastructure. `quackhole_relays` replaces that list with relays you run
+([`iroh-relay`](https://github.com/n0-computer/iroh)), so no traffic of yours touches n0's:
+
+```sql
+SET GLOBAL quackhole_relays = 'https://relay.example.org./';
+FROM quackhole_serve();
+```
+
+The relay it picks is the one the ticket carries, so the other side follows without being
+configured at all — a client dials whatever relay a ticket names, listed here or not. The
+same string is what the browser client takes as its `relays` setting (see [`web/`](web)), and
+`npx quackhole --relay <url>` is the demo server's flag for it.
+
+Two things this does not change. Address lookup still publishes to and resolves through n0's
+DNS, which the ticket makes unnecessary but does not disable. And a relay that needs an
+auth token is not expressible yet.
 
 ## Security
 

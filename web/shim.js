@@ -96,6 +96,12 @@
     // The relay for peers that have none registered. All a caller with one
     // remote needs; a caller with several sends a `peer` frame per remote.
     relay: config.relay || null,
+    // Which relays this page's own endpoint homes on, for a deployment that
+    // wants none of its traffic on n0's. Passed through as the string it was
+    // given -- the core parses it, the same way it parses the extension's
+    // `quackhole_relays` setting. An array from a loader stringifies to the
+    // comma-separated form the parser already reads.
+    relays: config.relays ? String(config.relays) : null,
     // Test-only: makes the bridge stop answering, so the deadline above can
     // be shown to fire rather than merely existing.
     fault: config.fault || null,
@@ -116,6 +122,17 @@
   // here can run -- Atomics.wait dispatches no events -- which is the reason
   // waitForBridge reads the flag rather than waiting on a promise.
   let bridgeError = null;
+  // A bridge that ran and then failed -- a bad `relays`, a wasm module that
+  // will not load -- sends its reason as a `failed` frame, because the
+  // READY_FAILED flag it also sets is a number with no room for words. It
+  // arrives in time for the same reason the `error` event above does, and with
+  // the same limit: this thread has to reach its event loop to see it, so the
+  // bare message below is what is left if the first request is already blocked.
+  let bridgeInitError = null;
+  bridge.addEventListener('message', (event) => {
+    if (event.data?.[P.TAG] !== P.FAILED) return;
+    bridgeInitError = event.data.message || null;
+  });
   bridge.addEventListener('error', (event) => {
     // Cross-origin worker failures arrive with the message stripped, so name
     // the URL ourselves; it is the part that says which fetch to go and look at.
@@ -156,11 +173,14 @@
     // Distinguishing "started and failed" from "still starting" matters: one is
     // a broken environment, the other is a slow one.
     if (Atomics.load(ctl, P.READY) === P.READY_FAILED) {
-      // Two ways to reach READY_FAILED: the bridge ran and could not bind an
-      // endpoint, or it never ran at all. Only the second has a message here.
+      // Two ways to reach READY_FAILED: the bridge never ran at all, or it ran
+      // and could not start. The first is an `error` event, the second a
+      // `failed` frame; the bare message is left for a bridge that managed
+      // neither.
+      if (bridgeError) throw new Error(`quackhole bridge failed to start: ${bridgeError}`);
       throw new Error(
-        bridgeError
-          ? `quackhole bridge failed to start: ${bridgeError}`
+        bridgeInitError
+          ? `quackhole bridge failed to initialise: ${bridgeInitError}`
           : 'quackhole bridge failed to initialise',
       );
     }

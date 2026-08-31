@@ -42,6 +42,15 @@ const TIMEOUT_MS = Number(
 );
 // SharedArrayBuffer, and therefore Atomics.wait, requires cross-origin isolation.
 const COI = MODE !== 'direct' || process.env.QH_COI === '1';
+// Homes both ends on relays of your own instead of n0's four, in iroh mode:
+//
+//   QH_RELAYS=https://relay.example./ node run.mjs iroh
+//
+// Off by default, because the default is what a reader of this harness is
+// entitled to assume it ran. The server takes it as `quackhole_relays` and the
+// page as `relays=`, which are the same string read by the same parser in the
+// core -- so a run with this set proves the whole round trip off n0's relays.
+const RELAYS = process.env.QH_RELAYS ?? '';
 
 const log = (msg) => console.log(`[run] ${msg}`);
 
@@ -63,6 +72,7 @@ function startQuackServer() {
     MODE === 'iroh'
       ? `LOAD quackhole;
 SET GLOBAL quackhole_ephemeral = true;
+${RELAYS ? `SET GLOBAL quackhole_relays = '${RELAYS.replaceAll("'", "''")}';` : ''}
 CALL quackhole_serve(token := '${TOKEN}');
 SELECT 'SERVER_READY', endpoint_id FROM quackhole_status();`
       : `CALL quack_serve('quack:localhost:${QUACK_PORT}', token := '${TOKEN}');
@@ -168,6 +178,7 @@ async function main() {
      window.__bridgeMode = ${JSON.stringify(MODE === 'iroh' ? 'iroh' : 'fetch')};
      window.__attach = ${JSON.stringify(attach)};
      window.__relay = ${JSON.stringify(relay)};
+     window.__relays = ${JSON.stringify(RELAYS)};
      window.__debug = ${JSON.stringify(MODE === 'direct' && process.env.QH_DEBUG !== '1' ? '0' : '1')};
      window.__timeout = ${JSON.stringify(String(TIMEOUT_MS))};
      window.__fault = ${JSON.stringify(MODE === 'timeout' ? 'blackhole' : '')};`,

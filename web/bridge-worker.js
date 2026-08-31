@@ -146,7 +146,11 @@ self.onmessage = async (ev) => {
     try {
       if (mode === 'iroh') {
         wasm = await transport();
-        client = await wasm.connect();
+        // msg.relays is the endpoint's own relay map, and only that: a peer is
+        // still reached through the relay its ticket carried, listed here or
+        // not. Undefined rather than null when unset, so wasm-bindgen sees an
+        // absent Option and the endpoint keeps iroh's n0 defaults.
+        client = await wasm.connect(msg.relays ?? undefined);
         console.log(`[qh-bridge] iroh endpoint ${client.endpointId()}`);
       }
       // Only now is the bridge usable. The shim blocks on this flag, so setting
@@ -154,7 +158,13 @@ self.onmessage = async (ev) => {
       Atomics.store(ctl, P.READY, P.READY_OK);
       Atomics.notify(ctl, P.READY);
     } catch (err) {
-      console.error(`[qh-bridge] init failed: ${err}`);
+      const message = String(err && err.message ? err.message : err);
+      console.error(`[qh-bridge] init failed: ${message}`);
+      // Posted before the flag, so the shim has the reason by the time it looks.
+      // The settings this can fail on are the caller's -- `relays` is parsed
+      // here -- so "which URL" is the whole of the answer, and shared memory
+      // has nowhere to put it.
+      self.postMessage({ [P.TAG]: P.FAILED, message });
       Atomics.store(ctl, P.READY, P.READY_FAILED);
       Atomics.notify(ctl, P.READY);
     }
