@@ -63,6 +63,8 @@ const manualToken = (() => {
 function renderManualCommand() {
   $('#cmd-manual').querySelector('code').textContent = [
     'INSTALL quack; LOAD quack;',
+    '-- Note: not in community-extensions yet: download the binary from the GitHub release',
+    '-- and start DuckDB with -unsigned. `npx quackhole` does both for you.',
     "LOAD './quackhole.duckdb_extension';",
     '',
     '-- serve waits for the endpoint to learn its home relay, then returns the',

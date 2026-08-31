@@ -6,13 +6,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![DuckDB](https://img.shields.io/badge/DuckDB-%E2%89%A5%201.5.5-FFF000?logo=duckdb&logoColor=black)](https://duckdb.org)
 
-You might be running DuckDB on a laptop on home wi-fi, inside a sandbox with no public IP or even inside a browser. `quackhole` makes it possible to **connect to duckdb from anywhere over an encrypted peer-to-peer connection**: no open ports or VPN needed.
+`quackhole` makes it possible to **connect to duckdb from anywhere over an encrypted peer-to-peer connection**: no open ports or VPN needed. This is very useful if you are running DuckDB on a laptop on home wi-fi, inside a sandbox with no public IP, or even inside a browser.
 
-This project is built on top of [iroh](https://www.iroh.computer/) which does a lot of clever networking and cryptography tricks to punch through restricted networks. It leverages DuckDB's [new quack protocol](https://duckdb.org/quack/) for application-level duckdb-to-duckdb data transfer.
+This project is built on top of [iroh](https://www.iroh.computer/) which does clever networking and cryptography to punch through networks. It leverages DuckDB's [quack protocol](https://duckdb.org/quack/) to connect multiple database instances together.
 
 To get started, you can run this in a browser and connect to a duckdb session running on your laptop (or a sandbox). Just open [smithclay.github.io/quackhole](https://smithclay.github.io/quackhole/) and follow the instructions.
 
-This was inspired by prior work on [quackscale](https://github.com/Query-farm/quackscale), a way to connect duckdb to a tailscale network. The major benefit of iroh vs tailscale, at least as of August 2026, is that iroh is a easier to use for fast peer-to-peer connections without signing up for an external service (or running your own network infrastructure). It also works well in the browser without much extra code.
+This was inspired by prior work on [quackscale](https://github.com/Query-farm/quackscale), a way to connect duckdb to a [tailscale](https://tailscale.com/) network. The major benefit of iroh vs tailscale, at least as of August 2026, is that iroh is straightforward for fast peer-to-peer connections without signing up for an external service (or running your own network infrastructure). It also works well in the browser and has a straightforward way to embed their library in a DuckDB extension.
 
 ## Architecture
 
