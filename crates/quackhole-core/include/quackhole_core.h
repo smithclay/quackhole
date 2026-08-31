@@ -71,8 +71,11 @@ typedef struct QhResponse QhResponse;
 //! `relays` is the relay list this endpoint homes on: relay URLs separated by
 //! commas or whitespace. Pass NULL or "" for n0's public relays. It is parsed
 //! here rather than by the caller so that this setting and the browser's
-//! `relays` config are one format with one parser; an unparsable URL fails the
-//! call before the endpoint binds.
+//! `relays` config are one format with one parser; a URL that is not one, or
+//! that names a scheme other than http/https, fails the call before the
+//! endpoint binds. (A bare `host:port` is the latter: it parses as a URL whose
+//! *scheme* is the host, and would otherwise bind on a relay map nothing can
+//! connect to.)
 //!
 //! This is only where *this* endpoint homes, which is the relay a minted ticket
 //! carries. Reaching a peer through a relay needs nothing here: iroh dials the
@@ -80,6 +83,16 @@ typedef struct QhResponse QhResponse;
 //!
 //! Returns NULL on failure and writes to `err`.
 QhCore *qh_core_new(const char *key_path, bool ephemeral, const char *relays, char *err, size_t err_len);
+
+//! Write `relays` into `out` in the canonical form two lists compare in:
+//! parsed, sorted, deduplicated and comma-joined. NULL or "" gives "".
+//!
+//! For deciding whether `quackhole_relays` has changed since the endpoint
+//! bound. Comparing raw strings would call a reordered or re-spaced list a
+//! change, and normalising in C++ would be a second parser of a format the core
+//! owns. Returns QH_ERR and writes `err` if a URL will not parse, or if `out`
+//! is too small (QH_RELAY_URL_LEN per relay is enough).
+int qh_relays_normalize(const char *relays, char *out, size_t out_len, char *err, size_t err_len);
 
 //! Stop the accept loop, close cached connections, and shut the runtime down
 //! within `deadline_ms`, then free the handle. Safe on NULL. Idempotent.

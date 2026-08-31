@@ -108,7 +108,13 @@ failure arrives as a 404 inside a worker.
 | `check()` | `{ ok, reason }` — whether this page can run the transport |
 
 `options` are the settings [`web/README.md`][web] documents: `mode`, `relay`,
-`timeout`, `chunk`, `intercept`, `debug`. You need none of them for one remote.
+`relays`, `timeout`, `chunk`, `intercept`, `debug`. You need none of them for
+one remote.
+
+`relay` and `relays` are different axes, and neither is needed by default. A
+ticket already carries the relay that reaches its peer; `relays` is which relays
+this page's own endpoint homes on, for a deployment that wants none of its
+traffic on n0's public relays.
 
 [web]: https://github.com/smithclay/quackhole/blob/main/web/README.md
 
@@ -135,7 +141,11 @@ is installed, no key is persisted, and nothing is left running after Ctrl-C.
 | `--token <t>` | Use a token of your own rather than a fresh random one |
 | `--port <n>` | Quack's local port, if `9494` is taken |
 | `--page <url>` | Aim the printed link at another workbench |
+| `--relay <url>` | Home on an iroh relay you run instead of n0's. Repeatable |
 | `QH_EXT=<path>` | Use a locally built extension, for developing on the repo |
+
+`--relay` is the whole of the change: the ticket carries whichever relay the
+endpoint homed on, so the browser follows without being configured.
 
 The link carries the token. Treat it like one: anyone holding it can query that
 database until you stop.

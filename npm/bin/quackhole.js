@@ -70,6 +70,17 @@ const HELP = `
   this database until you stop. Ctrl-C stops it and removes the sample data.
 `;
 
+/// A relay URL, refusing the empty one.
+///
+/// `--relay "$RELAY"` with RELAY unset hands us '', and '' is not "no value
+/// passed" -- it is the spelling that means n0's public relays. Taken quietly
+/// it would home on exactly the relays the flag was reached for to avoid, and
+/// say `waiting for a home relay among ` with nothing after it.
+function relayValue(value) {
+  if (!value.trim()) die('--relay needs a relay URL. Leave it out entirely for n0\'s public relays.');
+  return value.trim();
+}
+
 function parseArgs(argv) {
   const opts = { token: randomBytes(12).toString('hex'), port: 9494, page: PAGE, relays: [] };
   for (let i = 0; i < argv.length; i++) {
@@ -86,7 +97,7 @@ function parseArgs(argv) {
     else if (arg === '--page') opts.page = value();
     // Repeatable rather than comma-separated: a shell flag per relay is what
     // the rest of these are, and the extension takes the joined form anyway.
-    else if (arg === '--relay') opts.relays.push(value());
+    else if (arg === '--relay') opts.relays.push(relayValue(value()));
     else die(`Unknown option ${arg}. Try --help.`);
   }
   if (!Number.isInteger(opts.port) || opts.port < 1 || opts.port > 65535) die(`--port ${opts.port} is not a port.`);

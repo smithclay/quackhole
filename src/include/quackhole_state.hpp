@@ -49,6 +49,14 @@ public:
 	//! path builds a core without going through the settings below, and both
 	//! paths have to home on the same relays.
 	static string RelaysFromSettings(DatabaseInstance &db);
+	//! A relay list in the form two of them compare in. Throws, naming the URL,
+	//! if one will not parse. The core owns the format; this only calls it.
+	static string NormalizeRelays(const string &relays);
+	//! The normalised relay list the bound endpoint homes on, or "" if nothing
+	//! is bound. What `quackhole_serve` compares the current setting against:
+	//! the map is chosen at bind, so a later change cannot take effect, and the
+	//! ticket would otherwise carry a relay the setting says not to use.
+	string BoundRelays();
 
 	//! Create the core using the `quackhole_key_path` / `quackhole_ephemeral`
 	//! settings. Used when a dial binds the endpoint implicitly, so a second
@@ -59,8 +67,9 @@ public:
 private:
 	std::mutex core_lock;
 	QhCore *core = nullptr;
-	//! The relay list the bound endpoint was created with, so a later change to
-	//! `quackhole_relays` is refused rather than silently ignored.
+	//! The normalised relay list the bound endpoint was created with, so a later
+	//! change to `quackhole_relays` is refused rather than silently ignored.
+	//! Read through BoundRelays(), which takes the lock.
 	string bound_relays;
 };
 

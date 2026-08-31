@@ -10,6 +10,13 @@ require quackhole
 
 require-env QUACKHOLE_NET_TESTS
 
+# For the secret below, which is what carries an ATTACH past Quack's own token
+# check and into the code that binds a client. Loaded rather than `require`d:
+# quack is a community extension, so `require quack` skips this whole file --
+# including the relay assertions -- on a machine that has not installed it.
+statement ok
+LOAD quack;
+
 # Throwaway identity: this file publishes an address, and it should not be the
 # developer's own long-lived one.
 statement ok
@@ -50,19 +57,37 @@ CALL quackhole_stop();
 
 # The relay map is chosen when the endpoint binds, so a later change cannot take
 # effect. Refused rather than ignored: the ticket would otherwise keep handing
-# out a relay the setting says not to use, with nothing saying so.
+# out a relay the setting says not to use, with nothing saying so. The message
+# names the relays this endpoint is actually on.
 statement ok
 SET GLOBAL quackhole_relays = 'https://usw1-1.relay.n0.iroh.link./';
 
 statement error
 CALL quackhole_serve(auto_serve := false, target := '127.0.0.1:9499');
 ----
-<REGEX>:.*quackhole_relays.*
+<REGEX>:.*quackhole_relays.*euc1-1.*
 
-# Putting it back leaves the bound endpoint usable, rather than poisoning the
-# session over a setting that never took.
+# A dial does not consult the local relay map at all -- it uses the relay the
+# ticket carried -- so a stale setting must not fail queries against a remote
+# that is already attached. Raising the error above from the shared path would
+# have done exactly that, for a setting the query never reads.
+#
+# The secret is what carries this past Quack's own token check and into the
+# code that binds a client; the endpoint id is nonsense on purpose, because what
+# is asserted is which error arrives, not that a dial succeeds.
 statement ok
-SET GLOBAL quackhole_relays = 'https://euc1-1.relay.n0.iroh.link./';
+CREATE SECRET nope_token (TYPE quack, TOKEN 'x', SCOPE 'quack:not-a-real-endpoint-id.iroh:9494');
+
+statement error
+ATTACH 'quack:not-a-real-endpoint-id.iroh:9494' AS nope;
+----
+<REGEX>:.*not a valid iroh endpoint id.*
+
+# The same relay map, spelled differently, is not a change. Two spellings of one
+# list normalize alike in the core, so re-issuing a setting with a space in it
+# or in another order does not read as an edit nobody made.
+statement ok
+SET GLOBAL quackhole_relays = '  https://euc1-1.relay.n0.iroh.link./ ';
 
 statement ok
 CALL quackhole_serve(auto_serve := false, target := '127.0.0.1:9499');

@@ -2,7 +2,6 @@
 
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/file_system.hpp"
-#include "duckdb/common/string_util.hpp"
 
 #include "quackhole_core.h"
 
@@ -48,19 +47,7 @@ QuackholeState &QuackholeState::Get(DatabaseInstance &db) {
 
 QhCore *QuackholeState::GetOrCreateCore(const string &key_path, bool ephemeral, const string &relays) {
 	std::lock_guard<std::mutex> guard(core_lock);
-	auto requested = relays;
-	StringUtil::Trim(requested);
 	if (core) {
-		// The relay map is chosen when the endpoint binds, so setting it later
-		// cannot take effect. Ignoring that quietly is the one failure worth an
-		// error here: the endpoint would stay homed on n0 while the setting says
-		// otherwise, and the ticket would hand out a relay the user asked not to
-		// use with nothing anywhere saying so.
-		if (requested != bound_relays) {
-			throw InvalidInputException("quackhole: an endpoint is already bound, so 'quackhole_relays' cannot be "
-			                            "changed. Set it before the first ATTACH or quackhole_serve() on this "
-			                            "database.");
-		}
 		return core;
 	}
 	char err[QH_ERR_LEN] = {0};
@@ -71,8 +58,27 @@ QhCore *QuackholeState::GetOrCreateCore(const string &key_path, bool ephemeral, 
 	if (!core) {
 		throw IOException("Failed to start quackhole endpoint: %s", err);
 	}
-	bound_relays = requested;
+	// Normalised, so that comparing it later answers "is this a different relay
+	// map" rather than "is this a different string". qh_core_new has just parsed
+	// the same list, so this cannot fail.
+	bound_relays = NormalizeRelays(relays);
 	return core;
+}
+
+string QuackholeState::NormalizeRelays(const string &relays) {
+	// One relay URL is QH_RELAY_URL_LEN; four is what n0 itself publishes, and
+	// nobody hand-lists more than that.
+	char out[QH_RELAY_URL_LEN * 4] = {0};
+	char err[QH_ERR_LEN] = {0};
+	if (qh_relays_normalize(relays.c_str(), out, sizeof(out), err, sizeof(err)) != QH_OK) {
+		throw InvalidInputException("quackhole: %s", err);
+	}
+	return string(out);
+}
+
+string QuackholeState::BoundRelays() {
+	std::lock_guard<std::mutex> guard(core_lock);
+	return bound_relays;
 }
 
 QhCore *QuackholeState::TryGetCore() {

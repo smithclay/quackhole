@@ -229,8 +229,24 @@ void QuackholeServeFunction(ClientContext &context, TableFunctionInput &data_p, 
 		                            "honoured. Set 'quackhole_ephemeral' before the first ATTACH or "
 		                            "quackhole_serve() on this database.");
 	}
-	auto *core = bind_data.ephemeral ? state.GetOrCreateCore("", true, QuackholeState::RelaysFromSettings(db))
-	                                 : state.GetOrCreateCoreFromSettings(db);
+	// The same shape of surprise, for the same reason. The relay map is chosen
+	// when the endpoint binds, so a `quackhole_relays` set after that cannot take
+	// effect -- and this function is where that matters, because the ticket below
+	// carries whichever relay the endpoint actually homed on. Silently minting one
+	// through n0 while the setting names someone else's relay is the failure.
+	//
+	// Checked here and not in QuackholeState, deliberately: a dial does not
+	// consult the local relay map at all (it uses the relay the ticket carried),
+	// so raising this from the shared path would fail every query against an
+	// already-attached remote over a setting that query never reads.
+	auto relays = QuackholeState::RelaysFromSettings(db);
+	if (state.TryGetCore() && QuackholeState::NormalizeRelays(relays) != state.BoundRelays()) {
+		throw InvalidInputException("quackhole: an endpoint is already bound, so 'quackhole_relays' cannot be "
+		                            "changed -- it is read when the endpoint binds. This one homes on %s. Set the "
+		                            "setting before the first ATTACH or quackhole_serve() on this database.",
+		                            state.BoundRelays().empty() ? "n0's public relays" : state.BoundRelays().c_str());
+	}
+	auto *core = bind_data.ephemeral ? state.GetOrCreateCore("", true, relays) : state.GetOrCreateCoreFromSettings(db);
 
 	vector<const char *> allow_ptrs;
 	allow_ptrs.reserve(bind_data.allow.size());

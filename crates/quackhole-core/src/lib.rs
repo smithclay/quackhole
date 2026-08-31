@@ -95,6 +95,36 @@ pub fn parse_endpoint_id(s: &str) -> Result<EndpointId> {
         .with_context(|| format!("'{trimmed}' is not a valid iroh endpoint id"))
 }
 
+/// Parse one relay URL, rejecting what iroh will accept but cannot dial.
+///
+/// `RelayUrl: FromStr` is `Url::parse` and nothing more, which is looser than
+/// it looks: `relay.example.org:443` parses, reading the host as the *scheme*
+/// and the port as the path, and so does `ftp://relay.example./`. Both then
+/// bind an endpoint on a relay map nothing can connect to, and the only
+/// symptom is a home relay that never arrives -- `quackhole_serve` waits its
+/// ten seconds and returns a NULL ticket with the relay setting named nowhere.
+/// So the check `Url` does not make is made here, once, for the three callers
+/// that take a relay from a person. A host on its own is the mistake worth
+/// naming, because it is the one that looks right.
+///
+/// The scheme is the whole check: http and https are the only ones iroh speaks,
+/// and both are "special" schemes, which the URL parser already refuses to
+/// accept without a host.
+pub fn parse_relay_url(input: &str) -> Result<iroh::RelayUrl> {
+    let url: iroh::RelayUrl = input
+        .parse()
+        .with_context(|| format!("'{input}' is not a valid relay url"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        anyhow::bail!(
+            "'{input}' is not a valid relay url: a relay is reached over http or https, \
+             and this names the scheme '{}'. A host, or a host and port, parses as a \
+             scheme -- write it as https://{input}/ if that is what was meant.",
+            url.scheme()
+        );
+    }
+    Ok(url)
+}
+
 /// Resolve an endpoint id, plus an optional relay hint, into a dialable address.
 ///
 /// Shared by both clients so "how do you address a peer" has one answer. An
@@ -105,10 +135,7 @@ pub fn peer_addr(endpoint_id: &str, relay_url: &str) -> Result<iroh::EndpointAdd
     let mut addr = iroh::EndpointAddr::new(parse_endpoint_id(endpoint_id)?);
     let relay_url = relay_url.trim();
     if !relay_url.is_empty() {
-        let url = relay_url
-            .parse()
-            .with_context(|| format!("'{relay_url}' is not a valid relay url"))?;
-        addr = addr.with_relay_url(url);
+        addr = addr.with_relay_url(parse_relay_url(relay_url)?);
     }
     Ok(addr)
 }
@@ -128,19 +155,43 @@ pub fn peer_addr(endpoint_id: &str, relay_url: &str) -> Result<iroh::EndpointAdd
 /// needs no configuration at all -- iroh dials whatever relay URL the ticket
 /// names, in or out of this map.
 pub fn relay_mode(spec: &str) -> Result<Option<iroh::RelayMode>> {
-    let urls = spec
-        .split([',', ' ', '\t', '\n', '\r'])
-        .map(str::trim)
-        .filter(|url| !url.is_empty())
-        .map(|url| {
-            url.parse::<iroh::RelayUrl>()
-                .with_context(|| format!("'{url}' is not a valid relay url"))
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let urls = parse_relays(spec)?;
     if urls.is_empty() {
         return Ok(None);
     }
     Ok(Some(iroh::RelayMode::custom(urls)))
+}
+
+/// The relay list `spec` names, in the order a `RelayMap` would hold it.
+///
+/// Sorted and deduplicated, because that is what the map does with it: two
+/// spellings of one list are one relay map, and a caller comparing lists is
+/// asking about the map rather than about the typing.
+fn parse_relays(spec: &str) -> Result<Vec<iroh::RelayUrl>> {
+    let mut urls = spec
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|url| !url.is_empty())
+        .map(parse_relay_url)
+        .collect::<Result<Vec<_>>>()?;
+    urls.sort();
+    urls.dedup();
+    Ok(urls)
+}
+
+/// `spec` in a form two of them can be compared with `==`.
+///
+/// Exists for one caller: `quackhole_relays` is read when the endpoint binds,
+/// so C++ has to be able to tell "you changed the setting after binding" from
+/// "you said the same thing again with a space in it". Answering that by
+/// comparing raw strings would make a reordered or re-spaced list -- the same
+/// relay map -- look like a change, and answering it in C++ would be a second
+/// parser of a format this file owns.
+pub fn normalize_relays(spec: &str) -> Result<String> {
+    Ok(parse_relays(spec)?
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(","))
 }
 
 /// Record or refresh a peer. Never overwrites a known path with "unknown".
@@ -232,9 +283,7 @@ impl Core {
         // now would surface as a failure on some later query, a long way from
         // the ATTACH that supplied it.
         if !relay_url.is_empty() {
-            let _: iroh::RelayUrl = relay_url
-                .parse()
-                .with_context(|| format!("'{relay_url}' is not a valid relay url"))?;
+            parse_relay_url(relay_url)?;
         }
         let mut relays = self
             .relays
@@ -530,5 +579,51 @@ mod tests {
         // the setting that caused it.
         let err = format!("{:#}", relay_mode("not a relay").unwrap_err());
         assert!(err.contains("not a valid relay url"), "{err}");
+    }
+
+    #[test]
+    fn a_relay_url_that_cannot_be_dialled_is_not_a_valid_one() {
+        // `Url::parse` accepts both of these: it reads the host as the scheme
+        // and the port as the path. Accepting them binds an endpoint on a relay
+        // map that can never connect, and the only symptom is a home relay that
+        // never arrives.
+        for input in ["relay.example.org:443", "localhost:8080"] {
+            let err = format!("{:#}", parse_relay_url(input).unwrap_err());
+            assert!(err.contains("http or https"), "{input}: {err}");
+            // The message has to carry the fix, because the input looks right.
+            assert!(err.contains("https://"), "{input}: {err}");
+        }
+
+        // A scheme iroh does not speak, and a bare host, which does not parse
+        // as a URL at all.
+        assert!(parse_relay_url("ftp://relay.example./").is_err());
+        assert!(parse_relay_url("relay.example.org").is_err());
+        // http and https are special schemes, so the URL parser has already
+        // refused the host-less forms by the time the scheme is looked at.
+        assert!(parse_relay_url("https://").is_err());
+        assert!(parse_relay_url("http://:3340/").is_err());
+
+        assert!(parse_relay_url("https://relay.example./").is_ok());
+        assert!(parse_relay_url("http://127.0.0.1:3340/").is_ok());
+    }
+
+    #[test]
+    fn two_spellings_of_one_relay_map_normalize_alike() {
+        // What the C++ side compares to decide whether `quackhole_relays`
+        // changed after the endpoint bound. A reordered or re-spaced list is
+        // the same relay map, so it must not read as a change.
+        let canonical = normalize_relays("https://a.example./,https://b.example./").unwrap();
+        for spelling in [
+            "https://b.example./, https://a.example./",
+            "  https://a.example./\thttps://b.example./  ",
+            "https://a.example./,https://b.example./,https://a.example./",
+        ] {
+            assert_eq!(normalize_relays(spelling).unwrap(), canonical, "{spelling}");
+        }
+
+        // And a list that is genuinely different still reads as different.
+        assert_ne!(normalize_relays("https://a.example./").unwrap(), canonical);
+        assert_eq!(normalize_relays("  ").unwrap(), "");
+        assert!(normalize_relays("relay.example.org:443").is_err());
     }
 }
