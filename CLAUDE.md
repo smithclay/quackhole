@@ -147,6 +147,38 @@ the npm README's own quickstart block against a live server.
 - **A browser client that omits an optional query param takes a different code
   path.** `test/browser` always passes `timeout`, which is why a
   temporal-dead-zone bug in `shim.js` survived until `site/` left it out.
+- **The embedded shell reads `window.location.hash` and runs it as SQL.**
+  `@duckdb/duckdb-wasm-shell`'s `embed()` splits the fragment on commas and
+  passes everything after the first one to the prompt -- that is how
+  shell.duckdb.org shares a session. A quackhole link puts a *credential* in the
+  fragment, so `site/app.js` reads the ticket and then clears the fragment with
+  `replaceState` before embedding. A ticket is base64url and carries no comma of
+  its own; a link with one appended would otherwise be a page that runs a
+  stranger's SQL on arrival.
+- **`embed()` hands its resize handler back by assigning `container.onresize`,
+  and a `<div>` never fires `resize`.** Nothing calls it, so the terminal keeps
+  the width it measured on its first frame and every result wraps there for the
+  rest of the session. A `ResizeObserver` that invokes the property is the fix;
+  the shell registers no window listener of its own.
+- **The shell offers no hook into its terminal, so instrumentation goes through
+  the database.** `observed()` in `site/app.js` proxies `runQuery` -- which is
+  how the wire still pulses, the rail still redraws after DDL, and a known
+  failure still arrives with its remedy. It proxies `open` too, because `.open`
+  at the prompt resets the database and drops every attached catalog *and* the
+  quack extension. `QuackholeSession` must keep querying through a connection on
+  the real `db`, not the proxy, or `refreshSchema` triggers itself.
+- **The terminal needs `--term`, not `--data`.** `site/vite.config.js` fetches
+  IBM Plex Mono in the latin subsets only, and box-drawing characters live at
+  U+2500 in none of them -- so every result table's borders come from whatever
+  fallback the browser picks, at metrics that are not the cell width, and render
+  as broken dashes.
+- **`site/verify.mjs` has to deny WebGL to read the terminal at all.** xterm
+  renders to a canvas when WebGL is available and to the DOM when it is not, and
+  only the DOM path leaves text in `.xterm-rows`. The renderer is chosen once,
+  at embed, from `probablySupportsContext`, `supportsContext` and
+  `WebGL2RenderingContext` -- all three have to be defeated in an init script.
+  It also clears the screen before each statement, because the terminal scrolls
+  and earlier rows leave the DOM entirely.
 - **A dedicated worker inherits its page's COEP.** Anything a dev-server
   middleware in `site/vite.config.js` answers itself has to send the isolation
   headers, because it short-circuits the middleware Vite applies

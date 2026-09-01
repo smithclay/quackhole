@@ -20,6 +20,13 @@
   --display: 'Martian Mono', ui-monospace, 'SF Mono', monospace;
   --body: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
   --data: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
+  /* The terminal's face, and deliberately not --data. The page self-hosts IBM
+     Plex Mono in the latin subsets alone (see vite.config.js), and box-drawing
+     characters live at U+2500 in none of them -- so every result table's borders
+     would come from whichever fallback the browser picked, at metrics that are
+     not the cell width, and render as dashes with gaps at the corners. A system
+     mono has the whole block at one width. */
+  --term: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
 
   --bar-h: 3.1rem;
   --rail-w: 17rem;
@@ -171,6 +178,9 @@ button:disabled { background: var(--line); border-color: var(--line); color: var
   padding: 0.2rem 0.35rem;
 }
 .schema-item:hover { background: var(--ink-3); color: var(--signal); }
+/* Acknowledges the copy without moving anything: the table name is the label
+   and swapping it out for "copied" would take away what was just copied. */
+.schema-item[data-copied]::after { content: ' copied'; color: var(--relay); }
 
 /* --- wire ---------------------------------------------------------------- */
 
@@ -207,66 +217,31 @@ button:disabled { background: var(--line); border-color: var(--line); color: var
 .wire-relay-host { color: var(--relay); overflow-wrap: anywhere; }
 .wire-peer-name { color: var(--paper); }
 
-/* --- notebook ------------------------------------------------------------ */
+/* --- the shell ----------------------------------------------------------- */
 
-.notebook {
-  padding: 1.5rem clamp(1rem, 3vw, 2.5rem) 6rem;
-  display: grid; gap: 1.1rem;
-  align-content: start;
-  max-width: 60rem;
-}
-
-.cell {
-  border: 1px solid var(--line);
-  border-radius: 4px;
+/* duckdb's own web shell draws itself in here with xterm, so the only thing
+   this page owes it is a box with a definite height. Sized by its content a
+   terminal grows without bound and the page scrolls it; sized by the viewport
+   it scrolls its own scrollback, which is what a terminal is for and what its
+   history, its search and its selection all assume. */
+.shell {
+  height: calc(100vh - var(--bar-h));
+  /* Grid children are min-width:auto by default, so a wide result would push
+     the rail off the screen rather than scroll inside the terminal. */
+  min-width: 0;
+  padding: 0.75rem 0 0.75rem 1rem;
   background: var(--ink-2);
   overflow: hidden;
 }
-.cell[data-state="running"] { border-color: var(--relay); }
-.cell[data-state="failed"] { border-color: color-mix(in srgb, var(--bad) 50%, var(--line)); }
 
-.cell-head {
-  display: flex; align-items: center; gap: 0.6rem;
-  padding: 0.4rem 0.5rem 0.4rem 0.75rem;
-  border-bottom: 1px solid var(--line);
-  background: var(--ink-3);
-}
-.cell-n { font: 400 0.68rem/1 var(--data); color: var(--dim); }
-.cell-ms { font: 400 0.68rem/1 var(--data); color: var(--relay); margin-left: auto; }
-.cell[data-state="failed"] .cell-ms { color: var(--bad); }
-.cell-run { font-family: var(--data); font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; padding: 0.3rem 0.7rem; }
-.cell-del {
-  background: transparent; border-color: transparent; color: var(--dim);
-  font-size: 1rem; line-height: 1; padding: 0.2rem 0.45rem;
-}
-.cell-del:hover { background: transparent; border-color: var(--line); color: var(--bad); }
+/* xterm fills the element it is handed, and the element it is handed is one it
+   made -- so the height has to be passed down rather than measured. */
+.shell > * { height: 100%; }
 
-.cell-sql {
-  display: block; width: 100%;
-  background: transparent; border: 0; resize: none;
-  color: var(--paper);
-  font: 400 0.82rem/1.7 var(--data);
-  padding: 0.75rem;
-  outline: none;
-  tab-size: 2;
-}
-.cell-sql:focus { background: var(--ink); }
+/* The scrollbar xterm renders for its own viewport, which is otherwise the
+   platform default sitting in the middle of the page's own palette. */
+.shell .xterm-viewport { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 
-.cell-out:not(:empty) { border-top: 1px solid var(--line); padding: 0.75rem; }
-
-.result { overflow-x: auto; max-height: 26rem; }
-.result table { border-collapse: collapse; font: 400 0.78rem/1.5 var(--data); width: 100%; }
-.result th, .result td {
-  text-align: left; padding: 0.3rem 0.9rem 0.3rem 0;
-  border-bottom: 1px solid var(--line); white-space: nowrap;
-}
-.result th {
-  position: sticky; top: 0; background: var(--ink-2);
-  color: var(--dim); font-weight: 400; text-transform: uppercase;
-  font-size: 0.68rem; letter-spacing: 0.08em;
-}
-.result-meta { font: 400 0.72rem/1.5 var(--data); color: var(--dim); margin: 0.55rem 0 0; }
-.result-error { color: var(--bad); font: 400 0.78rem/1.6 var(--data); white-space: pre-wrap; margin: 0; }
 /* The remedy under a raw error message, in whichever surface showed it. Muted
    rather than red: the message is the failure, the hint is the way out. */
 .error-hint { display: block; margin-top: 0.4em; color: var(--dim); white-space: normal; }
@@ -377,7 +352,7 @@ dialog hr { border: 0; border-top: 1px solid var(--line); margin: 1.6rem 0; }
 /* --- booting ----------------------------------------------------------------
  *
  * Full-bleed on purpose. DuckDB-Wasm is megabytes and instantiating it takes
- * seconds on a cold cache, during which the rail and the notebook are already
+ * seconds on a cold cache, during which the rail and the terminal are already
  * drawn -- so a small pill in the bar leaves a page that looks finished and
  * ignores you. Covering the workbench says the wait is the point. */
 #boot {

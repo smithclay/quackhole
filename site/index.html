@@ -30,7 +30,7 @@
 <!-- Covers the workbench until DuckDB-Wasm is up. In the markup rather than
      built by app.js because the wait it covers starts before app.js runs: the
      module is deferred and the bundle is megabytes on a cold cache. The pill in
-     the bar cannot carry this on its own -- the rail and the notebook are fully
+     the bar cannot carry this on its own -- the rail and the terminal are fully
      drawn underneath, so the page reads as finished and broken rather than as
      busy. -->
 <div id="boot" role="status" aria-live="polite">
@@ -84,7 +84,11 @@
     </section>
   </aside>
 
-  <section class="notebook" id="notebook" aria-label="SQL notebook"></section>
+  <!-- duckdb's own web shell mounts here, and builds its terminal itself. This
+       stays empty on purpose: everything about it this page gets to decide is
+       passed to embed() in app.js, so there is nothing to style into place and
+       nothing here that could drift from what the shell actually renders. -->
+  <section class="shell" id="shell" aria-label="DuckDB shell"></section>
 
 </main>
 

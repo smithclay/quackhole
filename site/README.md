@@ -21,14 +21,14 @@ below for why that matters.
 Three things make this a usable loop rather than a fast one:
 
 - **Editing `styles.css` does not restart DuckDB.** The stylesheet is swapped in
-  place, so an attached remote and a notebook full of results survive it. Only
+  place, so an attached remote and a terminal full of results survive it. Only
   `app.js`, `wire.js` and the files under `web/` force a reload —
   they own workers and a wasm session, and hot-swapping a module that spawned a
   worker leaves the old one running.
 - **The ticket lives in the fragment, and the fragment survives a reload.** Open
   the link one server printed, and every reload comes back already attached —
   you are iterating on the connected page, not on the empty one.
-- **You do not need a second machine for most of it.** The notebook, the connection rail
+- **You do not need a second machine for most of it.** The shell, the connection rail
   and the schema list all work against the local `memory` connection alone. Only
   the routes panel and remote queries need a real remote.
 
@@ -41,13 +41,13 @@ found.
 
 | Where | What |
 |---|---|
-| browser | DuckDB-Wasm boots on arrival; the notebook works before any remote exists |
+| browser | DuckDB-Wasm boots on arrival; the shell works before any remote exists |
 | server | `quackhole_serve` — an agent, a DuckDB you have open, or `npx quackhole` — starts serving and prints a link |
 | browser | opening that link `ATTACH`es the remote into the session already running |
 
 Onboarding is a dialog, not a page: adding a remote is a task you finish once,
-and after that the page is a notebook. Arriving with `#qh1_...` skips the form
-entirely and shows the dialog already connecting.
+and after that the page is a DuckDB shell. Arriving with `#qh1_...` skips the
+form entirely and shows the dialog already connecting.
 
 The dialog offers three ways to serve that other end, and the order is the
 argument. **The prompt for a coding agent leads**, because the machine worth
@@ -106,12 +106,49 @@ link the same crate, so there is nothing here to drift: the address this page
 ATTACHes and the scope it files the token under are one function call, not two
 strings that have to match.
 
+## The query surface is somebody else's
+
+The terminal is `@duckdb/duckdb-wasm-shell`, duckdb's own embeddable web shell,
+embedded unmodified. It is the third thing on this page that ships as-is —
+`web/` is the second — and for the same reason: a query box written here could
+always be accused of knowing where its bytes came from, and this one cannot,
+because it was written before any of this existed. It knows nothing about iroh,
+relays or tickets. It asks for an `AsyncDuckDB` and gets the one the transport
+is already under.
+
+That handoff is the whole integration:
+
+```js
+await shell.embed({ shellModule, container, resolveDatabase: async () => db });
+```
+
+It is *not* what runs at [shell.duckdb.org](https://shell.duckdb.org), which has
+since moved to a frontend of its own on `@xterm/xterm`. This package is still
+published out of `duckdb/duckdb-wasm` and still versioned in lockstep with
+`@duckdb/duckdb-wasm` — the same version string, released the same day — which
+is what makes it safe to pin beside it and the first thing to check if it ever
+drifts.
+
+The shell offers no hook into its terminal, so the things the page still needs
+to do around a query are done by observing the database instead of the terminal:
+`observed()` in `app.js` wraps `runQuery`, which is how the wire still pulses at
+the measured latency, how the rail still redraws after DDL, and how a known
+failure still arrives with its remedy from `docs/TROUBLESHOOTING.md` attached.
+It wraps `open` too, because `.open` at the prompt resets the database and takes
+every attached remote with it.
+
+Two things went with the notebook and are not coming back through this seam. The
+page no longer seeds and runs a first query against a freshly attached remote,
+and clicking a table in the rail copies a `SELECT` rather than running one —
+both because the shell takes its input from the keyboard and publishes no way to
+put text on its prompt.
+
 ## Files
 
 | | |
 |---|---|
 | `index.html` | The workbench shell, plus the onboarding and notes dialogs |
-| `app.js` | A view over `web/session.js`: the DuckDB-Wasm boot, the rail, the notebook, the dialogs. No connection model of its own |
+| `app.js` | A view over `web/session.js`: the DuckDB-Wasm boot, the rail, the embedded shell, the dialogs. No connection model of its own |
 | `wire.js` | The topology diagram, one per remote. Opens broken; pulses per query at the measured latency |
 | `styles.css` | Yellow is DuckDB, periwinkle is iroh. Nothing else is coloured |
 | `public/llms.txt` | The docs an agent is sent to read, shipped unhashed at the site root. The onboarding prompt names it, so it is part of the product rather than a courtesy |
