@@ -36,10 +36,14 @@
 <div id="boot" role="status" aria-live="polite">
   <div class="boot-card">
     <div class="boot-spin" aria-hidden="true"></div>
-    <h2 id="boot-title">Starting DuckDB</h2>
+    <h2 id="boot-title">Digging the quackhole</h2>
+    <!-- The wait is almost entirely DuckDB's, and saying so is both funnier and
+         more honest than a progress bar that cannot know. duckdb-eh.wasm is 35 MB
+         against 3 MB for the transport, so the name on the tin is a rounding
+         error on the download. The failed state replaces both lines. -->
     <p id="boot-detail">
-      Fetching the WebAssembly build into this tab. Nothing is installed, and no
-      data leaves your browser.
+      Which is mostly loading DuckDB: 35 MB of database against 3 MB of hole.
+      Nothing is installed, and no data leaves your browser.
     </p>
   </div>
 </div>
@@ -140,57 +144,89 @@
   This is the whole "getting started" story, and it is a dialog rather than a
   page because it is a task you finish once. Arriving with #qh1_... goes to
   #connect above instead, so a link from the server never shows this form.
+
+  Three ways to serve the other end, ordered by how much of your own data they
+  reach. The agent prompt leads because the machine worth querying is usually
+  one you are not typing into -- a sandbox, a VM, a box behind SSH -- and an
+  agent is already sitting in it. The SQL is second because it serves the
+  database you have open. `npx quackhole` is last and folded away: it seeds its
+  own sample table in a temp directory and takes no path, so it demonstrates the
+  connection rather than serving anything of yours.
 -->
 <dialog id="onboard">
   <form method="dialog" class="dialog-x"><button value="cancel" aria-label="Close">×</button></form>
 
   <h2 id="onboard-title">Add a remote DuckDB</h2>
   <p class="dialog-lede" id="onboard-lede">
-    Run this on the machine you want to query. It fetches the quackhole extension into
-    a temp directory, seeds a sample table, starts serving, and prints a link. Nothing
-    is installed.
+    Something has to serve the other end. If an agent is already working on the machine
+    that has the data — a sandbox, a VM, a box you SSH into — hand it this and it will
+    set up quackhole and come back with a ticket.
   </p>
 
-  <!-- Written out here rather than built by app.js: npx is the same command on
-       every platform, so there is nothing to detect and nothing to interpolate. -->
+  <!-- Built by app.js rather than written out here, for the two things it has to
+       interpolate: the token minted in this tab, so this path and the SQL below
+       are one credential rather than two, and the docs URL resolved against this
+       page. -->
   <div class="cmd">
     <div class="cmd-head">
-      <span class="cmd-os">any platform — needs node 20+</span>
-      <button class="copy" data-copy="#cmd-npx" type="button">copy</button>
+      <span class="cmd-os">prompt — for claude code, codex, cursor, an agent over ssh…</span>
+      <button class="copy" data-copy="#cmd-agent" type="button">copy</button>
     </div>
-    <pre id="cmd-npx"><code>npx quackhole</code></pre>
+    <pre id="cmd-agent"><code></code></pre>
   </div>
 
   <p class="fineprint">
-    That runs the <a href="https://www.npmjs.com/package/quackhole">quackhole</a> package —
-    <a href="https://github.com/smithclay/quackhole/tree/main/npm">read it first</a> if you
-    would rather. Ctrl-C stops it and removes the sample data.
+    It sends the agent to <a href="./llms.txt" target="_blank" rel="noreferrer">llms.txt</a> — this project's docs written
+    for one — rather than spelling the steps out, so it installs the signed extension
+    instead of guessing at flags. Read it yourself if you would rather know what you are
+    asking for.
+  </p>
+
+  <hr>
+
+  <h3 class="step">Or paste this into a DuckDB you already have open</h3>
+  <p class="dialog-lede">
+    Same result, no agent. <code>quackhole_serve</code> waits for the endpoint to
+    learn its home relay and returns the link to open.
+  </p>
+  <div class="cmd">
+    <div class="cmd-head">
+      <span class="cmd-os">SQL</span>
+      <button class="copy" data-copy="#cmd-manual" type="button">copy</button>
+    </div>
+    <pre id="cmd-manual"><code></code></pre>
+  </div>
+  <p class="fineprint">
+    <code>INSTALL … FROM community</code> fetches the signed build, so no flags and no
+    downloads.
   </p>
 
   <details class="aside">
-    <summary>Or do it by hand, in a DuckDB you already have open</summary>
+    <summary>Or just watch it work — a sample database, no data of your own</summary>
     <p>
-      Same result, no script. <code>quackhole_serve</code> waits for the endpoint to
-      learn its home relay and returns the link to open.
+      This one seeds its own table in a temp directory and takes no path, so it
+      demonstrates the connection rather than serving anything you have. Ctrl-C stops
+      it and removes the sample data.
     </p>
     <div class="cmd">
       <div class="cmd-head">
-        <span class="cmd-os">SQL</span>
-        <button class="copy" data-copy="#cmd-manual" type="button">copy</button>
+        <span class="cmd-os">any platform — needs node 20+</span>
+        <button class="copy" data-copy="#cmd-npx" type="button">copy</button>
       </div>
-      <pre id="cmd-manual"><code></code></pre>
+      <pre id="cmd-npx"><code>npx quackhole</code></pre>
     </div>
     <p class="fineprint">
-      <code>INSTALL … FROM community</code> fetches the signed build, so no flags and no
-      downloads. What the npx command adds is a sample table to look at.
+      That runs the <a href="https://www.npmjs.com/package/quackhole">quackhole</a> package —
+      <a href="https://github.com/smithclay/quackhole/tree/main/npm">read it first</a> if you
+      would rather.
     </p>
   </details>
 
   <hr>
 
   <p class="dialog-lede">
-    Opening the link it prints connects this workbench automatically. If you are on a
-    different machine, paste the ticket instead:
+    Opening the link any of these prints connects this workbench automatically. If you are
+    on a different machine, paste the ticket instead:
   </p>
   <form class="paste" id="paste-form">
     <input id="ticket" name="ticket" type="text" spellcheck="false" autocomplete="off" placeholder="qh1_…">

@@ -12,11 +12,15 @@ https://smithclay.github.io/quackhole/ is a live client, not documentation.
 
 Things agents get wrong with quackhole, and what to do instead:
 
-- To make a machine's DuckDB reachable, run `npx quackhole` on it (Node 20+). It prints a
-  `qh1_…` ticket and a workbench link. In SQL: `INSTALL quackhole FROM community; LOAD
-  quackhole; SELECT ticket FROM quackhole_serve(token := '…');` — the community build is
-  signed, so no flags. Only a binary downloaded from GitHub releases needs `-unsigned`
-  and the exact filename `quackhole.duckdb_extension`.
+- To serve a database that already holds data, run this in the DuckDB that has it open:
+  `INSTALL quackhole FROM community; LOAD quackhole; SELECT ticket, url FROM
+  quackhole_serve(token := '…');` — the community build is signed, so no flags and no
+  downloads. Hand the `qh1_…` ticket back to whoever asked; the `url` column wraps that
+  same ticket in a workbench link. Only a binary downloaded from GitHub releases needs
+  `-unsigned` and the exact filename `quackhole.duckdb_extension`.
+- `npx quackhole` (Node 20+) is the demo, not the general case. It seeds its own sample
+  table in a temp directory and takes no database path, so it cannot serve data that
+  already exists — reach for it only when there is nothing of your own to show.
 - To attach from another DuckDB, always prefer `CALL quackhole_attach('qh1_…', name :=
   'r1');` over hand-writing CREATE SECRET + ATTACH. It names the secret, scopes it to the
   peer, and registers the relay from the ticket — the three steps hand-written SQL gets

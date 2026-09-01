@@ -101,13 +101,51 @@ const { parseTicket } = await import(/* @vite-ignore */ asset('peer.js'));
 
 // --- what to run on the other machine ---------------------------------------
 
-// A token minted here rather than by the CLI, so the by-hand path has one to
-// paste. `npx quackhole` generates its own.
+// A token minted here rather than by the CLI, so the two paths that do not
+// generate one -- the agent prompt and the by-hand SQL -- share a single
+// credential rather than inviting the visitor to invent two. `npx quackhole`
+// generates its own.
 const manualToken = (() => {
   const b = new Uint8Array(12);
   crypto.getRandomValues(b);
   return [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
 })();
+
+// Where the agent is sent to read before it does anything.
+//
+// Resolved against this page, so a vendored or self-hosted workbench points at
+// its own copy -- except on loopback, where it must not. The agent is on
+// another machine by construction, and a dev server's URL resolves only on the
+// laptop that started it, so testing this flow against a real sandbox would
+// hand the agent a link it cannot fetch.
+const AGENT_DOCS = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)
+  ? 'https://smithclay.github.io/quackhole/llms.txt'
+  : new URL('llms.txt', document.baseURI).href;
+
+/// The prompt to hand an agent already working on the machine with the data.
+///
+/// It states the goal, the credential and the handoff, and leaves every step to
+/// llms.txt. That is the whole point of the split: an agent told the SQL inline
+/// will still be pasting this release's SQL two releases from now, whereas the
+/// doc is a thing that gets to be wrong exactly once. Which is also why this
+/// prompt names no function, no flag and no install command.
+function renderAgentPrompt() {
+  $('#cmd-agent').querySelector('code').textContent = [
+    "Make this machine's DuckDB reachable from my browser with quackhole.",
+    // On its own line: it is the longest thing here and the only part whose
+    // length this file does not control, so wrapping around it would re-flow
+    // the paragraph every time a self-hosted copy moved.
+    `Read ${AGENT_DOCS} first.`,
+    '',
+    'Then serve the database I would want to query from here — an existing',
+    '.duckdb file if there is one, otherwise a fresh one with views over',
+    `the data files here — with the token '${manualToken}'.`,
+    'Leave it running.',
+    '',
+    'Reply with the qh1_… ticket and nothing else: it grants query access',
+    'to this machine, so keep it out of files, logs and commits.',
+  ].join('\n');
+}
 
 // `npx quackhole` is the same command on every platform, so it is written out
 // in index.html rather than built here. This is only the by-hand path, which
@@ -485,7 +523,7 @@ $('#add-remote').addEventListener('click', () => {
   if (session?.connections.some((c) => c.kind === 'remote')) {
     $('#onboard-title').textContent = 'Add another remote';
     $('#onboard-lede').textContent =
-      'Run this on the next machine. Each remote is attached under its own name and reached over its own relay.';
+      'Same three ways, on the next machine. Each remote is attached under its own name and reached over its own relay.';
   }
   onboard.showModal();
 });
@@ -600,6 +638,7 @@ async function seedFor(conn) {
 
 // --- boot --------------------------------------------------------------------
 
+renderAgentPrompt();
 renderManualCommand();
 
 // A ticket can arrive in the fragment, which never leaves the browser -- it is
