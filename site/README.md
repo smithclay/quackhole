@@ -42,12 +42,23 @@ found.
 | Where | What |
 |---|---|
 | browser | DuckDB-Wasm boots on arrival; the notebook works before any remote exists |
-| server | `npx quackhole` — fetch the extension, seed a table, serve, print a link |
+| server | `quackhole_serve` — an agent, a DuckDB you have open, or `npx quackhole` — starts serving and prints a link |
 | browser | opening that link `ATTACH`es the remote into the session already running |
 
 Onboarding is a dialog, not a page: adding a remote is a task you finish once,
 and after that the page is a notebook. Arriving with `#qh1_...` skips the form
 entirely and shows the dialog already connecting.
+
+The dialog offers three ways to serve that other end, and the order is the
+argument. **The prompt for a coding agent leads**, because the machine worth
+querying is usually one nobody is typing into — a sandbox, a VM, a box behind
+SSH — and an agent is already sitting in it. It carries the token minted in the
+tab and points at [`public/llms.txt`](public/llms.txt) rather than spelling out
+the SQL, so the steps live in a document that gets to be wrong once instead of
+in a string that ages inside a copied prompt. **The SQL is second**, because it
+serves the database you already have open. **`npx quackhole` is last and folded
+away**: it seeds its own sample table in a temp directory and takes no database
+path, so it demonstrates the connection rather than serving anything of yours.
 
 ## More than one remote
 
@@ -103,6 +114,7 @@ strings that have to match.
 | `app.js` | A view over `web/session.js`: the DuckDB-Wasm boot, the rail, the notebook, the dialogs. No connection model of its own |
 | `wire.js` | The topology diagram, one per remote. Opens broken; pulses per query at the measured latency |
 | `styles.css` | Yellow is DuckDB, periwinkle is iroh. Nothing else is coloured |
+| `public/llms.txt` | The docs an agent is sent to read, shipped unhashed at the site root. The onboarding prompt names it, so it is part of the product rather than a courtesy |
 | `public/coi-serviceworker.js` | See below. In `public/` so it ships unhashed at the root — it registers itself by its own URL, so a move into `assets/` would scope it there |
 | `vite.config.js` | The build. Vite owns `index.html`, `styles.css` and `app.js`; two plugins own the verbatim copies and the fonts |
 | `verify.mjs` | Drives the built page against a real server, headless. `QH_URL` points it at a deployment instead of `dist/`; `QH_TICKET2` adds a second server |

@@ -296,6 +296,10 @@ dialog h2 {
   letter-spacing: -0.035em; margin: 0 0 0.6rem;
 }
 .dialog-lede { color: #b9c1d4; font-size: 0.92rem; margin: 0 0 1.1rem; }
+/* The onboarding dialog is three ways to do one thing, so each way past the
+   first needs a name of its own. Sits above a .dialog-lede the way the h2 does,
+   which is why it is display type rather than another size of body. */
+.step { font: 600 0.95rem/1.3 var(--display); letter-spacing: -0.03em; margin: 0 0 0.5rem; }
 dialog hr { border: 0; border-top: 1px solid var(--line); margin: 1.6rem 0; }
 .fineprint { font-size: 0.82rem; color: var(--dim); margin: 0; }
 
