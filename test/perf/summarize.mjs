@@ -20,8 +20,32 @@ const rows = lines.slice(1).map((line) => {
   };
 });
 
-const pct = (xs, p) => (xs.length ? xs[Math.min(xs.length - 1, Math.floor((p / 100) * xs.length))] : 0);
+/// Percentile by linear interpolation between ranks (R-7, numpy's default).
+///
+/// The obvious `xs[floor(p / 100 * n)]` clamps to the last index for every
+/// n <= 100 at p99 -- so p99 printed the maximum, exactly, for every run this
+/// harness has done. A column that looks like a tail statistic and is a copy of
+/// the one beside it is worse than no column.
+function pct(xs, p) {
+  if (!xs.length) return 0;
+  if (xs.length === 1) return xs[0];
+  const rank = (p / 100) * (xs.length - 1);
+  const lo = Math.floor(rank);
+  const hi = Math.ceil(rank);
+  return xs[lo] + (xs[hi] - xs[lo]) * (rank - lo);
+}
+
+/// Whether n samples can support percentile p at all.
+///
+/// A tail percentile needs at least one observation above it or it is pinned to
+/// the maximum however it is interpolated: p99 needs 100 samples, p90 needs 10.
+/// The median is a central statistic, meaningful at any n, so it is exempt.
+const supports = (n, p) => (p <= 50 ? n >= 1 : n >= 100 / (100 - p));
+
 const fmt = (n, d = 1) => n.toFixed(d).padStart(8);
+const BLANK = '       -';
+/// A percentile cell, or a dash when the sample count cannot justify one.
+const cell = (xs, p) => (xs.length && supports(xs.length, p) ? fmt(pct(xs, p)) : BLANK);
 
 const dial = rows.find((r) => r.op === 'dial');
 const cold = rows.filter((r) => r.iter === 0 && r.op !== 'dial');
@@ -48,10 +72,10 @@ for (const op of ['ping', 'agg', 'pull', 'push']) {
   const mb = good.filter((r) => r.bytes > 0).map((r) => r.bytes / 1e6 / (r.ms / 1000)).sort((a, b) => a - b);
   // An op where every sample failed has no latency to report, and printing 0.0
   // for it reads as "instant" rather than as "never completed".
-  const lat = ms.length ? `${fmt(pct(ms, 50))}${fmt(pct(ms, 90))}${fmt(pct(ms, 99))}${fmt(ms.at(-1))}` : '       -'.repeat(4);
+  const lat = ms.length ? `${cell(ms, 50)}${cell(ms, 90)}${cell(ms, 99)}${fmt(ms.at(-1))}` : BLANK.repeat(4);
   console.log(
     `  ${op.padEnd(6)}${String(xs.length).padStart(4)}${String(xs.length - good.length).padStart(8)}` +
-      lat + (mb.length ? fmt(pct(mb, 50)) : '        -'),
+      lat + (mb.length ? fmt(pct(mb, 50)) : BLANK),
   );
 }
 
@@ -70,8 +94,8 @@ if (pullSizes.length > 1) {
     const mb = good.map((r) => r.bytes / 1e6 / (r.ms / 1000)).sort((a, b) => a - b);
     console.log(
       `  ${String(size).padStart(9)}${String(xs.length).padStart(8)}${String(xs.length - good.length).padStart(8)}` +
-        `${fmt(pct(ms, 50))}${fmt(pct(ms, 90))}${mb.length ? fmt(pct(mb, 50)) : '        -'}` +
-        `${ms.length ? fmt((1000 * pct(ms, 50)) / size, 2) : '        -'}`,
+        `${cell(ms, 50)}${cell(ms, 90)}${mb.length ? fmt(pct(mb, 50)) : BLANK}` +
+        `${ms.length ? fmt((1000 * pct(ms, 50)) / size, 2) : BLANK}`,
     );
   }
 }
@@ -91,7 +115,7 @@ for (const [m, xs] of [...byMinute].sort((a, b) => a[0] - b[0])) {
   // not as a 0.0 ms round trip.
   const p50 = (op) => {
     const ms = xs.filter((r) => r.op === op && r.ok).map((r) => r.ms).sort((a, b) => a - b);
-    return ms.length ? fmt(pct(ms, 50)) : '       -';
+    return ms.length ? cell(ms, 50) : BLANK;
   };
   const pulls = xs.filter((r) => r.op === 'pull' && r.ok);
   const mbps = pulls.length ? pulls.reduce((a, r) => a + r.bytes / 1e6 / (r.ms / 1000), 0) / pulls.length : 0;

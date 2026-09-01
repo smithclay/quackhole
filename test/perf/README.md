@@ -42,9 +42,14 @@ warm pools: the point is a series you can read down a column, not a peak number.
 
 Each writes one CSV row — `iso, elapsed_s, iter, op, ok, ms, rows, bytes, path,
 error` — appended as it goes, so a run that dies at minute nine of ten still has
-nine minutes of data on disk. `path` is `direct` or `relay`, read from
-`quackhole_status()` each iteration, because an upgrade off the relay mid-run is
-exactly what a latency series should show.
+nine minutes of data on disk.
+
+`path` is `direct` or `relay`, read from `quackhole_status()` around each query
+rather than once per iteration: a single op runs for a minute or more
+cross-region, long enough for iroh to upgrade off the relay while it is in
+flight. An op that spans the change records `relay>direct` instead of silently
+picking an end. Read once per iteration, all four rows would agree on whatever
+was true at the top and the mislabelling would be invisible.
 
 Iteration 0 is the cold pass, reported separately so the first post-dial query
 does not decide a p99.
@@ -86,6 +91,17 @@ for 5k/25k/100k rows, and the flatness was the bug, not a finding about
 bandwidth. With LIMIT the same sweep is 33/65/158 ms for 1k/25k/100k.
 
 If you add an op here, check it against that table before trusting its `bytes`.
+
+## Reading the summary
+
+`summarize.mjs` prints a dash where the sample count cannot support a
+percentile. A tail percentile needs at least one observation above it -- p99
+needs 100 samples, p90 needs 10 -- or it is pinned to the maximum no matter how
+it is interpolated. The first version of this script indexed with
+`xs[floor(p / 100 * n)]`, which clamps to the last element for every n <= 100,
+so every p99 it ever printed was the maximum sitting in a column labelled p99.
+Percentiles are now interpolated between ranks (R-7, numpy's default), and the
+ones a run cannot justify are absent rather than duplicated.
 
 ## Things worth knowing
 

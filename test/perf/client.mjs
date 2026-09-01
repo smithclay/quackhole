@@ -60,9 +60,7 @@ console.log(`attached in ${dialMs.toFixed(0)} ms`);
 writeFileSync(out, 'iso,elapsed_s,iter,op,ok,ms,rows,bytes,path,error\n');
 
 /// The one path a peer is reachable on right now: 'direct' once iroh has hole
-/// punched, 'relay' while it is still going through n0. Recorded per iteration
-/// because an upgrade mid-run is exactly the kind of thing a latency series is
-/// supposed to show.
+/// punched, 'relay' while it is still going through n0.
 async function peerPath() {
   try {
     const rows = await all("SELECT peer_path FROM quackhole_status() WHERE peer_path IS NOT NULL");
@@ -73,7 +71,9 @@ async function peerPath() {
 }
 
 const started = Date.now();
-let path = 'unknown';
+// Only for the progress line; each CSV row carries the path measured around its
+// own query.
+let lastPath = 'unknown';
 
 /// Runs a query under a deadline.
 ///
@@ -107,6 +107,12 @@ async function withTimeout(run) {
 /// One timed query. Never throws: a failed op is a data point, not the end of
 /// the run, because reliability over time is half of what this measures.
 async function timed(iter, op, query, rowsMoved, bytesMoved) {
+  // Sampled around each query, and outside the timed region. A single op runs
+  // for a minute or more cross-region -- long enough for iroh to upgrade off
+  // the relay while it is in flight -- so a path read once per iteration would
+  // stamp every op in that iteration with whatever was true at the top, and the
+  // mislabelling would be undetectable because all four rows would agree.
+  const before = await peerPath();
   const t0 = performance.now();
   let ok = true;
   let error = '';
@@ -120,6 +126,11 @@ async function timed(iter, op, query, rowsMoved, bytesMoved) {
     rows = 0;
   }
   const ms = performance.now() - t0;
+  // An op that spans a transition records it as `relay>direct` rather than
+  // silently picking one end.
+  const after = await peerPath();
+  const path = before === after ? after : `${before}>${after}`;
+  lastPath = path;
   const bytes = ok ? (bytesMoved ?? 0) : 0;
   appendFileSync(
     out,
@@ -129,12 +140,13 @@ async function timed(iter, op, query, rowsMoved, bytesMoved) {
 }
 
 async function iteration(iter) {
-  path = await peerPath();
   // A single row from a one-row table: the round-trip floor, with no scan
   // behind it.
   await timed(iter, 'ping', 'SELECT count(*) AS n FROM srv.host_info', null, 0);
-  // A full remote aggregate. Quack pushes it down, so this is the server's
-  // scan cost plus one round trip -- not a transfer.
+  // A full remote aggregate: pushed down, so the result is one row and this is
+  // not a transfer. It is emphatically not one round trip either -- 5.3 s p50
+  // laptop to Frankfurt against a 170 ms RTT, and 35 ms for the same query on
+  // loopback. Where the rest of that time goes has not been traced.
   await timed(iter, 'agg', 'SELECT count(*) AS n, sum(value) AS s FROM srv.events', null, 0);
   // Rows down the wire, into a local table. The size comes off the sweep cycle,
   // so `rows` in the CSV is what distinguishes one pull sample from another.
@@ -178,7 +190,7 @@ while (Date.now() < deadline) {
   const top = Date.now();
   await iteration(iter);
   const elapsed = ((Date.now() - started) / 1000).toFixed(0);
-  process.stdout.write(`\r  iter ${iter} at ${elapsed}s over ${path}   `);
+  process.stdout.write(`\r  iter ${iter} at ${elapsed}s over ${lastPath}   `);
   iter += 1;
   // Sleep the remainder of the interval, so cadence is wall-clock and a slow
   // iteration eats its own slack instead of shifting every later one.
@@ -187,5 +199,5 @@ while (Date.now() < deadline) {
 }
 
 console.log(`\ndone: ${iter - 1} iterations, results in ${out}`);
-appendFileSync(out, `,,,dial,true,${dialMs.toFixed(2)},0,0,${path},""\n`);
+appendFileSync(out, `,,,dial,true,${dialMs.toFixed(2)},0,0,${lastPath},""\n`);
 process.exit(0);
