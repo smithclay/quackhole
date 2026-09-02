@@ -27,6 +27,7 @@
 import * as duckdb from '@duckdb/duckdb-wasm';
 import * as shell from '@duckdb/duckdb-wasm-shell';
 import { createWire } from './wire.js';
+import { registerAgentTools } from './webmcp.js';
 
 // xterm draws the terminal, and the shell package does not carry its
 // stylesheet. Pinned in package.json for this one file: the shell depends on
@@ -475,6 +476,34 @@ async function addRemote(ticket) {
   }
 }
 
+/// Put the workbench back in step with a remote that just arrived.
+///
+/// The two lines every attach ends with, in one place because three callers
+/// reach them now: the ticket field, the offer a link opens, and the agent tool.
+/// The rail first, so the tables are listed beside the terminal by the time the
+/// statement that reads them lands in it.
+///
+/// The dialogs close before calling this rather than after, because listing a
+/// remote's tables is a relay round trip and nobody should watch a modal
+/// through one.
+async function attached(conn) {
+  await refreshSchema();
+  announce(conn);
+}
+
+/// Attach a remote on an agent's behalf, and then get out of its way.
+///
+/// The same path the ticket field takes -- `addRemote` is still the only way in
+/// -- with whatever modal was up closed afterwards. An agent that attached a
+/// remote has done the thing the front door asks for, and a dialog left over the
+/// workbench hides the rail the attach just changed.
+async function attachForAgent(ticket) {
+  const conn = await addRemote(ticket);
+  for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  await attached(conn);
+  return conn;
+}
+
 /// Detach a remote and give its name back.
 ///
 /// Nothing is removed from the rail here: refreshSchema redraws it from the
@@ -789,10 +818,7 @@ $('#paste-form').addEventListener('submit', async (e) => {
       ' That is three round trips through the relay.';
     pasteNote.hidden = false;
     add.close();
-    // The rail first, so the tables are listed beside the terminal by the time
-    // the statement that reads them lands in it.
-    await refreshSchema();
-    announce(conn);
+    await attached(conn);
   } catch (err) {
     // Leave the dialog open: the error is about the ticket, and the field it
     // refers to is in here.
@@ -842,8 +868,7 @@ async function offerConnect(ticket) {
         ' That is three round trips through the relay.';
       note.hidden = false;
       dialog.close();
-      await refreshSchema();
-      announce(conn);
+      await attached(conn);
     } catch (err) {
       // Same reasoning as the paste form: the dialog stays open because the
       // thing that failed is the ticket this dialog is about.
@@ -889,6 +914,18 @@ try {
   // anything here having to run a query to hear it.
   $('#boot').hidden = true;
   await refreshSchema();
+
+  // Offered to an agent driving this browser, now there is a session to offer.
+  // Everything goes in as a callback rather than a value because `.open` at the
+  // shell's prompt replaces `session` wholesale -- see `rebuild`. Resolves false
+  // and never throws: WebMCP is behind a flag in every browser that has it at
+  // all, so registering nothing is the ordinary outcome.
+  await registerAgentTools({
+    session: () => session,
+    attach: attachForAgent,
+    afterQuery,
+    remedyFor,
+  });
 } catch (err) {
   // The overlay stays up and turns into the error. Dismissing it would reveal a
   // workbench with a dead terminal in it and no way to find out why.

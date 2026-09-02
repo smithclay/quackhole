@@ -200,6 +200,29 @@ the npm README's own quickstart block against a live server.
   at the prompt resets the database and drops every attached catalog *and* the
   quack extension. `QuackholeSession` must keep querying through a connection on
   the real `db`, not the proxy, or `refreshSchema` triggers itself.
+- **A WebMCP tool that throws reaches the agent with nothing to say.** The spec
+  hands the user agent null and false for a rejected `execute`, so the message
+  is dropped and the agent is told only that the call failed -- which is why
+  every tool in `site/webmcp.js` returns `{ok: false, error, remedy}` instead.
+  The same reasonless failure is what a result that will not serialize produces,
+  because the JSON step runs *after* `execute` resolves: `JSON.stringify` throws
+  on a BigInt, DuckDB answers `count(*)` with one, and so the first statement
+  anybody runs is the one that breaks. `jsonSafe` is what stops it, and it has
+  to check `ArrayBuffer.isView` before `toJSON`: Arrow's DECIMAL is both, and
+  its `toJSON` returns an *already quoted* string -- Arrow's convention for
+  splicing into JSON text -- so calling it hands the agent `"\"45\""`. DATE and
+  TIMESTAMP need the schema, not the value: they arrive as bare epoch
+  milliseconds that a plain BIGINT is indistinguishable from.
+- **`registerTool` needs an origin-keyed agent cluster**, and rejects with
+  `SecurityError` without one. `site/` never has to ask: cross-origin isolation
+  forces origin keying (HTML's "obtain a similar-origin window agent" sets the
+  cluster key to the origin when the group's isolation mode is not `"none"`),
+  and the transport needs COOP/COEP anyway for its `SharedArrayBuffer`. An
+  ordinary site would need `Origin-Agent-Cluster: ?1`. The tools live in
+  `site/webmcp.js` rather than `web/` for the reason the connection model lives
+  the other way round: `web/` is copied verbatim into anything that vendors it,
+  and a transport that hung tools on its host page's `document` would be
+  deciding something that is not the transport's to decide.
 - **The terminal needs `--term`, not `--data`.** `site/vite.config.js` fetches
   IBM Plex Mono in the latin subsets only, and box-drawing characters live at
   U+2500 in none of them -- so every result table's borders come from whatever

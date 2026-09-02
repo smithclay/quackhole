@@ -181,11 +181,59 @@ put text on its prompt.
 | `index.html` | The workbench shell, plus the onboarding and notes dialogs |
 | `app.js` | A view over `web/session.js`: the DuckDB-Wasm boot, the rail, the embedded shell, the dialogs. No connection model of its own |
 | `wire.js` | The topology diagram, one per remote. Opens broken; pulses per query at the measured latency |
+| `webmcp.js` | The three WebMCP tools, registered on `document.modelContext` when a browser has one. Goes through the same session and the same redraw the dialogs do |
 | `styles.css` | Yellow is DuckDB, periwinkle is iroh. Nothing else is coloured |
 | `public/llms.txt` | The docs an agent is sent to read, shipped unhashed at the site root. The onboarding prompt names it, so it is part of the product rather than a courtesy |
 | `public/coi-serviceworker.js` | See below. In `public/` so it ships unhashed at the root — it registers itself by its own URL, so a move into `assets/` would scope it there |
 | `vite.config.js` | The build. Vite owns `index.html`, `styles.css` and `app.js`; two plugins own the verbatim copies and the fonts |
 | `verify.mjs` | Drives the built page against a real server, headless. `QH_URL` points it at a deployment instead of `dist/`; `QH_TICKET2` adds a second server |
+
+## Tools for an agent in the browser
+
+The page registers three [WebMCP](https://webmachinelearning.github.io/webmcp/)
+tools on `document.modelContext`, so an agent driving the browser can do what a
+visitor does: `attach-remote` takes a `qh1_…` ticket, `list-connections` says
+what is attached and what tables each one holds, and `run-sql` runs a statement
+and returns rows.
+
+They go through `QuackholeSession` and then the view's own redraw, so a remote
+an agent attached leaves the rail, the routes and the terminal exactly where a
+click would have left them. That is the same trade the rest of `app.js` makes,
+and it is why `webmcp.js` is here rather than in `web/`: the transport is
+copied verbatim into anything that vendors it, and a library that reached for
+its host page's `document` and hung tools on it would be deciding something
+that is not the transport's to decide. An agent surface is a view.
+
+Three things about the API are worth knowing before reading `webmcp.js`:
+
+- **A rejected `execute` reaches the agent with its reason dropped.** The spec
+  hands the user agent null and false, so a thrown error becomes "that call
+  failed" and nothing else — losing the mistyped ticket, the missing table, the
+  token scoped to the wrong peer. So the tools report failures as ordinary
+  results with `ok: false`, carrying the same remedy the page puts under an
+  error on screen.
+- **The result is JSON-serialized after `execute` resolves**, and
+  `JSON.stringify` throws on a BigInt — which is what DuckDB hands back for
+  BIGINT, HUGEINT and every `count(*)`. The failure lands in the step *after*
+  the tool, so it arrives as that same reasonless failure. `jsonSafe` is what
+  stops it, and it has two Arrow-shaped corners in it: a DECIMAL is a
+  typed-array view whose `toJSON` returns an *already quoted* string, and a
+  DATE or TIMESTAMP is a bare epoch offset that the column's own type is the
+  only thing explaining.
+- **`registerTool` needs an origin-keyed agent cluster** and rejects with
+  `SecurityError` without one. This page gets that for free: cross-origin
+  isolation forces origin keying, and the transport needs to be cross-origin
+  isolated anyway. The COOP/COEP pair that buys it a `SharedArrayBuffer` buys
+  the tools their agent cluster.
+
+No shipping browser exposes the API without a flag. Chrome and Edge have it
+under an origin trial, and preview builds put it behind
+`chrome://flags/#enable-webmcp-testing`; the
+[Model Context Tool Inspector](https://chromewebstore.google.com/detail/model-context-tool-inspec/gbpdfapgefenggkahomfgkhfehlcenpd)
+extension is the way to call a tool by hand. Registering nothing is the
+ordinary outcome, and the page has to be exactly as good then — which is why
+`registerAgentTools` resolves false rather than throwing, and why nothing else
+on the page reads its result.
 
 ## Cross-origin isolation, on a host that cannot send headers
 
@@ -242,6 +290,13 @@ different Quack port locally: `quackhole_serve` binds `127.0.0.1:9494` by
 default and reuses whatever is already there rather than starting its own, so
 the second one needs `npx ../npm --port 9495`. It refuses to start otherwise,
 because the token it would print is not the token that server accepts.
+
+It drives the WebMCP tools too, against a stub it installs in place of the
+browser's own implementation — Playwright ships a Chromium with neither the flag
+nor an origin trial token, so there is nothing else to register against. The
+stub is not a polyfill and nothing ships it; what it models is the part the
+tools have to survive, which is that a result is JSON-serialized after `execute`
+resolves and a rejection arrives with its reason gone.
 
 It needs a live n0 relay and a native server, so it is not a CI test — it sits
 alongside `test/docker` and `test/browser` as something a human runs.

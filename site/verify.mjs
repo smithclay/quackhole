@@ -198,6 +198,71 @@ await page.addInitScript(() => {
   delete window.WebGL2RenderingContext;
 });
 
+// Stand in for the browser's WebMCP implementation, which this Chromium does
+// not have: the API is behind chrome://flags/#enable-webmcp-testing wherever it
+// exists at all, and Playwright ships a build with neither the flag nor an
+// origin trial token. So the page registers its tools against this instead.
+//
+// It is not a polyfill and nothing ships it. What it models is the one part of
+// the spec the tools have to survive, which is that a result is JSON-serialized
+// by the user agent after `execute` resolves -- so a row carrying a BigInt, as
+// every `count(*)` does, fails here exactly the way it would in Chrome. It
+// models the other half too: a rejected `execute` reaches the agent as a
+// failure with its reason dropped, which is why the tools report errors as
+// values instead.
+await page.addInitScript(() => {
+  const tools = new Map();
+  Object.defineProperty(document, 'modelContext', {
+    configurable: true,
+    value: {
+      async registerTool(tool) {
+        if (tools.has(tool.name)) throw new DOMException(`${tool.name} is registered`, 'InvalidStateError');
+        if (!tool.name || !tool.description) throw new TypeError('a tool needs a name and a description');
+        tools.set(tool.name, tool);
+      },
+      async getTools() {
+        return [...tools.values()].map(({ name, title, description, inputSchema, annotations }) => ({
+          name,
+          title,
+          description,
+          inputSchema,
+          annotations,
+        }));
+      },
+      async executeTool(tool, inputObject = {}) {
+        const found = tools.get(tool?.name ?? tool);
+        if (!found) throw new DOMException('no such tool', 'NotFoundError');
+        const signal = new AbortController().signal;
+        // Null is the spec's answer for a rejected execute *and* for a result
+        // that would not serialize -- the agent is told the call failed and
+        // nothing else. Collapsing both to null here is the point.
+        try {
+          return JSON.stringify(await found.execute(inputObject, { signal }));
+        } catch {
+          return null;
+        }
+      },
+    },
+  });
+
+  // What this script drives the tools through, since it cannot be an agent.
+  window.__qhTools = {
+    list: () => document.modelContext.getTools(),
+    call: async (name, input) => {
+      const [tool] = (await document.modelContext.getTools()).filter((t) => t.name === name);
+      const out = await document.modelContext.executeTool(tool, input);
+      return out === null ? null : JSON.parse(out);
+    },
+  };
+});
+
+/// Call one of the page's WebMCP tools, the way an agent would.
+///
+/// Null means the call failed with nothing to say, which is the outcome the
+/// tools exist to avoid.
+const tool = (page, name, input = {}) =>
+  page.evaluate(([n, i]) => window.__qhTools.call(n, i), [name, input]);
+
 page.on('console', (m) => {
   const t = m.text();
   if (m.type() === 'error' || /qh-shim|qh-bridge|coi/.test(t)) console.log(`  console  ${t}`);
@@ -311,6 +376,54 @@ try {
   console.log(`\n  own query  ${own.ok ? 'ok' : 'FAIL'}\n            ${tail(own.text)}`);
   if (!own.ok) failed = `the hand-typed query failed:\n${own.text}`;
 
+  // --- the tools an agent in the browser gets ------------------------------
+  //
+  // Driven through the stub above rather than by a real agent, which is as far
+  // as this can go: no shipping browser exposes the API without a flag. What
+  // that still proves is everything between `registerTool` and the answer --
+  // that the tools registered at all, that they read the session the page is
+  // actually holding, and that what they return survives being stringified.
+  const registered = await page.evaluate(() => window.__qhTools.list());
+  const names = registered.map((t) => t.name);
+  console.log(`\n  webmcp    ${names.join(', ') || '(none registered)'}`);
+  for (const want of ['attach-remote', 'list-connections', 'run-sql']) {
+    if (!names.includes(want)) failed = `the page did not register the ${want} tool`;
+  }
+  // Read-only is the hint an agent uses to decide a call is safe to make on its
+  // own, and listing connections is the only one of the three that earns it.
+  const readOnly = registered.filter((t) => t.annotations?.readOnlyHint).map((t) => t.name);
+  if (readOnly.join() !== 'list-connections') {
+    failed = `readOnlyHint is on ${readOnly.join(', ') || 'nothing'}, expected list-connections alone`;
+  }
+
+  const listed = await tool(page, 'list-connections');
+  console.log(`  list      ${listed?.connections?.map((c) => `${c.name}(${c.tables.length})`).join(', ')}`);
+  const remoteEntry = listed?.connections?.find((c) => c.name === 'remote');
+  if (!listed?.ok) failed = `list-connections answered ${JSON.stringify(listed)}`;
+  else if (!remoteEntry?.tables.length) failed = 'list-connections found no tables on the remote';
+
+  // count(*) on purpose. DuckDB answers it with a BIGINT, which arrives in the
+  // browser as a BigInt, which `JSON.stringify` throws on -- so a tool that
+  // handed its rows straight back would fail this call and, in a real browser,
+  // fail it with nothing said. `n` coming back as a number is the assertion.
+  const counted = await tool(page, 'run-sql', { sql: 'SELECT count(*) AS n FROM remote.events' });
+  console.log(`  run-sql   ${JSON.stringify(counted?.rows?.[0])} in ${counted?.elapsedMs}ms`);
+  if (counted === null) failed = 'run-sql came back with nothing at all -- its result did not serialize';
+  else if (!counted.ok) failed = `run-sql answered ${JSON.stringify(counted)}`;
+  else if (typeof counted.rows?.[0]?.n !== 'number') {
+    failed = `run-sql returned n as ${typeof counted.rows?.[0]?.n}, expected a number`;
+  }
+
+  // The refusal has to arrive as a value. A tool that threw would reach an
+  // agent as a failed call with the reason dropped, and "already attached" is
+  // the whole of what makes it fixable.
+  const dupeTool = await tool(page, 'attach-remote', { ticket: TICKET });
+  console.log(`  duplicate ${dupeTool?.error ?? JSON.stringify(dupeTool)}`);
+  if (dupeTool === null) failed = 'attach-remote threw at a duplicate ticket instead of reporting it';
+  else if (dupeTool.ok || !/already attached/i.test(dupeTool.error ?? '')) {
+    failed = `attach-remote took a duplicate ticket: ${JSON.stringify(dupeTool)}`;
+  }
+
   // --- the second server, if one was offered -------------------------------
   if (TICKET2) {
     await page.click('#add-remote');
@@ -402,6 +515,24 @@ try {
     { timeout: 30_000 },
   );
   console.log('  hand DETACH  rail back to memory only, no routes drawn');
+
+  // Nothing is attached now, which is the state the last tool needs. Attaching
+  // through it has to leave the workbench where the ticket field leaves it --
+  // same catalog in the rail, same tables under it -- because it goes through
+  // the same `addRemote` and the same redraw, and a tool with a path of its own
+  // would be the one thing this page does not do anywhere else.
+  const reattached = await tool(page, 'attach-remote', { ticket: TICKET });
+  const how = reattached?.ok ? `${reattached.name} via ${reattached.relay}` : JSON.stringify(reattached);
+  console.log(`\n  attach-remote  ${how}`);
+  if (!reattached?.ok) failed = `attach-remote could not attach: ${JSON.stringify(reattached)}`;
+  else {
+    await waitForTables(page, `${reattached.name}.`);
+    const railAfter = await remotes(page);
+    console.log(`  rail      ${railAfter.join(', ')}`);
+    if (!railAfter.includes(reattached.name)) {
+      failed = `the tool attached "${reattached.name}" but the rail lists ${railAfter.join(', ') || 'nothing'}`;
+    }
+  }
 
   // Checked last, so it covers the whole run. Nothing above asserts on the
   // service worker directly -- it is meant to be invisible -- and "invisible"

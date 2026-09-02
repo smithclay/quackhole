@@ -44,6 +44,10 @@ Things agents get wrong with quackhole, and what to do instead:
   "Could not find a Quack authentication token".
 - `.iroh` hosts work only through ATTACH and SQL. `read_csv('https://<id>.iroh:9494/…')`
   goes to httpfs, which knows nothing about iroh, and cannot work.
+- Driving a browser on the workbench page yourself? It registers WebMCP tools on
+  `document.modelContext` — `attach-remote`, `list-connections` and `run-sql`. Prefer them
+  to typing at the terminal, which is an xterm canvas with no readable output. They report
+  failures as `{"ok": false, "error": …}` rather than throwing, so read the result.
 - A browser can only be a client, only over a relay, and only on a cross-origin-isolated
   page (COOP `same-origin` + COEP `require-corp`). There is no fallback; call
   `quackhole.check()` from the npm package to diagnose.
