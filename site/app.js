@@ -192,6 +192,7 @@ function renderManualCommand() {
     '',
     '-- serve waits for the endpoint to learn its home relay, then returns the',
     '-- link to open. No ticket to assemble by hand.',
+    '.mode line',
     `SELECT url FROM quackhole_serve(token := '${manualToken}');`,
   ].join('\n');
 }
