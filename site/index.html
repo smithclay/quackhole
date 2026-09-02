@@ -217,10 +217,10 @@
 <dialog id="serve">
   <form method="dialog" class="dialog-x"><button value="cancel" aria-label="Close">×</button></form>
 
-  <h2>Serve the other end</h2>
+  <h2>Start DuckDB on a VM, sandbox, or laptop</h2>
   <p class="dialog-lede">
-    A DuckDB has to be serving before this workbench can attach it. Whichever way you
-    start it, it prints a ticket — and that ticket is what you bring back here.
+    Start DuckDB somewhere with the quackhole extension. Whichever way you
+    start it, it prints a ticket which connects this browser tab to it.
   </p>
 
   <!--
@@ -239,8 +239,7 @@
 
   <div class="tabpanel" role="tabpanel" id="panel-agent" aria-labelledby="tab-agent">
     <p class="panel-lede">
-      For a machine you are not typing into — a sandbox, a VM, a box you SSH into. Hand
-      this to the agent already working there and it comes back with a ticket.
+      Hand this to the agent that has access to DuckDB (it's a small binary that runs everywhere).
     </p>
     <!-- Built by app.js rather than written out here, for the two things it has to
          interpolate: the token minted in this tab, so this path and the SQL beside

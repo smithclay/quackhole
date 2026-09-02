@@ -179,16 +179,15 @@ const AGENT_DOCS = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)
 /// prompt names no function, no flag and no install command.
 function renderAgentPrompt() {
   $('#cmd-agent').querySelector('code').textContent = [
-    "Make this machine's DuckDB reachable from my browser with quackhole.",
+    "Start duckdb v1.5.5 or higher and make it reachable with quackhole.",
+    "Ask me if I want to load an existing .duckdb file or create sample data.",
     // On its own line: it is the longest thing here and the only part whose
     // length this file does not control, so wrapping around it would re-flow
     // the paragraph every time a self-hosted copy moved.
     `Read ${AGENT_DOCS} first.`,
     '',
-    'Then serve the database I would want to query from here — an existing',
-    '.duckdb file if there is one, otherwise a fresh one with views over',
-    `the data files here — with the token '${manualToken}'.`,
-    'Leave it running.',
+    `Then serve the database I would want to query and leave it running.`,
+    `Use the the token '${manualToken}'.`,
     '',
     'Reply with the qh1_… ticket and nothing else: it grants query access',
     'to this machine, so keep it out of files, logs and commits.',
@@ -199,6 +198,7 @@ function renderAgentPrompt() {
 // carries the token minted in this tab.
 function renderManualCommand() {
   $('#cmd-manual').querySelector('code').textContent = [
+    '-- Note: DuckDB v1.5.5 or higher is required',
     'INSTALL quack; LOAD quack;',
     'INSTALL quackhole FROM community;',
     'LOAD quackhole;',
