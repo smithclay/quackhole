@@ -81,6 +81,10 @@ const REMEDIES = [
     'The server rejected the token. A second server on one machine reuses Quack on port 9494 and prints a token the first never issued — restart it with --port 9495 and use its new link.',
   ],
   [
+    /invalid connection id/i,
+    'The shell lost its connection to DuckDB, which is what resetting the database does. Reload the page to get a new one; anything loaded into the browser-side database is gone either way.',
+  ],
+  [
     /timed? ?out/i,
     'The machine may have stopped serving, or this ticket predates its current run. Ask for a fresh link.',
   ],
@@ -540,6 +544,27 @@ async function embedShell() {
   greet();
 }
 
+/// Put the workbench back together after the shell reset the database.
+///
+/// Nothing here is recoverable: the remotes were attached to a catalog that no
+/// longer exists and their secrets went with it, so this rebuilds the local half
+/// and lets the rail say what is true, which is that nothing is attached.
+///
+/// Never throws. Its caller is the shell's own `open`, and a rejection there
+/// costs the visitor their terminal -- see the note at that call site.
+async function rebuild() {
+  try {
+    session = await newSession();
+    // syncWires, reached through here, drops the routes whose remotes the reset
+    // took with it -- the same path a hand-typed DETACH takes.
+    await refreshSchema();
+  } catch (err) {
+    // The rail is now stale and the terminal is not, which is the better half to
+    // keep. Nothing on screen can say so without claiming the shell is broken.
+    console.error('[quackhole] could not rebuild the session after a reset:', err);
+  }
+}
+
 /// Say what a newly attached remote holds, in the shell, as a statement the
 /// visitor could have typed.
 ///
@@ -664,10 +689,15 @@ function observed(database) {
       if (prop === 'open') {
         return async (config) => {
           const result = await value.call(target, config);
-          session = await newSession();
-          // syncWires, reached through here, drops the routes whose remotes the
-          // reset took with it -- the same path a hand-typed DETACH takes.
-          await refreshSchema();
+          // Started, not awaited, and it swallows its own failures. What the
+          // shell does with a rejected `open` is give up on it: `open_command`
+          // writes the message and returns *before* reconnecting, leaving the
+          // shell holding the connection id the reset just destroyed, and every
+          // statement after that fails with "Invalid connection id" until the
+          // page is reloaded. Rebuilding the session is fallible -- it reinstalls
+          // an extension over the network -- so awaiting it here would let a
+          // slow repository take the terminal down with it.
+          rebuild();
           return result;
         };
       }

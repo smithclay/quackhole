@@ -89,6 +89,13 @@ const terminal = (page) => page.$eval('.xterm-rows', (e) => e.innerText);
 // against the trailing whitespace on purpose: while `.clear` is being typed the
 // only line is `duckdb> .clear`, which starts with a prompt and would satisfy
 // anything looser -- so the wait would pass before the clear had happened.
+// The shell at a prompt with nothing running: the last thing on screen is a bare
+// prompt. Not the same as IDLE below, which also wants an otherwise empty screen.
+const SETTLED = () => {
+  const lines = document.querySelector('.xterm-rows').innerText.split('\n').filter((l) => l.trim());
+  return lines.length > 0 && /^duckdb>\s*$/.test(lines[lines.length - 1]);
+};
+
 const IDLE = () => {
   const lines = document.querySelector('.xterm-rows').innerText.split('\n').filter((l) => l.trim());
   return lines.length === 1 && /^duckdb>\s*$/.test(lines[0]);
@@ -111,6 +118,12 @@ const IDLE = () => {
 /// line and there is no honest place to cut; callers look for what they expect
 /// instead.
 async function run(page, sql) {
+  // The page types into this terminal too -- the greeting at boot, and a
+  // statement over each remote as it attaches -- and both are round trips this
+  // script does not otherwise wait for. Clearing the screen underneath one of
+  // them loses it, and then nothing ever reaches IDLE.
+  await page.waitForFunction(SETTLED, null, { timeout: 90_000 });
+
   await page.click('#shell');
   await page.keyboard.type('.clear');
   await page.keyboard.press('Enter');
@@ -149,6 +162,8 @@ async function announced(page, name) {
     name,
     { timeout: 60_000 },
   );
+  // The text appears before the prompt that follows it does.
+  await page.waitForFunction(SETTLED, null, { timeout: 30_000 });
 }
 
 // The last thing the shell printed before the trailing prompt, for the log.

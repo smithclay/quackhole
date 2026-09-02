@@ -157,6 +157,14 @@ the npm README's own quickstart block against a live server.
   then clears the fragment with `replaceState` before embedding. A ticket is
   base64url and carries no comma of its own; a link with one appended would
   otherwise be a page that runs a stranger's SQL on arrival.
+- **Nothing fallible may run inside the shell's `open`.** `site/app.js` proxies
+  `AsyncDuckDB.open` so the workbench can rebuild its session after `.open`
+  resets the database. That rebuild reinstalls an extension over the network, so
+  it can fail or hang -- and `open_command` in `shell.rs` writes the message and
+  `return`s *before* reconnecting, leaving the shell holding the connection id
+  the reset just destroyed. Every statement after that fails with
+  `Invalid connection id` until the page is reloaded. So `rebuild()` is started
+  and not awaited, and swallows its own errors.
 - **The shell publishes no way to write to its terminal.** `embed()` takes a
   database and four display settings and resolves to `undefined`; the package
   exports it, `getJsDelivrModule` and five version strings, and puts nothing on a
