@@ -29,8 +29,10 @@ Three things make this a usable loop rather than a fast one:
   the link one server printed, and every reload comes back already attached —
   you are iterating on the connected page, not on the empty one.
 - **You do not need a second machine for most of it.** The shell, the connection rail
-  and the schema list all work against the local `memory` connection alone. Only
-  the routes panel and remote queries need a real remote.
+  and the schema list all work against the local `memory` connection alone —
+  which opens holding a `browser_info` table, so the rail has something in it
+  and there is something to click before any remote exists. Only the routes
+  panel and remote queries need a real remote.
 
 `vite.config.js` owns the two things Vite does not do by itself, and the
 comments there say why each is the way it is: the files that must ship
@@ -168,11 +170,22 @@ failure still arrives with its remedy from `docs/TROUBLESHOOTING.md` attached.
 It wraps `open` too, because `.open` at the prompt resets the database and takes
 every attached remote with it.
 
-Two things went with the notebook and are not coming back through this seam. The
-page no longer seeds and runs a first query against a freshly attached remote,
-and clicking a table in the rail copies a `SELECT` rather than running one —
-both because the shell takes its input from the keyboard and publishes no way to
-put text on its prompt.
+The keyboard is the only way in, so anything the page wants to run goes in as
+keystrokes — `runInShell`, which is also what the agent tools use, with all the
+constraints listed under them. Clicking a table in the rail runs
+`DESCRIBE <catalog>.<table>;` through it. That used to copy a `SELECT` to the
+clipboard instead, because there was no way to put text on the prompt; there is
+now, and handing somebody a thing to paste was never the better half of that
+trade.
+
+`DESCRIBE` rather than a `SELECT`, because the question a table name in a rail
+asks is "what is in it?", and the answer that is always safe to run is its
+shape. A `SELECT` on a remote is a relay round trip over however many rows,
+decided by a click on a name.
+
+The one thing that did go with the notebook and is not coming back: the page no
+longer seeds and runs a first query against a freshly attached remote. It says
+the remote is connected and leaves the rail beside it to say what is in it.
 
 ## Files
 

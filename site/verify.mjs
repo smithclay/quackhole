@@ -360,6 +360,9 @@ try {
 
   const tables = await page.$$eval('.schema-item', (els) => els.map((e) => e.textContent.trim()));
   console.log(`  tables    ${tables.join(', ') || '(none)'}`);
+  // The local database opens holding one, so the rail is never empty and the
+  // first thing to click does not need a remote.
+  if (!tables.includes('memory.browser_info')) failed = `the local browser_info table is missing: ${tables.join(', ')}`;
 
   // What the notebook used to seed and run for a freshly attached remote. The
   // shell takes nothing from the page, so these are typed now -- by a visitor,

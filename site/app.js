@@ -171,7 +171,7 @@ const AGENT_DOCS = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)
 function renderAgentPrompt() {
   $('#cmd-agent').querySelector('code').textContent = [
     "Start duckdb v1.5.5 or higher and make it reachable with quackhole.",
-    "Ask me if I want to load an existing .duckdb file or create sample data.",
+    "If the duckdb database is empty, create some sample data in memory.",
     // On its own line: it is the longest thing here and the only part whose
     // length this file does not control, so wrapping around it would re-flow
     // the paragraph every time a self-hosted copy moved.
@@ -287,6 +287,9 @@ let session = null;
 // because `.open` typed at its prompt takes the session down -- see `observed`.
 let db = null;
 let worker = null;
+// Which wasm build `selectBundle` picked, for `browser_info`. Named at boot
+// rather than sniffed out of the URL later.
+let bundleName = null;
 
 /// What the shell opens on, kept as a view so the statement that shows it is
 /// short enough to read as an invitation.
@@ -301,8 +304,54 @@ let worker = null;
 const WELCOME = `CREATE OR REPLACE VIEW welcome AS SELECT unnest([
   'This is a full DuckDB SQL shell, running inside your browser tab.',
   'Nothing was installed, and it all goes away when you close the tab.',
+  'There is already a table here: try SELECT * FROM browser_info;',
   'Press "+ add remote" to attach a DuckDB on another machine and query it here.'
 ]) AS welcome`;
+
+/// Quote a string as a SQL literal.
+///
+/// The same one `web/session.js` keeps for the same reason, and not imported
+/// from it: that is the shipped client's, and this is the page building its own
+/// statement. A user agent string is allowed to contain an apostrophe.
+const sqlString = (s) => `'${String(s).replaceAll("'", "''")}'`;
+
+/// What this tab is, as a table.
+///
+/// The local database opens holding one, so the schema rail is never empty and
+/// there is something to query before any remote exists. `FROM browser_info;`
+/// is a first statement that answers with the visitor's own machine, which is a
+/// better introduction to a SQL shell than an empty catalog.
+///
+/// A table where `welcome` is a view, and for the opposite reason: the rail
+/// lists `duckdb_tables()`, which excludes views, and the point of this one is
+/// to be listed. It is the local half of the demo server's `host_info` -- the
+/// same question, asked of the machine the browser is on.
+///
+/// Every value is quoted rather than bound, because this goes down the same
+/// connection everything else does and that takes text.
+function browserInfoSql(bundleName) {
+  // userAgentData is the supported way to ask and is Chromium-only. The UA
+  // string is the fallback, read for the one token that names the engine rather
+  // than parsed properly -- that is a job nobody has ever finished, and a demo
+  // table is not the place to start.
+  const brand = navigator.userAgentData?.brands?.find((b) => !/not.a.brand/i.test(b.brand));
+  const browser = brand
+    ? `${brand.brand} ${brand.version}`
+    : (navigator.userAgent.match(/\b(Firefox|Edg|Chrome|Safari)\/(\d+)/)?.slice(1).join(' ') ?? 'unknown');
+
+  // navigator.platform is deprecated and still the only thing every browser
+  // answers; userAgentData.platform is preferred where it exists.
+  const platform = navigator.userAgentData?.platform || navigator.platform || 'unknown';
+  const cores = Number.isInteger(navigator.hardwareConcurrency) ? navigator.hardwareConcurrency : 'NULL';
+
+  return `CREATE OR REPLACE TABLE browser_info AS SELECT
+    ${sqlString(browser)} AS browser,
+    ${sqlString(platform)} AS platform,
+    ${cores} AS cores,
+    version() AS duckdb_version,
+    ${sqlString(bundleName)} AS wasm_bundle,
+    ${crossOriginIsolated} AS cross_origin_isolated`;
+}
 
 /// A session over a fresh connection, with the transport extension loaded.
 ///
@@ -314,13 +363,16 @@ async function newSession() {
   await conn.query('INSTALL quack');
   await conn.query('LOAD quack');
   // Recreated here rather than once at boot, because `.open` resets the database
-  // and `FROM welcome;` should keep working after it.
+  // and both of these should still be there afterwards -- an empty rail after a
+  // reset looks like the reset broke something.
   await conn.query(WELCOME);
+  await conn.query(browserInfoSql(bundleName));
   return new QuackholeSession({ conn, worker });
 }
 
 async function bootLocal() {
   const bundle = await duckdb.selectBundle(DUCKDB_BUNDLES);
+  bundleName = bundle.mainModule === DUCKDB_BUNDLES.mvp.mainModule ? 'mvp' : 'eh';
 
   // qh-worker installs the XHR shim into the worker global and only then loads
   // duckdb's own worker bundle, so duckdb is entirely unmodified underneath.
@@ -431,21 +483,27 @@ async function refreshSchema() {
       li.innerHTML = `<button class="schema-item" type="button"></button>`;
       const btn = li.querySelector('button');
       btn.textContent = qualified;
-      // Copied rather than run. The notebook could open a cell on a table; the
-      // shell takes its input from the keyboard and publishes no way to put text
-      // on its prompt, so this hands the query over and leaves running it to the
-      // visitor. Same intent as before -- start them off, do not decide what
-      // they wanted.
-      btn.title = `Copy a query over ${qualified}`;
+      // Run, now that there is a way to. This used to copy a SELECT to the
+      // clipboard, because the shell takes its input from the keyboard and
+      // publishes no way to put text on its prompt -- `runInShell` is that way,
+      // and it types the statement where the visitor can see it rather than
+      // handing them something to paste.
+      //
+      // DESCRIBE rather than a SELECT, because the question a table name in a
+      // rail asks is "what is in it?" and the answer that is always safe to run
+      // is its shape. A SELECT on a remote is a relay round trip over however
+      // many rows, decided by a click on a name.
+      btn.title = `Describe ${qualified} in the shell`;
       btn.addEventListener('click', async () => {
         try {
-          await navigator.clipboard.writeText(`SELECT * FROM ${qualified} LIMIT 20;`);
-          btn.dataset.copied = '';
-          setTimeout(() => delete btn.dataset.copied, 1200);
+          await runInShell(`DESCRIBE ${qualified};`);
         } catch {
-          // Denied, or the document is not focused. There is nothing to fall
-          // back to and nowhere in the rail to put an error, and the table name
-          // is still on screen to be typed.
+          // The prompt had something in it, or the statement never settled.
+          // The terminal is where the answer would have gone and there is
+          // nowhere in the rail to put a message, so the button says it briefly
+          // and that is all -- the name is still there to type by hand.
+          btn.dataset.blocked = '';
+          setTimeout(() => delete btn.dataset.blocked, 1600);
         }
       });
       list.append(li);

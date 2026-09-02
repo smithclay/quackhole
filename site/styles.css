@@ -64,19 +64,45 @@ button {
 button:hover { background: #fff759; border-color: #fff759; }
 button:disabled { background: var(--line); border-color: var(--line); color: var(--dim); cursor: not-allowed; }
 
+/* The secondary control beside a filled primary -- "no ticket yet? set up the
+   other end", "not now", "show me instructions".
+
+   It used to say "secondary" by being hard to see, which is the one way not to.
+   --dim on the dialog's --ink-2 measures 4.56:1: it clears WCAG 1.4.3 for text
+   and still disappears at 11px uppercase against a dark panel. The border was
+   worse and was the actual failure -- --line against --ink-2 is 1.28:1, where
+   1.4.11 asks 3:1 of a control's boundary, so the button had no edge at all.
+
+   So the label takes --paper (14.7:1) and the border takes --dim (4.6:1), and
+   what says "secondary" is the absence of a fill: the primary beside it is a
+   solid block of --signal. That is hierarchy carried by shape rather than by
+   contrast, which is the part that has to survive a colour-blind or low-vision
+   reader. Padding is up with it, so the target clears the 24px of 2.5.8 with
+   room rather than by 0.08px. */
 .ghost {
-  background: transparent; color: var(--dim); border-color: var(--line);
-  font-family: var(--data); font-size: 0.68rem;
-  letter-spacing: 0.08em; text-transform: uppercase; padding: 0.35rem 0.65rem;
+  background: transparent; color: var(--paper); border-color: var(--dim);
+  font-family: var(--data); font-size: 0.7rem;
+  letter-spacing: 0.08em; text-transform: uppercase; padding: 0.45rem 0.8rem;
 }
 /* The same control as an anchor. A <button> brings its own border, radius and
-   line-height; an <a> brings none of them, and inherits an underline. */
+   line-height; an <a> brings none of them, and inherits an underline.
+
+   Only the bar's "get help" is one, and it stays the quieter of the two: it is
+   chrome sitting next to the brand rather than an action in a dialog, and --dim
+   measures 4.96:1 against the bar, which clears 1.4.3 on its own. The border is
+   what had to change there too -- --line on --ink is 1.39:1. */
 a.ghost {
   display: inline-flex; align-items: center;
-  border: 1px solid var(--line); border-radius: 3px;
+  color: var(--dim);
+  border: 1px solid var(--dim); border-radius: 3px;
   line-height: 1; text-decoration: none;
 }
-.ghost:hover { background: transparent; color: var(--signal); border-color: var(--signal); }
+/* Hover moves the fill as well as the colour, so the affordance is not carried
+   by hue alone. --signal on the tinted panel is still 5.6:1. */
+.ghost:hover {
+  background: color-mix(in srgb, var(--signal) 12%, transparent);
+  color: var(--signal); border-color: var(--signal);
+}
 
 /* An icon on its own in the bar, quiet until wanted. No border and no label:
    the two controls beside it are already bordered, and a third would read as a
@@ -174,7 +200,7 @@ a.ghost {
 .schema-item:hover { background: var(--ink-3); color: var(--signal); }
 /* Acknowledges the copy without moving anything: the table name is the label
    and swapping it out for "copied" would take away what was just copied. */
-.schema-item[data-copied]::after { content: ' copied'; color: var(--relay); }
+.schema-item[data-blocked]::after { content: ' — terminal busy'; color: var(--bad); }
 
 /* --- wire ---------------------------------------------------------------- */
 
