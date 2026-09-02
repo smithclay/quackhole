@@ -416,6 +416,24 @@ try {
     failed = `readOnlyHint is on ${readOnly.join(', ') || 'nothing'}, expected list-connections alone`;
   }
 
+  // The bar's chip is the only thing on screen that says any of the above
+  // happened, and it is drawn from what registerAgentTools() returned. This run
+  // shims document.modelContext, so registration succeeds and the chip has to
+  // say so -- which is the one state a browser without the flag cannot reach,
+  // and therefore the one nobody would otherwise see before shipping it.
+  const surface = await page.$eval('#agents-open', (e) => e.dataset.state);
+  if (surface !== 'ready') failed = `the webmcp chip reads "${surface}" with all three tools registered`;
+
+  // And the deep link carries a prompt, never a credential. A ?q= is a URL: it
+  // lands in an address bar, in a history entry and in OpenAI's logs, and a
+  // ticket is a password that does not expire. A remote is attached by now, so
+  // this is checked against a real one rather than against the shape of one.
+  const deepLink = await page.$eval('#agents-chatgpt', (e) => e.href);
+  if (!deepLink.startsWith('https://chatgpt.com/?q=')) failed = `the ChatGPT link is ${deepLink}`;
+  else if (deepLink.includes(TICKET) || /qh1_[A-Za-z0-9_-]{8}/.test(decodeURIComponent(deepLink))) {
+    failed = 'the ChatGPT deep link carries a ticket';
+  } else console.log('  deeplink  chatgpt.com/?q= carries the prompt and no ticket');
+
   const listed = await tool(page, 'list-connections');
   console.log(`  list      ${listed?.connections?.map((c) => `${c.name}(${c.tables.length})`).join(', ')}`);
   const remoteEntry = listed?.connections?.find((c) => c.name === 'remote');

@@ -150,16 +150,19 @@ const manualToken = (() => {
   return [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
 })();
 
-// Where the agent is sent to read before it does anything.
+// Two addresses handed to an agent: where to read before it does anything, and
+// where the workbench itself is.
 //
-// Resolved against this page, so a vendored or self-hosted workbench points at
-// its own copy -- except on loopback, where it must not. The agent is on
-// another machine by construction, and a dev server's URL resolves only on the
-// laptop that started it, so testing this flow against a real sandbox would
-// hand the agent a link it cannot fetch.
-const AGENT_DOCS = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)
-  ? 'https://smithclay.github.io/quackhole/llms.txt'
-  : new URL('llms.txt', document.baseURI).href;
+// Both resolved against this page, so a vendored or self-hosted copy points at
+// itself -- except on loopback, where they must not. An agent handed either is
+// somewhere else by construction (another machine for the docs, another browser
+// profile or another tab for the workbench), and a dev server's URL resolves
+// only on the laptop that started it. So testing either flow for real would
+// otherwise hand the agent a link it cannot fetch.
+const LOOPBACK = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+const PUBLISHED = 'https://smithclay.github.io/quackhole/';
+const AGENT_DOCS = LOOPBACK ? `${PUBLISHED}llms.txt` : new URL('llms.txt', document.baseURI).href;
+const WORKBENCH_URL = LOOPBACK ? PUBLISHED : new URL('.', document.baseURI).href;
 
 /// The prompt to hand an agent already working on the machine with the data.
 ///
@@ -199,6 +202,69 @@ function renderManualCommand() {
     '.mode line',
     `SELECT url FROM quackhole_serve(token := '${manualToken}');`,
   ].join('\n');
+}
+
+/// The prompt that sends an agent to this workbench, and the ChatGPT link that
+/// carries it.
+///
+/// One string, shown and linked. The copy button reads the block on screen, so
+/// what a visitor pastes is exactly what the button opens -- and the prompt is
+/// worth having on its own, because prefilling ChatGPT from a `?q=` is
+/// undocumented and the mobile app ignores it.
+///
+/// It carries no ticket, and that is deliberate rather than unfinished. A query
+/// string is a URL: it lands in an address bar, in a history entry and in
+/// somebody else's logs, and a ticket is a password that does not expire --
+/// which is the fourth thing #connect tells a visitor before they connect. So
+/// the prompt tells the agent to ask for one instead. An agent that cannot
+/// attach without being handed a ticket is the same property the wire has.
+///
+/// It names the tools rather than describing the page, because the tools are
+/// registered with descriptions of their own (see webmcp.js) and repeating them
+/// here would be a second copy to drift. What this has to supply is the address
+/// and the order to call them in.
+function renderChatPrompt() {
+  const prompt = [
+    `Open ${WORKBENCH_URL} and work in that tab.`,
+    '',
+    'It is a DuckDB workbench, and it registers WebMCP tools on the page:',
+    'list-connections, attach-remote and run-sql. Call those rather than',
+    'reading the screen and clicking around it.',
+    '',
+    'Start with list-connections to see which catalogs are attached, then',
+    'run-sql to query one. Qualify a remote table with the catalog name',
+    'list-connections gave you.',
+    '',
+    'run-sql types the statement into the terminal on screen and tells you',
+    'only that it ran -- the rows are drawn for me, so ask me what it said.',
+    '',
+    'To reach a database I am serving, ask me for its qh1_ ticket and pass',
+    'that to attach-remote. Do not invent one.',
+  ].join('\n');
+
+  $('#cmd-chat').querySelector('code').textContent = prompt;
+  $('#agents-chatgpt').href = `https://chatgpt.com/?q=${encodeURIComponent(prompt)}`;
+}
+
+/// Say what this browser did with the tools, on the chip and in the dialog.
+///
+/// From the one boolean registerAgentTools() returns rather than from re-reading
+/// document.modelContext here. Registration fails for reasons a feature test
+/// cannot see -- a duplicate name, a rejected schema, a document that is not
+/// origin-keyed -- so a second detection would report "ready" in exactly the
+/// case worth reporting.
+function markAgentSurface(ok) {
+  // The chip's label is a claim about the page and is true everywhere; only the
+  // dot is a claim about this browser. So nothing here touches the text.
+  $('#agents-open').dataset.state = ok ? 'ready' : 'off';
+
+  const line = $('#agents-state');
+  line.dataset.state = ok ? 'ready' : 'off';
+  line.textContent = ok
+    ? 'This browser has WebMCP. The three tools below are registered on this page and an agent can call them now.'
+    : 'This browser has no WebMCP, so nothing is registered and the workbench is exactly what it was.'
+      + ' It is behind a flag or an origin trial token in every browser that has it at all —'
+      + ' in Chrome, chrome://flags/#enable-webmcp-testing.';
 }
 
 /// Wire a tablist up for the keyboard.
@@ -1121,6 +1187,12 @@ function openAdd() {
 
 $('#add-remote').addEventListener('click', openAdd);
 
+// Not routed through `cross`: that one is for the two halves of adding a remote
+// and carries #add's state between them. This dialog is beside that sequence
+// rather than in it. Nothing is closed first either -- a modal blocks the bar
+// underneath it, so the chip is only reachable when none is open.
+$('#agents-open').addEventListener('click', () => $('#agents').showModal());
+
 $('#paste-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   pasteError.hidden = true;
@@ -1207,6 +1279,7 @@ async function offerConnect(ticket) {
 
 renderAgentPrompt();
 renderManualCommand();
+renderChatPrompt();
 
 // A ticket can arrive in the fragment, which never leaves the browser -- it is
 // not sent to GitHub's servers and does not appear in their logs. That is what
@@ -1250,13 +1323,19 @@ try {
   // shell's prompt replaces `session` wholesale -- see `rebuild`. Resolves false
   // and never throws: WebMCP is behind a flag in every browser that has it at
   // all, so registering nothing is the ordinary outcome.
-  await registerAgentTools({
-    session: () => session,
-    attach: attachForAgent,
-    run: runInShell,
-    refresh: refreshSchema,
-    remedyFor,
-  });
+  // The chip in the bar and the state line in its dialog both come off this,
+  // which is why the result is kept rather than dropped: registering nothing is
+  // the ordinary outcome, and a page that says so is more use than one that
+  // claims an agent surface every visitor's browser refused.
+  markAgentSurface(
+    await registerAgentTools({
+      session: () => session,
+      attach: attachForAgent,
+      run: runInShell,
+      refresh: refreshSchema,
+      remedyFor,
+    }),
+  );
 } catch (err) {
   // The overlay stays up and turns into the error. Dismissing it would reveal a
   // workbench with a dead terminal in it and no way to find out why.
