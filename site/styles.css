@@ -30,6 +30,16 @@
 
   --bar-h: 3.1rem;
   --rail-w: 17rem;
+
+  /* How tall the app gets to be. Not 100vh: on a phone that is the *large*
+     viewport, measured with the URL bar retracted, so a full-height terminal
+     spends its life with its last rows -- the prompt among them -- behind
+     browser chrome. 100dvh tracks the URL bar, and app.js overwrites this with
+     visualViewport's height when there is one, which is the only thing that
+     reports the on-screen keyboard. The fallback chain matters: a browser
+     without dvh gets vh, which is what it had before. */
+  --app-h: 100vh;
+  --app-h: 100dvh;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -146,7 +156,7 @@ a.ghost {
   position: sticky; top: var(--bar-h); align-self: start;
   /* Full viewport height, so the rail reads as a wall of the workbench rather
      than a card floating in the corner when there is little in it. */
-  height: calc(100vh - var(--bar-h));
+  height: calc(var(--app-h) - var(--bar-h));
   overflow-y: auto;
 }
 
@@ -155,6 +165,27 @@ a.ghost {
   letter-spacing: 0.14em; text-transform: uppercase;
   color: var(--dim); margin: 0 0 0.75rem;
 }
+
+/* The disclosure's own row. `list-style: none` plus the -webkit- pseudo is what
+   it takes to be rid of the default marker in every engine; the chevron below
+   replaces it on the other side, where it lines up with the panel edge rather
+   than with the first letter of the heading. */
+.rail-block > summary {
+  display: flex; align-items: center; gap: 0.5rem;
+  list-style: none; cursor: pointer;
+  padding: 0.3rem 0; border-radius: 2px;
+}
+.rail-block > summary::-webkit-details-marker { display: none; }
+.rail-block > summary h2 { margin: 0; }
+.rail-block > summary::after {
+  content: ''; margin-left: auto; flex: none;
+  width: 0.4rem; height: 0.4rem;
+  border-right: 1.5px solid var(--dim); border-bottom: 1.5px solid var(--dim);
+  transform: translateY(-0.12rem) rotate(45deg);
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+.rail-block[open] > summary::after { transform: translateY(0.06rem) rotate(-135deg); }
+.rail-block > summary:hover h2, .rail-block > summary:hover::after { color: var(--paper); border-color: var(--paper); }
 
 .conns { list-style: none; margin: 0 0 0.75rem; padding: 0; display: grid; gap: 0.4rem; }
 .conn {
@@ -245,7 +276,7 @@ a.ghost {
    it scrolls its own scrollback, which is what a terminal is for and what its
    history, its search and its selection all assume. */
 .shell {
-  height: calc(100vh - var(--bar-h));
+  height: calc(var(--app-h) - var(--bar-h));
   /* Grid children are min-width:auto by default, so a wide result would push
      the rail off the screen rather than scroll inside the terminal. */
   min-width: 0;
@@ -275,7 +306,7 @@ dialog {
   color: var(--paper);
   padding: 1.75rem;
   width: min(46rem, calc(100vw - 2rem));
-  max-height: calc(100vh - 4rem);
+  max-height: calc(var(--app-h) - 4rem);
   /* max-height alone clips: the connect dialog explains what attaching does
      before it offers the button, and on a short window the button is the part
      that goes. */
@@ -414,14 +445,86 @@ dialog hr { border: 0; border-top: 1px solid var(--line); margin: 1.6rem 0; }
 
 /* --- narrow -------------------------------------------------------------- */
 
+/* The rail stops being a wall and becomes a stack of disclosures above the
+   terminal.
+
+   `height` is the line that matters. It was never overridden here, so the rail
+   kept a full screen of mostly empty panel and pushed the terminal -- the thing
+   the page is for -- entirely below the fold on every phone. Collapsed, the
+   three blocks are three rows, and the terminal starts where they end.
+
+   Flex rather than grid, so the terminal takes whatever is left: expanding a
+   panel shrinks it to its min-height and then scrolls the page, rather than
+   either pane deciding a fixed share in advance. */
 @media (max-width: 52rem) {
-  .workbench { grid-template-columns: 1fr; }
-  .rail {
-    position: static; max-height: none;
-    border-right: 0; border-bottom: 1px solid var(--line);
-    flex-direction: row; flex-wrap: wrap; gap: 1.25rem;
+  :root { --bar-h: 2.75rem; }
+
+  .workbench {
+    display: flex; flex-direction: column;
+    min-height: var(--app-h);
   }
-  .rail-block { flex: 1 1 14rem; }
+  .rail {
+    position: static; height: auto; max-height: none; overflow: visible;
+    /* The base rule aligns the rail to the start of its grid area. In a flex
+       column that reads as the *cross* axis and shrinks it to its content
+       width, which put the whole rail in a 129px strip down the left. */
+    align-self: stretch;
+    border-right: 0; border-bottom: 1px solid var(--line);
+    padding: 0.6rem 0.9rem 0.9rem;
+    gap: 0.35rem;
+  }
+  /* Room to press. A summary is the whole row, so the height comes from its
+     padding rather than from anything the heading does. */
+  .rail-block > summary { padding: 0.55rem 0; }
+  .shell {
+    /* Basis zero, not auto. `.shell > * { height: 100% }` makes the terminal's
+       height circular with its own content, so an auto basis resolves to the
+       whole scrollback -- 2400px of shell under a 390px screen. From zero the
+       height comes only from the space the rail left. */
+    height: auto; flex: 1 1 0;
+    /* Below this the terminal is a slot rather than a shell -- a DuckDB result
+       is five lines before it has said anything. Past it the page scrolls,
+       which is the right answer when somebody has opened all three panels. */
+    min-height: 17rem;
+    padding: 0.5rem 0 0.5rem 0.6rem;
+    /* The one lever there is on the terminal's width. `embed()` takes a font
+       family and no size, and xterm measures its cell from its own configured
+       size rather than from the container -- setting font-size here does
+       nothing, which was worth checking before resorting to this. `zoom` is a
+       layout-affecting scale, so xterm measures the larger box and lays out more
+       columns, then everything draws at 85%.
+
+       It is worth a trick because a table is the output of this page. At 390px
+       a phone gets 44 columns, and the shell answers by narrowing every column
+       until "platform" is "plat/form" and a version is "v1.5/.4"; 52 columns
+       fits both. A browser without `zoom` simply gets the 44, which is what it
+       had. */
+    zoom: 0.85;
+  }
+
+  .bar { padding: 0 0.75rem; gap: 0.6rem; }
+  .brand { font-size: 0.76rem; }
+
+  dialog { padding: 1.15rem; width: min(46rem, calc(100vw - 1.25rem)); }
+  /* The heading is display type at a size chosen for a 46rem dialog; on a phone
+     it is three lines of the viewport before the sentence that explains it. */
+  dialog h2 { font-size: 1.05rem; }
+  .dialog-actions { flex-wrap: wrap; }
+}
+
+/* Touch has no hover, so anything that only appears on hover does not exist.
+   The detach button was one of them: on a phone there was no way to remove a
+   remote at all. Coarse pointers also get bigger targets -- 2.5.8 asks 24px,
+   and a row of table names at rail density is under it. */
+@media (hover: none) {
+  .conn-x {
+    opacity: 1;
+    /* The padding alone left it 25x14: wide enough and half as tall as it has
+       to be, because the glyph sets the height and the glyph is a x. */
+    min-width: 2rem; min-height: 2rem;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .schema-item { padding: 0.45rem 0.4rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -274,6 +274,48 @@ for (const btn of document.querySelectorAll('.copy')) {
   });
 }
 
+// --- fitting the viewport ----------------------------------------------------
+
+/// Keep `--app-h` equal to the space the browser is actually giving the page.
+///
+/// The stylesheet defaults it to `100dvh`, which tracks a phone's retracting URL
+/// bar and is right until a keyboard opens. The on-screen keyboard shrinks the
+/// *visual* viewport and leaves the layout viewport alone, so `dvh` still
+/// measures the whole screen and the terminal's last rows -- the prompt among
+/// them, which is the row being typed into -- sit behind the keyboard.
+/// `visualViewport` is the only thing that reports the difference.
+///
+/// The shell's own ResizeObserver picks it up from there: the element's height
+/// changes, so xterm re-measures and reflows to the rows that are left.
+///
+/// Left alone entirely where there is no `visualViewport`, so the CSS default
+/// stands rather than being replaced by a worse guess.
+function trackViewport() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const apply = () => document.documentElement.style.setProperty('--app-h', `${Math.round(vv.height)}px`);
+  vv.addEventListener('resize', apply);
+  apply();
+}
+
+/// Open the rail's panels on a wide screen, close them on a narrow one.
+///
+/// `open` is an attribute rather than a style, so the breakpoint cannot do this
+/// on its own. Beside the terminal there is room for all three and collapsing
+/// them would only hide things; above it, three open panels are a screen of
+/// scrolling in front of the prompt.
+///
+/// Reapplied on the crossing rather than on every resize, so a panel somebody
+/// opened stays open until the layout itself changes underneath it.
+function trackRailPanels() {
+  const narrow = matchMedia('(max-width: 52rem)');
+  const apply = () => {
+    for (const panel of document.querySelectorAll('.rail-block')) panel.open = !narrow.matches;
+  };
+  narrow.addEventListener('change', apply);
+  apply();
+}
+
 // --- the local session -------------------------------------------------------
 
 const DUCKDB_BUNDLES = {
@@ -1187,6 +1229,12 @@ try {
 // replaceState rather than assignment, which would push a history entry and
 // fire hashchange.
 if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+
+// Both before bootLocal, so the shell's first measurement is of the size it is
+// actually going to have. xterm picks its column count from the element it is
+// handed and only re-measures when something tells it to.
+trackViewport();
+trackRailPanels();
 
 try {
   await bootLocal();
