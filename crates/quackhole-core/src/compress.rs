@@ -2,7 +2,7 @@
 //!
 //! Quack answers in `application/vnd.duckdb`, which is DuckDB's own
 //! serialisation and is not compressed: measured against a live `quack_serve`,
-//! 15.8 MB of real responses gzip to 5.2 MB at level 6 and 5.6 MB at level 1.
+//! 51 MB of real responses gzip to 17.2 MB at level 6 and 18.3 MB at level 1.
 //! Every one of those bytes crosses a relay somebody else runs, so this is the
 //! cheapest thing available -- roughly a third of the wire, for CPU that a relay
 //! leg dwarfs.
@@ -35,7 +35,7 @@
 //! round trip and no state. An INSERT with a large body would benefit, and is
 //! left for whoever measures it.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use flate2::Compression;
 use flate2::read::GzDecoder;
 use std::io::Read;
@@ -62,8 +62,8 @@ pub const MAGIC: &[u8] = b"\x00QHZ1";
 /// Level 1, and deliberately the cheapest one.
 ///
 /// The measurement that matters is the ratio against the relay, not against
-/// another level: level 6 gets 3.02x and level 1 gets 2.84x on real Quack
-/// responses, which is six percent of the wire for several times the CPU. The
+/// another level: level 6 gets 2.96x and level 1 gets 2.79x on the capture
+/// above, which is six percent of the wire for several times the CPU. The
 /// serving side is somebody's laptop with a DuckDB on it, and it is answering
 /// queries with the same cores.
 const LEVEL: Compression = Compression::new(1);
@@ -129,44 +129,51 @@ impl Encoder {
         }
     }
 
-    /// Compress `chunk` and return whatever is ready to go out.
+    /// Compress `chunk`, appending whatever is ready to go out to `out`.
     ///
-    /// May be empty: gzip buffers, and a small chunk usually produces nothing at
-    /// all. An empty result is not end of stream -- `finish` is.
-    pub fn push(&mut self, chunk: &[u8]) -> Result<Vec<u8>> {
+    /// `out` may be left untouched: gzip buffers, and a small chunk usually
+    /// produces nothing at all. Nothing appended is not end of stream --
+    /// `finish` is.
+    ///
+    /// Appends rather than returning a `Vec` so the caller can hand the same
+    /// buffer back every time; see `emit` for the other half of that.
+    pub fn push(&mut self, chunk: &[u8], out: &mut Vec<u8>) -> Result<()> {
         use std::io::Write;
         self.inner
             .write_all(chunk)
             .context("failed to compress response")?;
-        Ok(self.take())
+        emit(&mut self.started, self.inner.get_mut(), out);
+        Ok(())
     }
 
-    /// Flush the trailer and return the last bytes of the stream.
-    pub fn finish(mut self) -> Result<Vec<u8>> {
-        let mut out = std::mem::take(self.inner.get_mut());
-        let rest = self
+    /// Flush the trailer and append the last bytes of the stream.
+    pub fn finish(mut self, out: &mut Vec<u8>) -> Result<()> {
+        // `finish` hands back the sink itself, so anything deflate had not
+        // released yet arrives together with the trailer.
+        let mut tail = self
             .inner
             .finish()
             .context("failed to finish compressing")?;
-        out.extend_from_slice(&rest);
-        Ok(with_magic(&mut self.started, out))
-    }
-
-    fn take(&mut self) -> Vec<u8> {
-        let out = std::mem::take(self.inner.get_mut());
-        with_magic(&mut self.started, out)
+        emit(&mut self.started, &mut tail, out);
+        Ok(())
     }
 }
 
-/// Prefix the first non-empty write with the magic, and only the first.
-fn with_magic(started: &mut bool, out: Vec<u8>) -> Vec<u8> {
-    if *started || out.is_empty() {
-        return out;
+/// Move what deflate has finished with into `out`, magic first, and only once.
+///
+/// `append` and not a copy: it leaves the sink empty but keeps its allocation,
+/// so a pump that reuses one output buffer settles into allocating nothing per
+/// chunk. Doing this by taking the sink -- the obvious way -- hands its capacity
+/// away every time and makes deflate grow a fresh one for the next 64 KiB.
+fn emit(started: &mut bool, ready: &mut Vec<u8>, out: &mut Vec<u8>) {
+    if ready.is_empty() {
+        return;
     }
-    *started = true;
-    let mut framed = MAGIC.to_vec();
-    framed.extend_from_slice(&out);
-    framed
+    if !*started {
+        *started = true;
+        out.extend_from_slice(MAGIC);
+    }
+    out.append(ready);
 }
 
 /// Undo the envelope, if there is one.
@@ -176,11 +183,21 @@ fn with_magic(started: &mut bool, out: Vec<u8>) -> Vec<u8> {
 /// client that asked and was answered plainly cannot tell the difference and
 /// does not need to.
 pub fn decode(raw: Vec<u8>) -> Result<Vec<u8>> {
+    decode_within(raw, crate::MAX_RESPONSE_BYTES)
+}
+
+/// `decode` with the cap named, so a test can reach a bomb without building a
+/// half-gigabyte one.
+fn decode_within(raw: Vec<u8>, max: usize) -> Result<Vec<u8>> {
     if !raw.starts_with(MAGIC) {
         return Ok(raw);
     }
     let mut out = Vec::new();
+    // `take` and not a check afterwards: the point is to never allocate the
+    // expansion in the first place, and `read_to_end` on an unbounded decoder
+    // has already done the damage by the time its length can be looked at.
     GzDecoder::new(&raw[MAGIC.len()..])
+        .take(max as u64 + 1)
         .read_to_end(&mut out)
         // A truncated or corrupt envelope is a failure and not a fallback. The
         // bytes underneath are a result set, and handing a caller half of one as
@@ -191,6 +208,12 @@ pub fn decode(raw: Vec<u8>) -> Result<Vec<u8>> {
         // rather than decoding to a shorter answer. An empty result decodes to
         // nothing legitimately -- that is a HEAD, or a peer that said nothing.
         .context("failed to decompress the peer's response")?;
+    // Reaching the limit means the decoder was still going, so the trailer was
+    // never read and nothing above has checked anything. A response this large
+    // is a hostile peer either way.
+    if out.len() > max {
+        bail!("the peer's response expands past {max} bytes");
+    }
     Ok(out)
 }
 
@@ -255,9 +278,9 @@ mod tests {
         let mut enc = Encoder::new();
         let mut wire = Vec::new();
         for chunk in payload.chunks(8192) {
-            wire.extend_from_slice(&enc.push(chunk).expect("push"));
+            enc.push(chunk, &mut wire).expect("push");
         }
-        wire.extend_from_slice(&enc.finish().expect("finish"));
+        enc.finish(&mut wire).expect("finish");
 
         assert!(wire.starts_with(MAGIC), "the envelope announces itself");
         assert!(wire.len() < payload.len() / 2, "and it is actually smaller");
@@ -270,7 +293,8 @@ mod tests {
         // the client would read the gzip header as the start of an HTTP status
         // line, and the error would be about framing rather than about the empty
         // reply it actually was.
-        let wire = Encoder::new().finish().expect("finish");
+        let mut wire = Vec::new();
+        Encoder::new().finish(&mut wire).expect("finish");
         assert!(wire.starts_with(MAGIC));
         assert!(decode(wire).expect("decode").is_empty());
     }
@@ -295,9 +319,44 @@ mod tests {
     #[test]
     fn a_truncated_envelope_is_an_error() {
         let mut enc = Encoder::new();
-        let mut wire = enc.push(&vec![7u8; 100_000]).expect("push");
-        wire.extend_from_slice(&enc.finish().expect("finish"));
+        let mut wire = Vec::new();
+        enc.push(&vec![7u8; 100_000], &mut wire).expect("push");
+        enc.finish(&mut wire).expect("finish");
         wire.truncate(wire.len() - 16);
         assert!(decode(wire).is_err());
+    }
+
+    #[test]
+    fn a_response_that_expands_past_the_cap_is_refused() {
+        // The reason the cap cannot live on the wire bytes alone. Four MiB of
+        // zeros is a few KiB compressed, and at that ratio the shipped
+        // MAX_RESPONSE_BYTES would be half a terabyte of Vec -- asked for by a
+        // peer, inside a browser tab, before anything has looked at a length.
+        let mut enc = Encoder::new();
+        let mut wire = Vec::new();
+        enc.push(&vec![0u8; 4 * 1024 * 1024], &mut wire)
+            .expect("push");
+        enc.finish(&mut wire).expect("finish");
+        assert!(wire.len() < 64 * 1024, "the bomb is small on the wire");
+
+        assert!(decode_within(wire.clone(), 1024).is_err());
+        // And the same bytes under a cap they fit in are still just bytes.
+        assert_eq!(
+            decode_within(wire, 8 * 1024 * 1024).expect("decode").len(),
+            4 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn a_response_exactly_at_the_cap_is_allowed() {
+        // Off-by-one at the boundary: `take` reads max + 1 so that a response
+        // *of* max bytes still ends its gzip stream rather than being read as
+        // one byte short of a bomb.
+        let payload = vec![3u8; 5000];
+        let mut enc = Encoder::new();
+        let mut wire = Vec::new();
+        enc.push(&payload, &mut wire).expect("push");
+        enc.finish(&mut wire).expect("finish");
+        assert_eq!(decode_within(wire, 5000).expect("decode"), payload);
     }
 }

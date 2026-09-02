@@ -70,6 +70,11 @@ request head on the way past.
 Level 1 rather than 6. On the same capture level 6 gets 2.96x against level 1's 2.79x, and the
 serving side is somebody's laptop answering queries with the same cores.
 
+`MAX_RESPONSE_BYTES` bounds a response in both forms, which is why it sits in `lib.rs` rather
+than beside either reader. Deflate expands by up to 1032:1, so capping only what arrives would
+let a peer answer with 512 MiB of compressed zeros and ask the client for half a terabyte of
+`Vec` — and one of the two clients is a browser tab.
+
 ## Never half-close the request stream
 
 Quackhole always sends `Connection: close` and never half-closes.

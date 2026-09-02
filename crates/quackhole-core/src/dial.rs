@@ -1,6 +1,6 @@
 //! Outbound side: one cached QUIC connection per peer, one bi-stream per request.
 
-use crate::{ALPN, PeerMap, record_peer};
+use crate::{ALPN, MAX_RESPONSE_BYTES, PeerMap, record_peer};
 use anyhow::{Context, Result};
 use iroh::endpoint::Connection;
 use iroh::{Endpoint, EndpointAddr, EndpointId};
@@ -11,11 +11,6 @@ use std::sync::{Arc, Mutex};
 use crate::Core;
 #[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
-
-/// Cap on a single buffered response. Quack's fetch loop is bounded by
-/// `quack_fetch_batch_chunks` (default 12 chunks, ~24k rows), so this is a
-/// backstop against a hostile peer, not a working limit.
-const MAX_RESPONSE_BYTES: usize = 512 * 1024 * 1024;
 
 /// Connections cached by peer, held open across requests.
 ///

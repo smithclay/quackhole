@@ -259,6 +259,10 @@ async fn pump_compressed(
 ) -> Result<()> {
     let mut encoder = crate::compress::Encoder::new();
     let mut buf = vec![0u8; 64 * 1024];
+    // One buffer for the whole response: the encoder appends to it and drains
+    // its own sink into it, so a megabyte-scale reply settles into no
+    // allocation per chunk on either side.
+    let mut out = Vec::new();
     loop {
         let n = tcp_read
             .read(&mut buf)
@@ -267,7 +271,8 @@ async fn pump_compressed(
         if n == 0 {
             break;
         }
-        let out = encoder.push(&buf[..n])?;
+        out.clear();
+        encoder.push(&buf[..n], &mut out)?;
         if !out.is_empty() {
             send.write_all(&out)
                 .await
@@ -277,9 +282,10 @@ async fn pump_compressed(
     // The trailer, and the magic if nothing has gone out yet -- an empty reply
     // still has to be announced as an envelope, or the client reads gzip's
     // header as the start of a status line.
-    let tail = encoder.finish()?;
-    if !tail.is_empty() {
-        send.write_all(&tail)
+    out.clear();
+    encoder.finish(&mut out)?;
+    if !out.is_empty() {
+        send.write_all(&out)
             .await
             .context("failed to write response")?;
     }

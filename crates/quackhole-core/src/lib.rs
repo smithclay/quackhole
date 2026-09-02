@@ -41,6 +41,18 @@ use tokio::runtime::Runtime;
 /// ALPN for the Quack-over-iroh bridge. Bumping this is a wire break.
 pub const ALPN: &[u8] = b"quackhole/quack/1";
 
+/// Cap on a single response, both as it arrives and as it decodes.
+///
+/// Quack's fetch loop is bounded by `quack_fetch_batch_chunks` (default 12
+/// chunks, ~24k rows), so this is a backstop against a hostile peer rather than
+/// a working limit.
+///
+/// It has to bound both forms, which is why it lives here and not beside either
+/// reader. Deflate expands by up to 1032:1, so a cap on the wire alone would let
+/// a peer answer with 512 MiB of compressed zeros and ask the client for half a
+/// terabyte of `Vec` -- and one of the two clients is a browser tab.
+pub(crate) const MAX_RESPONSE_BYTES: usize = 512 * 1024 * 1024;
+
 #[cfg(not(target_family = "wasm"))]
 /// Owns the tokio runtime, the iroh endpoint, the accept loop (when serving),
 /// and the outbound connection cache.
