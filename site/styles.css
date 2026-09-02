@@ -256,6 +256,10 @@ dialog {
   padding: 1.75rem;
   width: min(46rem, calc(100vw - 2rem));
   max-height: calc(100vh - 4rem);
+  /* max-height alone clips: the connect dialog explains what attaching does
+     before it offers the button, and on a short window the button is the part
+     that goes. */
+  overflow-y: auto;
 }
 dialog::backdrop { background: rgba(6, 8, 14, 0.72); backdrop-filter: blur(3px); }
 
@@ -277,6 +281,18 @@ dialog h2 {
 .step { font: 600 0.95rem/1.3 var(--display); letter-spacing: -0.03em; margin: 0 0 0.5rem; }
 dialog hr { border: 0; border-top: 1px solid var(--line); margin: 1.6rem 0; }
 .fineprint { font-size: 0.82rem; color: var(--dim); margin: 0; }
+
+/* What attaching a stranger's database does and does not do. Each claim leads
+   with itself on its own line, because someone deciding whether to connect
+   reads the bolds and stops -- so the bolds have to carry the answer on their
+   own. The rule down the side groups them as one statement rather than four
+   remarks. */
+.safety { list-style: none; margin: 0 0 1.3rem; padding: 0; display: grid; gap: 0.75rem; }
+.safety li {
+  font-size: 0.84rem; line-height: 1.55; color: var(--dim);
+  padding-left: 0.85rem; border-left: 1px solid var(--line);
+}
+.safety b { display: block; color: var(--paper); font-weight: 500; }
 
 /* --- command blocks ------------------------------------------------------ */
 

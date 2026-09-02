@@ -120,7 +120,7 @@
 <dialog id="connect">
   <h2>Connect to this DuckDB?</h2>
   <p class="dialog-lede">
-    This link points at a DuckDB someone is running. Attaching it lets the workbench
+    This link points at a DuckDB someone is running. Attaching it lets this tab
     query that machine directly, over an encrypted relay.
   </p>
 
@@ -129,10 +129,45 @@
     <div><dt>Relay</dt><dd id="connect-relay">—</dd></div>
   </dl>
 
-  <p class="fineprint">
-    The link carries an access token, so connect only if you trust whoever sent it.
-    Queries run against their machine, not yours.
-  </p>
+  <!--
+    A stranger's link asking to connect to a database is a shape people have
+    been trained to refuse, and the honest answer is not "trust us" but that the
+    risk runs the other way: the visitor is being handed access, not asked to
+    give any. Four claims rather than a reassuring sentence, because each is
+    checkable and the last one is the one that actually matters. They are the
+    same claims as the Security table in the repo's README, said to whoever is
+    about to click rather than to whoever is about to deploy.
+
+    Deliberately not "you are safe". What arrives is parsed by DuckDB-Wasm in
+    the tab, and a sandbox is a boundary rather than a proof -- so each of these
+    names the mechanism instead of promising an outcome.
+  -->
+  <ul class="safety">
+    <li>
+      <b>Nothing is installed.</b>
+      DuckDB is WebAssembly running on this page. The session lives in this tab,
+      and closing it ends everything in it.
+    </li>
+    <li>
+      <b>That machine gets no access to this one.</b>
+      This tab dials out and reads the answers back. It hands over no files and
+      opens nothing for them to connect to; what comes back is query results,
+      parsed inside the browser's sandbox.
+    </li>
+    <li>
+      <b>The relay only carries ciphertext.</b>
+      Traffic is encrypted end to end between this tab and that machine. The
+      relay sees two endpoint ids, the timing and the byte counts — not your
+      SQL, and not the results.
+    </li>
+    <li>
+      <b>The exposure is theirs, not yours.</b>
+      The link carries an access token for their database, and it does not
+      expire. Anyone holding it can query that machine until they stop serving —
+      so connect only if you trust who sent it, and treat the link itself like a
+      password.
+    </li>
+  </ul>
 
   <p class="paste-error" id="connect-error" hidden></p>
   <p class="paste-note" id="connect-note" hidden></p>
@@ -236,6 +271,15 @@
     <input id="ticket" name="ticket" type="text" spellcheck="false" autocomplete="off" placeholder="qh1_…">
     <button id="paste-go" type="submit">connect</button>
   </form>
+  <!-- Pasting a ticket is the same act as opening a link, so it cannot be the
+       one path that says nothing about what the act does. Short rather than a
+       second copy of the connect dialog's four claims: whoever is here already
+       chose to be, and the two would drift. -->
+  <p class="fineprint">
+    A ticket grants this tab query access to that machine, and grants it nothing
+    on yours — DuckDB runs in this tab. It carries an access token that does not
+    expire, so treat it like a password.
+  </p>
   <p class="paste-error" id="paste-error" hidden></p>
   <p class="paste-note" id="paste-note" hidden></p>
 </dialog>
