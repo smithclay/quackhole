@@ -109,6 +109,19 @@ ones a run cannot justify are absent rather than duplicated.
   endpoint id, so a stale ticket cannot dial successfully and then fail at token
   auth — and the laptop can serve and attach in the same session without iroh
   refusing the dial with `connecting to ourself is not supported`.
+- **The local server is started with `exec` so it can be killed.** `( … ) &` sets
+  `$!` to the subshell, not to node, so `kill "$LOCAL_SERVER_PID"` took the
+  wrapper and left node serving the database over iroh after the run finished --
+  with a live ticket, past the summary, past the VM being destroyed. `exec`
+  makes the subshell become node, which makes `$!` the pid that matters.
+
+  It does not reproduce in a scratch script, which is what made it survive:
+  bash turns the last command of a subshell into an exec by itself, so `$!` is
+  already node's pid -- *unless* a trap is installed, and `run.sh` traps EXIT to
+  destroy the VM. The optimisation is off exactly where the cleanup matters. The
+  laptop side cannot fall back to `pkill -f server.mjs` the way the VM side
+  does: that pattern is broad enough to hit unrelated processes, and at least
+  one shipped desktop app runs a `server.mjs` of its own.
 - **A leftover `server.mjs` is killed before starting a new one.** It would
   still hold `127.0.0.1:9494`, and `quackhole_serve` reuses whatever is already
   listening there rather than starting its own — so the new server is handed the

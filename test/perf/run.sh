@@ -108,7 +108,13 @@ fi
 LOCAL_SERVER_PID=""
 cleanup() {
   set +e
-  [ -n "$LOCAL_SERVER_PID" ] && kill "$LOCAL_SERVER_PID" 2>/dev/null
+  # Deliberately by pid, not `pkill -f server.mjs` the way the VM side does it:
+  # that pattern is broad enough to hit unrelated processes on a laptop, and at
+  # least one shipped app runs a `server.mjs` of its own.
+  if [ -n "$LOCAL_SERVER_PID" ]; then
+    kill "$LOCAL_SERVER_PID" 2>/dev/null
+    wait "$LOCAL_SERVER_PID" 2>/dev/null
+  fi
   [ -n "${SERVING:-}" ] && $SSH "$VM.exe.xyz" "pkill -f 'node server[.]mjs'" >/dev/null 2>&1
   [ -n "$ORIG_REGION" ] && ssh -o BatchMode=yes exe.dev set-region "$ORIG_REGION" >/dev/null 2>&1
   if [ "$CREATED" = 1 ] && [ "$KEEP" = 0 ]; then
@@ -190,8 +196,11 @@ if [ "$SERVER_SIDE" = vm ]; then
   dump_log() { $SSH "$VM.exe.xyz" 'tail -30 ~/qhperf/server.log'; }
 else
   rm -f "$LOCAL_DIR/server.log"
+  # exec, so the subshell *becomes* node. Without it `$!` is the subshell and
+  # `kill` in cleanup takes only that, leaving node orphaned and still serving
+  # the database over iroh after the run has printed its summary and gone.
   ( cd "$LOCAL_DIR" && QHPERF_DIR="$LOCAL_DIR" QH_TOKEN="$TOKEN" \
-      node "$LOCAL_DIR/server.mjs" --rows "$ROWS" > "$LOCAL_DIR/server.log" 2>&1 ) &
+      exec node "$LOCAL_DIR/server.mjs" --rows "$ROWS" > "$LOCAL_DIR/server.log" 2>&1 ) &
   LOCAL_SERVER_PID=$!
   ticket_line() { grep -m1 '^QHPERF_TICKET ' "$LOCAL_DIR/server.log" 2>/dev/null || true; }
   served_line() { grep -m1 '^QHPERF_SERVED ' "$LOCAL_DIR/server.log" 2>/dev/null || true; }
