@@ -165,6 +165,14 @@ the npm README's own quickstart block against a live server.
   the reset just destroyed. Every statement after that fails with
   `Invalid connection id` until the page is reloaded. So `rebuild()` is started
   and not awaited, and swallows its own errors.
+- **The shell renders nothing for a `TIMESTAMP WITH TIME ZONE` column.**
+  `SELECT now()` prints an empty result in the workbench -- no table, no error,
+  just the next prompt -- while `now()::TIMESTAMP`, `current_date` and
+  `now()::VARCHAR` all render. It is not the transport: it reproduces on the
+  local in-tab database with no remote attached, so it is
+  `@duckdb/duckdb-wasm-shell` or duckdb-wasm underneath it. Worth knowing before
+  reading a blank result as a failed query, and worth a cast in anything this
+  repo suggests running.
 - **The shell publishes no way to write to its terminal.** `embed()` takes a
   database and four display settings and resolves to `undefined`; the package
   exports it, `getJsDelivrModule` and five version strings, and puts nothing on a
