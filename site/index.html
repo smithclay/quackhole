@@ -56,6 +56,25 @@
 <header class="bar">
   <span class="brand">quackhole</span>
   <div class="bar-right">
+    <!-- A claim about the page, not about the browser: site/webmcp.js registers
+         its tools whether or not anything is listening, and the ordinary
+         outcome is that nothing is. So the label does not change with support
+         -- what changes is the dot, and the state line inside the dialog.
+
+         Quieter than the .ghost beside it, and uncoloured: the palette spends
+         yellow on DuckDB and periwinkle on the wire, and an agent surface is
+         neither. -->
+    <button class="chip" id="agents-open" type="button" aria-haspopup="dialog"
+            aria-label="Works with WebMCP — what an agent can do here"
+            title="This page publishes tools an agent can call">
+      <span class="chip-dot" aria-hidden="true"></span><!--
+        The bar holds the brand, this, "get help" and the mark, and at 390px
+        those four are 375px of a 390px viewport. Dropping two words is what
+        keeps the chip from being the one that wraps. aria-label above carries
+        the whole phrase either way, so the shorter label costs a screen reader
+        nothing. -->
+      <span class="chip-label"><span class="chip-long">works with </span>webmcp</span>
+    </button>
     <!-- The bar used to carry a status pill, which said "local only" almost all
          of the time and repeated the rail underneath it: the rail lists the
          connections, draws a route per remote, and names their tables. What the
@@ -74,6 +93,36 @@
     </a>
   </div>
 </header>
+
+<!-- --- a statement is running ---------------------------------------------- -->
+<!--
+  The page's answer to "did that do anything?". A query against a remote goes
+  out over a relay and the terminal prints nothing at all until the rows come
+  back, so a statement that takes four seconds is four seconds of a workbench
+  that looks like it dropped the line.
+
+  Fixed under the bar rather than in it. The bar is full at 390px -- brand,
+  chip, "get help" and the mark are 375px of it -- and this has to be legible on
+  a phone, where the rail is above the terminal and may well be collapsed. A
+  strip costs no layout: it overlays the top of the workbench instead of
+  resizing it, which matters because resizing the workbench reflows xterm, and
+  reflowing the terminal on every statement is a worse cure than the disease.
+
+  Indeterminate on purpose. DuckDB reports no progress through Quack -- there is
+  no fraction to fill -- so the bar says "something is out" and the clock beside
+  it says how long it has been, which are the two facts that actually exist.
+
+  role="status" and not alert: this is news, not a problem. The elapsed clock is
+  aria-hidden so a screen reader is told once that a statement is running rather
+  than ten times a second that it still is.
+-->
+<div class="activity" id="activity" hidden>
+  <div class="activity-track"><div class="activity-bar"></div></div>
+  <p class="activity-note" role="status">
+    <span id="activity-phrase"></span>
+    <span class="activity-clock" id="activity-clock" aria-hidden="true"></span>
+  </p>
+</div>
 
 <main class="workbench">
 
@@ -393,6 +442,93 @@
   </div>
 </dialog>
 
+
+<!-- --- what an agent can do here ----------------------------------------- -->
+<!--
+  Opened by the bar's chip, and the only screen that says this page has an agent
+  surface at all. It had none: the tools registered silently, so the one visitor
+  who could act on them -- somebody with the flag on, or an agent driving the tab
+  -- had a console log and nothing else.
+
+  The state line is filled from what registerAgentTools() returned rather than
+  from a feature test repeated here. Registration fails for reasons detection
+  cannot see (a duplicate name, a rejected schema, a document that is not
+  origin-keyed), and a page that reads document.modelContext, finds it, and
+  reports "ready" would be wrong in exactly the case worth reporting.
+
+  The ChatGPT link carries a prompt and nothing else. A ticket in a ?q= would be
+  an access token in a URL bar, in a history entry and in somebody else's logs --
+  which is the one thing #connect's fourth claim tells visitors not to do. So the
+  prompt tells the agent to ask for one. It cannot attach without being handed
+  one, and that is the point rather than a shortfall.
+-->
+<dialog id="agents">
+  <form method="dialog" class="dialog-x"><button value="cancel" aria-label="Close">×</button></form>
+
+  <h2>Let an agent drive this workbench</h2>
+  <p class="dialog-lede">
+    This page hands its own tools to any agent in the browser with
+    <a href="https://webmachinelearning.github.io/webmcp/" target="_blank" rel="noreferrer">WebMCP</a>,
+    so one calls them directly instead of reading the screen and guessing where
+    to click.
+  </p>
+
+  <p class="agent-state" id="agents-state" data-state="unknown">Checking this browser…</p>
+
+  <ul class="tool-list">
+    <li><code>list-connections</code> — what is attached, and the tables on each.</li>
+    <li><code>attach-remote</code> — attach a DuckDB from a <code>qh1_…</code> ticket.</li>
+    <li><code>run-sql</code> — type one statement at the terminal and run it.</li>
+  </ul>
+  <p class="fineprint">
+    <code>run-sql</code> types into the terminal you are looking at and returns
+    only that the statement ran, so an agent has to ask you what it said. A page
+    that queried somebody's machine invisibly, beside a terminal showing
+    nothing, is the version of this nobody should ship.
+  </p>
+
+  <hr>
+
+  <p class="panel-lede">
+    Hand this to an agent that can browse — ChatGPT in a browser that speaks
+    WebMCP, or anything else that does. The link carries a prompt that sends the
+    agent here and says what is waiting.
+  </p>
+
+  <!-- Closed, because the prompt is fifteen lines and the button under it is the
+       thing to press: open, it is 370px of a dialog that has 734px on an 800px
+       window, and the primary action lands below the fold with nothing on screen
+       to say the dialog scrolls.
+
+       Still on the page rather than built on demand, since app.js fills it at
+       boot beside the other two and the copy button reads it out of the DOM. -->
+  <details class="prompt-peek">
+    <summary>Read it, or copy it to paste by hand</summary>
+    <div class="cmd">
+      <div class="cmd-head">
+        <span class="cmd-os">prompt</span>
+        <button class="copy" data-copy="#cmd-chat" type="button">copy</button>
+      </div>
+      <pre id="cmd-chat"><code></code></pre>
+    </div>
+    <p class="fineprint">
+      Worth copying rather than clicking if you would rather it did not travel in
+      a URL at all — and worth having either way, because prefilling a chat from
+      a link is undocumented and the mobile app ignores it.
+    </p>
+  </details>
+
+  <p class="fineprint">
+    The button puts that prompt in the URL, so it goes to OpenAI and stays in
+    your chat history. It carries no ticket and no token — an agent that should
+    reach a machine you are serving has to be handed the <code>qh1_…</code>
+    ticket by you.
+  </p>
+
+  <div class="dialog-actions">
+    <a class="cta" id="agents-chatgpt" href="https://chatgpt.com/" target="_blank" rel="noreferrer">Open in ChatGPT →</a>
+  </div>
+</dialog>
 
 <script type="module" src="app.js"></script>
 </body>

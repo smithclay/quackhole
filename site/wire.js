@@ -72,6 +72,14 @@ export function createWire(mount, peer = 'the remote DuckDB') {
   const relayHost = mount.closest('.wire-frame')?.querySelector('.wire-relay-host');
 
   let pulseAnim = null;
+  let busyAnim = null;
+
+  // Web Animations are script, so the stylesheet's reduce rule does not reach
+  // them -- it sets animation-* on CSS animations and nothing else. A loop that
+  // runs for as long as a query does is the one worth honouring by hand.
+  const still = matchMedia('(prefers-reduced-motion: reduce)');
+
+  const TRAVEL = X.peer - X.browser;
 
   return {
     // 'idle' | 'browser' | 'peer' | 'connecting' | 'live' | 'failed'
@@ -86,6 +94,38 @@ export function createWire(mount, peer = 'the remote DuckDB') {
         relayHost.textContent = url;
       }
     },
+    /// A statement is out on this wire, and has not been answered yet.
+    ///
+    /// `pulse` below is the same wire's other half and it can only speak in the
+    /// past tense: it is timed to a measurement, so it cannot start until the
+    /// answer is back. This is what stands in for it during the wait, which on a
+    /// relay is where nearly all the time goes.
+    ///
+    /// Outbound and unmeasured, both deliberately. Nothing here knows how far
+    /// along a remote query is -- DuckDB reports no progress through Quack, so a
+    /// marker that crept toward the peer at a rate this file computed would be a
+    /// guess drawn as a fact. A dot leaving the browser over and over says the
+    /// only true thing available: it went, and we are waiting.
+    setBusy(on) {
+      if (!on) {
+        busyAnim?.cancel();
+        busyAnim = null;
+        return;
+      }
+      if (busyAnim) return;
+      pulseAnim?.cancel();
+      // Parked over the relay rather than travelling. Still a claim that
+      // something is in flight, and it is where the wait actually is.
+      const frames = still.matches
+        ? [{ transform: `translateX(${TRAVEL / 2}px)`, opacity: 1 }]
+        : [
+            { transform: 'translateX(0)', opacity: 0 },
+            { transform: `translateX(${TRAVEL * 0.16}px)`, opacity: 1, offset: 0.16 },
+            { transform: `translateX(${TRAVEL * 0.84}px)`, opacity: 1, offset: 0.84 },
+            { transform: `translateX(${TRAVEL}px)`, opacity: 0 },
+          ];
+      busyAnim = pulse.animate(frames, { duration: 1100, iterations: Infinity, easing: 'linear' });
+    },
     // One round trip, timed to the real measurement. The duration is clamped
     // into a visible band -- a 6ms answer is not perceivable -- so the readout
     // beside it, not the animation, is what states the number.
@@ -96,8 +136,8 @@ export function createWire(mount, peer = 'the remote DuckDB') {
         [
           { transform: 'translateX(0)', opacity: 0 },
           { transform: 'translateX(0)', opacity: 1, offset: 0.06 },
-          { transform: `translateX(${X.peer - X.browser}px)`, opacity: 1, offset: 0.48 },
-          { transform: `translateX(${X.peer - X.browser}px)`, opacity: 1, offset: 0.52 },
+          { transform: `translateX(${TRAVEL}px)`, opacity: 1, offset: 0.48 },
+          { transform: `translateX(${TRAVEL}px)`, opacity: 1, offset: 0.52 },
           { transform: 'translateX(0)', opacity: 1, offset: 0.94 },
           { transform: 'translateX(0)', opacity: 0 },
         ],

@@ -126,6 +126,42 @@ a.ghost {
 }
 .icon-link:hover { color: var(--paper); }
 
+/* The bar's third control, and the quietest of them: a claim rather than an
+   action. It sits at --dim like "get help", with no fill and a hairline border,
+   so the row still reads as one bordered control and one label rather than as
+   two buttons competing.
+
+   Uncoloured on purpose. The palette spends yellow on DuckDB and periwinkle on
+   the wire and nothing else, and an agent surface is neither -- so what carries
+   the state is the dot's fill, which works in one hue.
+
+   The dot is hollow until the tools are actually registered. That is not
+   decoration: the label is a claim about the page, which is true in every
+   browser, and the dot is a claim about this one, which is usually false. */
+.chip {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  background: transparent; color: var(--dim); border-color: var(--line);
+  font-family: var(--data); font-size: 0.66rem;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 0.4rem 0.65rem;
+}
+.chip:hover { background: transparent; color: var(--paper); border-color: var(--dim); }
+.chip-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  border: 1px solid currentColor;
+  flex: none;
+}
+/* One flex item, not two. The gap above is meant for the dot, and a bare text
+   node beside a <span> is a second anonymous item -- so "works with" and
+   "webmcp" were spaced by that gap rather than by a word space, at a width the
+   letter-spacing made worse. Inside this they are ordinary inline text, and
+   hiding .chip-long takes its trailing space with it. */
+.chip-label { white-space: nowrap; }
+/* Registered. currentColor rather than an accent, so the filled dot is the same
+   ink as the words beside it and the chip stays a label. */
+.chip[data-state="ready"] { color: var(--paper); border-color: var(--dim); }
+.chip[data-state="ready"] .chip-dot { background: currentColor; }
+
 /* --- bar ----------------------------------------------------------------- */
 
 .bar {
@@ -138,6 +174,61 @@ a.ghost {
 }
 .brand { font: 700 0.82rem/1 var(--display); letter-spacing: -0.03em; }
 .bar-right { display: flex; align-items: center; gap: 0.6rem; }
+
+/* --- a statement is running ----------------------------------------------
+ *
+ * A strip under the bar, present only while something is out. It overlays the
+ * top of the workbench rather than taking a row of its own: giving it height
+ * would move the terminal, and moving the terminal makes xterm re-measure and
+ * reflow every line of scrollback -- on every statement.
+ *
+ * Coloured by where the work is, which is the palette's existing rule rather
+ * than a new one: yellow is DuckDB, so a query answered in this tab is yellow;
+ * periwinkle is the wire, so a query that went to another machine is
+ * periwinkle. Told apart at a glance and without reading the note. */
+.activity {
+  position: fixed; inset: var(--bar-h) 0 auto 0; z-index: 19;
+  pointer-events: none;
+}
+.activity-track {
+  height: 3px;
+  background: color-mix(in srgb, var(--line) 70%, transparent);
+  overflow: hidden;
+}
+/* Indeterminate, because there is no fraction to draw: nothing on this page
+   knows how far along a remote query is. A sliver that crosses and crosses
+   again says "still out" without claiming a position in something. */
+.activity-bar {
+  width: 34%; height: 100%;
+  background: var(--signal);
+  animation: activity-sweep 1.15s cubic-bezier(.65,0,.35,1) infinite;
+}
+.activity[data-where="remote"] .activity-bar { background: var(--relay); }
+
+@keyframes activity-sweep {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(394%); }
+}
+
+/* Right-aligned, so it sits over the terminal's top corner rather than over the
+   prompt or the rail's first row. Opaque, and its own chip: floated over a
+   terminal, text with nothing behind it reads as a line the shell printed. */
+.activity-note {
+  position: absolute; top: 0.4rem; right: 0.75rem;
+  margin: 0;
+  display: flex; align-items: baseline; gap: 0.45rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--line); border-radius: 3px;
+  background: var(--ink);
+  font: 500 0.66rem/1 var(--data);
+  letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.activity[data-where="remote"] .activity-note { color: var(--relay); border-color: var(--relay); }
+/* Tabular figures, so a clock counting past 9.9s does not shuffle the words to
+   its left every tenth of a second. */
+.activity-clock { color: var(--paper); font-variant-numeric: tabular-nums; }
 
 /* --- workbench shell ----------------------------------------------------- */
 
@@ -376,6 +467,89 @@ dialog hr { border: 0; border-top: 1px solid var(--line); margin: 1.6rem 0; }
 }
 .copy:hover { background: transparent; color: var(--signal); border-color: var(--signal); }
 
+/* --- the agent surface --------------------------------------------------- */
+
+/* Whether *this* browser has anywhere to put the tools, which is the one thing
+   the dialog knows that the chip's label cannot say. Boxed rather than set as a
+   sentence: it is the only line in here that is about the reader's machine
+   instead of about the page, and it changes between two visitors reading the
+   same words above it.
+
+   The unsupported state is the ordinary one -- WebMCP is behind a flag in every
+   browser that has it at all -- so it is written as a fact rather than as a
+   warning, and takes --dim rather than --bad. Nothing is broken. */
+.agent-state {
+  margin: 0 0 1.2rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--line);
+  border-left-width: 2px;
+  border-radius: 3px;
+  background: var(--ink);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--dim);
+}
+.agent-state[data-state="ready"] { color: var(--paper); border-left-color: var(--dim); }
+
+/* The three tools, as a list of names and what each does. Not a table: two of
+   the three explanations run past a phone's width, and a two-column table
+   answers that by breaking the names. */
+.tool-list {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  color: #b9c1d4;
+}
+.tool-list code { color: var(--signal); }
+
+/* The filled primary, as an anchor. Same trade as a.ghost: a <button> brings
+   its own border, radius and line-height and an <a> brings none of them. It has
+   to be an <a> -- it opens another origin in a new tab, and a button that did
+   that with script would be a link a middle click could not open. */
+a.cta {
+  display: inline-flex; align-items: center;
+  font: 500 0.78rem/1 var(--body);
+  color: var(--ink);
+  background: var(--signal);
+  border: 1px solid var(--signal);
+  border-radius: 3px;
+  padding: 0.5rem 0.9rem;
+  text-decoration: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+a.cta:hover { background: #fff759; border-color: #fff759; color: var(--ink); }
+
+/* The prompt, folded away. Its own disclosure rather than the rail's, which is a
+   section heading with a chevron on the right of a 17rem column; this is one
+   line of prose in the flow of a dialog, so the marker goes in front of it where
+   a reader is already looking. */
+.prompt-peek { margin: 0 0 1rem; }
+.prompt-peek > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex; align-items: center; gap: 0.45rem;
+  padding: 0.35rem 0;
+  color: var(--dim);
+  font-family: var(--data); font-size: 0.72rem;
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+.prompt-peek > summary::-webkit-details-marker { display: none; }
+/* Same chevron the rail draws, and built the same way: two borders on a rotated
+   square, so it takes currentColor and needs no glyph the font subset might not
+   have. */
+.prompt-peek > summary::before {
+  content: ''; width: 0.4rem; height: 0.4rem; flex: none;
+  border-right: 1px solid currentColor; border-bottom: 1px solid currentColor;
+  transform: translateY(-0.1rem) rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+.prompt-peek[open] > summary::before { transform: translateY(-0.05rem) rotate(45deg); }
+.prompt-peek > summary:hover { color: var(--paper); }
+.prompt-peek .fineprint { margin-top: 0.6rem; }
+
 /* --- the front door ------------------------------------------------------ */
 
 /* Room around the diagram, because it is the argument rather than an ornament
@@ -504,6 +678,7 @@ dialog hr { border: 0; border-top: 1px solid var(--line); margin: 1.6rem 0; }
 
   .bar { padding: 0 0.75rem; gap: 0.6rem; }
   .brand { font-size: 0.76rem; }
+  .chip-long { display: none; }
 
   dialog { padding: 1.15rem; width: min(46rem, calc(100vw - 1.25rem)); }
   /* The heading is display type at a size chosen for a 46rem dialog; on a phone
@@ -533,6 +708,12 @@ dialog hr { border: 0; border-top: 1px solid var(--line); margin: 1.6rem 0; }
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+
+  /* The blanket rule above runs an animation to its last frame and stops, and
+     the sweep's last frame is off the right-hand edge -- so the one thing on
+     the page that says a statement is running would be invisible to whoever
+     asked for less motion. Filled and still says the same thing. */
+  .activity-bar { width: 100%; opacity: 0.55; animation: none !important; }
 }
 
 /* --- booting ----------------------------------------------------------------
