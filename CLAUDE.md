@@ -147,6 +147,71 @@ the npm README's own quickstart block against a live server.
 - **A browser client that omits an optional query param takes a different code
   path.** `test/browser` always passes `timeout`, which is why a
   temporal-dead-zone bug in `shim.js` survived until `site/` left it out.
+- **The embedded shell reads `window.location.hash` and runs it as SQL.**
+  `@duckdb/duckdb-wasm-shell`'s `embed()` splits the fragment on commas and
+  hands everything after the first to `passInitQueries` -- that is how
+  shell.duckdb.org used to share a session. Reading only that function is
+  misleading: it just stores them, and `configure_database` in `shell.rs` is what
+  replays each one into the input and calls `on_sql`, which runs it. A quackhole
+  link puts a *credential* in the fragment, so `site/app.js` reads the ticket and
+  then clears the fragment with `replaceState` before embedding. A ticket is
+  base64url and carries no comma of its own; a link with one appended would
+  otherwise be a page that runs a stranger's SQL on arrival.
+- **Nothing fallible may run inside the shell's `open`.** `site/app.js` proxies
+  `AsyncDuckDB.open` so the workbench can rebuild its session after `.open`
+  resets the database. That rebuild reinstalls an extension over the network, so
+  it can fail or hang -- and `open_command` in `shell.rs` writes the message and
+  `return`s *before* reconnecting, leaving the shell holding the connection id
+  the reset just destroyed. Every statement after that fails with
+  `Invalid connection id` until the page is reloaded. So `rebuild()` is started
+  and not awaited, and swallows its own errors.
+- **The shell renders nothing for a `TIMESTAMP WITH TIME ZONE` column.**
+  `SELECT now()` prints an empty result in the workbench -- no table, no error,
+  just the next prompt -- while `now()::TIMESTAMP`, `current_date` and
+  `now()::VARCHAR` all render. It is not the transport: it reproduces on the
+  local in-tab database with no remote attached, so it is
+  `@duckdb/duckdb-wasm-shell` or duckdb-wasm underneath it. Worth knowing before
+  reading a blank result as a failed query, and worth a cast in anything this
+  repo suggests running.
+- **The shell publishes no way to write to its terminal.** `embed()` takes a
+  database and four display settings and resolves to `undefined`; the package
+  exports it, `getJsDelivrModule` and five version strings, and puts nothing on a
+  global. So `typeIntoShell` in `site/app.js` dispatches `keydown` at
+  `.xterm-helper-textarea`, which is how the greeting gets typed. Two things make
+  that work: xterm reads printable characters off `key`, and dispatching at the
+  element does not need focus -- which matters, because at boot the onboarding
+  dialog is the modal that should have it.
+- **`embed()` resolves before the shell is ready.** It starts the Rust half's
+  `configureDatabase` and never awaits it, so the prompt is still being drawn
+  when the promise settles and anything typed before it lands is dropped when the
+  prompt resets the input. There is no readiness event, and the terminal cannot
+  be polled for one either: xterm draws to a canvas wherever WebGL is available,
+  which leaves no text in the DOM. `greet()` retries and stops on a flag set in
+  `afterQuery`, so what says the greeting arrived is the proxy watching it run.
+- **`embed()` hands its resize handler back by assigning `container.onresize`,
+  and a `<div>` never fires `resize`.** Nothing calls it, so the terminal keeps
+  the width it measured on its first frame and every result wraps there for the
+  rest of the session. A `ResizeObserver` that invokes the property is the fix;
+  the shell registers no window listener of its own.
+- **The shell offers no hook into its terminal, so instrumentation goes through
+  the database.** `observed()` in `site/app.js` proxies `runQuery` -- which is
+  how the wire still pulses, the rail still redraws after DDL, and a known
+  failure still arrives with its remedy. It proxies `open` too, because `.open`
+  at the prompt resets the database and drops every attached catalog *and* the
+  quack extension. `QuackholeSession` must keep querying through a connection on
+  the real `db`, not the proxy, or `refreshSchema` triggers itself.
+- **The terminal needs `--term`, not `--data`.** `site/vite.config.js` fetches
+  IBM Plex Mono in the latin subsets only, and box-drawing characters live at
+  U+2500 in none of them -- so every result table's borders come from whatever
+  fallback the browser picks, at metrics that are not the cell width, and render
+  as broken dashes.
+- **`site/verify.mjs` has to deny WebGL to read the terminal at all.** xterm
+  renders to a canvas when WebGL is available and to the DOM when it is not, and
+  only the DOM path leaves text in `.xterm-rows`. The renderer is chosen once,
+  at embed, from `probablySupportsContext`, `supportsContext` and
+  `WebGL2RenderingContext` -- all three have to be defeated in an init script.
+  It also clears the screen before each statement, because the terminal scrolls
+  and earlier rows leave the DOM entirely.
 - **A dedicated worker inherits its page's COEP.** Anything a dev-server
   middleware in `site/vite.config.js` answers itself has to send the isolation
   headers, because it short-circuits the middleware Vite applies

@@ -21,14 +21,14 @@ below for why that matters.
 Three things make this a usable loop rather than a fast one:
 
 - **Editing `styles.css` does not restart DuckDB.** The stylesheet is swapped in
-  place, so an attached remote and a notebook full of results survive it. Only
+  place, so an attached remote and a terminal full of results survive it. Only
   `app.js`, `wire.js` and the files under `web/` force a reload —
   they own workers and a wasm session, and hot-swapping a module that spawned a
   worker leaves the old one running.
 - **The ticket lives in the fragment, and the fragment survives a reload.** Open
   the link one server printed, and every reload comes back already attached —
   you are iterating on the connected page, not on the empty one.
-- **You do not need a second machine for most of it.** The notebook, the connection rail
+- **You do not need a second machine for most of it.** The shell, the connection rail
   and the schema list all work against the local `memory` connection alone. Only
   the routes panel and remote queries need a real remote.
 
@@ -41,24 +41,55 @@ found.
 
 | Where | What |
 |---|---|
-| browser | DuckDB-Wasm boots on arrival; the notebook works before any remote exists |
+| browser | DuckDB-Wasm boots on arrival; the shell works before any remote exists |
 | server | `quackhole_serve` — an agent, a DuckDB you have open, or `npx quackhole` — starts serving and prints a link |
 | browser | opening that link `ATTACH`es the remote into the session already running |
 
 Onboarding is a dialog, not a page: adding a remote is a task you finish once,
-and after that the page is a notebook. Arriving with `#qh1_...` skips the form
-entirely and shows the dialog already connecting.
+and after that the page is a DuckDB shell. Arriving with `#qh1_...` skips all of
+it and offers the one peer the link names.
 
-The dialog offers three ways to serve that other end, and the order is the
-argument. **The prompt for a coding agent leads**, because the machine worth
-querying is usually one nobody is typing into — a sandbox, a VM, a box behind
-SSH — and an agent is already sitting in it. It carries the token minted in the
-tab and points at [`public/llms.txt`](public/llms.txt) rather than spelling out
-the SQL, so the steps live in a document that gets to be wrong once instead of
-in a string that ages inside a copied prompt. **The SQL is second**, because it
-serves the database you already have open. **`npx quackhole` is last and folded
-away**: it seeds its own sample table in a temp directory and takes no database
-path, so it demonstrates the connection rather than serving anything of yours.
+Four dialogs, one job each. `#splash` is the front door and the only screen that
+says what this is rather than what to do next — a sentence, the wire diagram the
+rail draws per remote, and the two ways on. `#serve` is how to start something
+serving. `#add` is a ticket field. `#connect` handles a ticket that arrived in
+the URL, which has to name whose machine it is before anything dials.
+
+The splash draws the wire live rather than broken. The rail's copies open broken
+because that is the honest state of a connection nobody has made yet; this one
+is not reporting a state, it is a picture of what is on offer. It pulses slowly,
+because a still diagram says only that a path exists and the offer is that
+queries travel it — and it checks `prefers-reduced-motion` itself, since the
+stylesheet's blanket rule turns off CSS animation and this is the Web Animations
+API.
+
+The dialog offers two ways to serve that other end, as tabs. They are
+alternatives — you need one — so stacking them down the dialog made everyone
+scroll past the one they had already decided against, and left the ticket field,
+which is what a returning visitor came for, below a screen of prose.
+
+The order is the argument. **The prompt for a coding agent leads**, because the
+machine worth querying is usually one nobody is typing into — a sandbox, a VM, a
+box behind SSH — and an agent is already sitting in it. It carries the token
+minted in the tab and points at [`public/llms.txt`](public/llms.txt) rather than
+spelling out the SQL, so the steps live in a document that gets to be wrong once
+instead of in a string that ages inside a copied prompt. **The SQL is second**,
+because it serves the database you already have open.
+
+`npx quackhole` used to be a third. It seeds a sample table in a temp directory
+and takes no database path, so what it demonstrates is the connection rather
+than anything of yours — which makes it a thing to read about, not a way to add
+the remote this dialog exists to add. It is still in the root README and the npm
+package, and this file still reaches for it below to test against a real server.
+
+Nothing numbers the tabs. The order is a gradient — from the machine you are not
+typing into to the DuckDB you have open — rather than a sequence, and `01/02`
+would promise steps to be done in turn. They are labelled by what you do rather
+than by what the thing is, because the question being answered is "which of
+these is me?" and the answer is a situation. `#serve` is anchored to the top
+of the viewport rather than centred, which a modal dialog is by default: the
+panels are different heights, and a centred dialog re-centres on every switch,
+sliding the tab strip out from under the cursor that just clicked it.
 
 ## More than one remote
 
@@ -106,12 +137,49 @@ link the same crate, so there is nothing here to drift: the address this page
 ATTACHes and the scope it files the token under are one function call, not two
 strings that have to match.
 
+## The query surface is somebody else's
+
+The terminal is `@duckdb/duckdb-wasm-shell`, duckdb's own embeddable web shell,
+embedded unmodified. It is the third thing on this page that ships as-is —
+`web/` is the second — and for the same reason: a query box written here could
+always be accused of knowing where its bytes came from, and this one cannot,
+because it was written before any of this existed. It knows nothing about iroh,
+relays or tickets. It asks for an `AsyncDuckDB` and gets the one the transport
+is already under.
+
+That handoff is the whole integration:
+
+```js
+await shell.embed({ shellModule, container, resolveDatabase: async () => db });
+```
+
+It is *not* what runs at [shell.duckdb.org](https://shell.duckdb.org), which has
+since moved to a frontend of its own on `@xterm/xterm`. This package is still
+published out of `duckdb/duckdb-wasm` and still versioned in lockstep with
+`@duckdb/duckdb-wasm` — the same version string, released the same day — which
+is what makes it safe to pin beside it and the first thing to check if it ever
+drifts.
+
+The shell offers no hook into its terminal, so the things the page still needs
+to do around a query are done by observing the database instead of the terminal:
+`observed()` in `app.js` wraps `runQuery`, which is how the wire still pulses at
+the measured latency, how the rail still redraws after DDL, and how a known
+failure still arrives with its remedy from `docs/TROUBLESHOOTING.md` attached.
+It wraps `open` too, because `.open` at the prompt resets the database and takes
+every attached remote with it.
+
+Two things went with the notebook and are not coming back through this seam. The
+page no longer seeds and runs a first query against a freshly attached remote,
+and clicking a table in the rail copies a `SELECT` rather than running one —
+both because the shell takes its input from the keyboard and publishes no way to
+put text on its prompt.
+
 ## Files
 
 | | |
 |---|---|
 | `index.html` | The workbench shell, plus the onboarding and notes dialogs |
-| `app.js` | A view over `web/session.js`: the DuckDB-Wasm boot, the rail, the notebook, the dialogs. No connection model of its own |
+| `app.js` | A view over `web/session.js`: the DuckDB-Wasm boot, the rail, the embedded shell, the dialogs. No connection model of its own |
 | `wire.js` | The topology diagram, one per remote. Opens broken; pulses per query at the measured latency |
 | `styles.css` | Yellow is DuckDB, periwinkle is iroh. Nothing else is coloured |
 | `public/llms.txt` | The docs an agent is sent to read, shipped unhashed at the site root. The onboarding prompt names it, so it is part of the product rather than a courtesy |

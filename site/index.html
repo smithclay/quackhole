@@ -30,7 +30,7 @@
 <!-- Covers the workbench until DuckDB-Wasm is up. In the markup rather than
      built by app.js because the wait it covers starts before app.js runs: the
      module is deferred and the bundle is megabytes on a cold cache. The pill in
-     the bar cannot carry this on its own -- the rail and the notebook are fully
+     the bar cannot carry this on its own -- the rail and the terminal are fully
      drawn underneath, so the page reads as finished and broken rather than as
      busy. -->
 <div id="boot" role="status" aria-live="polite">
@@ -48,15 +48,30 @@
   </div>
 </div>
 
-<!-- The workbench is the page. Everything that used to be prose lives either in
-     the onboarding dialog (which is where a first-time visitor needs it) or in
-     the notes panel (which is where a curious one goes looking). -->
+<!-- The workbench is the page. What a first-time visitor needs is in the
+     onboarding dialog; what a curious one wants is on GitHub, which the bar
+     links to. The shell greets by running a query, which says what this is
+     better than a paragraph beside it would. -->
 
 <header class="bar">
   <span class="brand">quackhole</span>
   <div class="bar-right">
-    <span class="pill" id="status" data-state="booting"><i></i><span id="status-text">booting</span></span>
-    <button class="ghost" id="open-notes" type="button">what is this</button>
+    <!-- The bar used to carry a status pill, which said "local only" almost all
+         of the time and repeated the rail underneath it: the rail lists the
+         connections, draws a route per remote, and names their tables. What the
+         bar had no room for was the thing wanted when something goes wrong. -->
+    <a class="ghost" href="https://github.com/smithclay/quackhole/blob/main/docs/TROUBLESHOOTING.md"
+       target="_blank" rel="noreferrer">get help</a>
+    <!-- Octicon's mark, inline rather than fetched: it is 400 bytes and the page
+         is cross-origin isolated, so a remote icon is a CORP negotiation for a
+         link. currentColor, so it takes the bar's palette rather than bringing
+         GitHub's. -->
+    <a class="icon-link" href="https://github.com/smithclay/quackhole" target="_blank" rel="noreferrer"
+       aria-label="quackhole on GitHub" title="quackhole on GitHub">
+      <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+      </svg>
+    </a>
   </div>
 </header>
 
@@ -84,7 +99,11 @@
     </section>
   </aside>
 
-  <section class="notebook" id="notebook" aria-label="SQL notebook"></section>
+  <!-- duckdb's own web shell mounts here, and builds its terminal itself. This
+       stays empty on purpose: everything about it this page gets to decide is
+       passed to embed() in app.js, so there is nothing to style into place and
+       nothing here that could drift from what the shell actually renders. -->
+  <section class="shell" id="shell" aria-label="DuckDB shell"></section>
 
 </main>
 
@@ -105,8 +124,8 @@
 <!--
   Its own dialog rather than a retitled #onboard, because the visitor who
   followed a link has already done the setup the onboarding explains: showing
-  them the npx command, the by-hand SQL and a paste field asks them to read past
-  all of it to reach the one button that matters.
+  them the agent prompt, the by-hand SQL and a paste field asks them to read
+  past all of it to reach the one button that matters.
 
   It offers rather than acts. The fragment carries a token that grants query
   access to somebody's machine, so naming the endpoint and the relay before
@@ -116,7 +135,7 @@
 <dialog id="connect">
   <h2>Connect to this DuckDB?</h2>
   <p class="dialog-lede">
-    This link points at a DuckDB someone is running. Attaching it lets the workbench
+    This link points at a DuckDB someone is running. Attaching it lets this tab
     query that machine directly, over an encrypted relay.
   </p>
 
@@ -125,10 +144,45 @@
     <div><dt>Relay</dt><dd id="connect-relay">—</dd></div>
   </dl>
 
-  <p class="fineprint">
-    The link carries an access token, so connect only if you trust whoever sent it.
-    Queries run against their machine, not yours.
-  </p>
+  <!--
+    A stranger's link asking to connect to a database is a shape people have
+    been trained to refuse, and the honest answer is not "trust us" but that the
+    risk runs the other way: the visitor is being handed access, not asked to
+    give any. Four claims rather than a reassuring sentence, because each is
+    checkable and the last one is the one that actually matters. They are the
+    same claims as the Security table in the repo's README, said to whoever is
+    about to click rather than to whoever is about to deploy.
+
+    Deliberately not "you are safe". What arrives is parsed by DuckDB-Wasm in
+    the tab, and a sandbox is a boundary rather than a proof -- so each of these
+    names the mechanism instead of promising an outcome.
+  -->
+  <ul class="safety">
+    <li>
+      <b>Nothing is installed.</b>
+      DuckDB is WebAssembly running on this page. The session lives in this tab,
+      and closing it ends everything in it.
+    </li>
+    <li>
+      <b>That machine gets no access to this one.</b>
+      This tab dials out and reads the answers back. It hands over no files and
+      opens nothing for them to connect to; what comes back is query results,
+      parsed inside the browser's sandbox.
+    </li>
+    <li>
+      <b>The relay only carries ciphertext.</b>
+      Traffic is encrypted end to end between this tab and that machine. The
+      relay sees two endpoint ids, the timing and the byte counts — not your
+      SQL, and not the results.
+    </li>
+    <li>
+      <b>Treat this full link like a password.</b>
+      The access token is part of it and does not expire. Anyone you pass it on
+      to can query that machine until whoever runs it stops serving — so keep it
+      out of chats, issues and commits, and connect only if you trust who sent
+      it to you.
+    </li>
+  </ul>
 
   <p class="paste-error" id="connect-error" hidden></p>
   <p class="paste-note" id="connect-note" hidden></p>
@@ -139,155 +193,196 @@
   </div>
 </dialog>
 
-<!-- --- onboarding / add a remote ----------------------------------------- -->
+<!-- --- the front door ----------------------------------------------------- -->
 <!--
-  This is the whole "getting started" story, and it is a dialog rather than a
-  page because it is a task you finish once. Arriving with #qh1_... goes to
-  #connect above instead, so a link from the server never shows this form.
+  What a visitor sees before anything else, and the only screen that explains
+  what this is rather than what to do next. It was missing: cold arrival opened
+  straight onto "Start DuckDB on a VM, sandbox, or laptop", which is an
+  instruction to somebody who has not been told why.
 
-  Three ways to serve the other end, ordered by how much of your own data they
-  reach. The agent prompt leads because the machine worth querying is usually
-  one you are not typing into -- a sandbox, a VM, a box behind SSH -- and an
-  agent is already sitting in it. The SQL is second because it serves the
-  database you have open. `npx quackhole` is last and folded away: it seeds its
-  own sample table in a temp directory and takes no path, so it demonstrates the
-  connection rather than serving anything of yours.
+  The graphic is the wire the rail draws per remote, which is the page's whole
+  thesis in three shapes. Drawn live rather than broken -- the rail's copies open
+  broken because that is the honest state of a connection nobody has made yet,
+  and this one is not reporting a state, it is a picture of what is on offer.
+
+  Two ways out, because there are two kinds of arrival: somebody was handed a
+  ticket, or somebody has a machine and no idea how to serve it.
 -->
-<dialog id="onboard">
+<dialog id="splash">
   <form method="dialog" class="dialog-x"><button value="cancel" aria-label="Close">×</button></form>
 
-  <h2 id="onboard-title">Add a remote DuckDB</h2>
-  <p class="dialog-lede" id="onboard-lede">
-    Something has to serve the other end. If an agent is already working on the machine
-    that has the data — a sandbox, a VM, a box you SSH into — hand it this and it will
-    set up quackhole and come back with a ticket.
-  </p>
-
-  <!-- Built by app.js rather than written out here, for the two things it has to
-       interpolate: the token minted in this tab, so this path and the SQL below
-       are one credential rather than two, and the docs URL resolved against this
-       page. -->
-  <div class="cmd">
-    <div class="cmd-head">
-      <span class="cmd-os">prompt — for claude code, codex, cursor, an agent over ssh…</span>
-      <button class="copy" data-copy="#cmd-agent" type="button">copy</button>
-    </div>
-    <pre id="cmd-agent"><code></code></pre>
-  </div>
-
-  <p class="fineprint">
-    It sends the agent to <a href="./llms.txt" target="_blank" rel="noreferrer">llms.txt</a> — this project's docs written
-    for one — rather than spelling the steps out, so it installs the signed extension
-    instead of guessing at flags. Read it yourself if you would rather know what you are
-    asking for.
-  </p>
-
-  <hr>
-
-  <h3 class="step">Or paste this into a DuckDB you already have open</h3>
+  <h2>quackhole: connect to DuckDB from anywhere</h2>
   <p class="dialog-lede">
-    Same result, no agent. <code>quackhole_serve</code> waits for the endpoint to
-    learn its home relay and returns the link to open.
-  </p>
-  <div class="cmd">
-    <div class="cmd-head">
-      <span class="cmd-os">SQL</span>
-      <button class="copy" data-copy="#cmd-manual" type="button">copy</button>
-    </div>
-    <pre id="cmd-manual"><code></code></pre>
-  </div>
-  <p class="fineprint">
-    <code>INSTALL … FROM community</code> fetches the signed build, so no flags and no
-    downloads.
+    A database on a laptop, a VM or a sandbox has no address the internet can reach.
+    Quackhole gives it one, and this browser tab queries it directly: nothing
+    installed here, no ports opened there.
   </p>
 
-  <details class="aside">
-    <summary>Or just watch it work — a sample database, no data of your own</summary>
-    <p>
-      This one seeds its own table in a temp directory and takes no path, so it
-      demonstrates the connection rather than serving anything you have. Ctrl-C stops
-      it and removes the sample data.
+  <!-- .wire-frame because createWire resolves its relay label by walking up to
+       one. Nothing sets that label here, but the class is what the lookup keys
+       on and a frameless mount would be a silent null. -->
+  <div class="splash-wire wire-frame">
+    <div class="wire-mount"></div>
+    <p class="wire-legend">
+      <span>this tab</span>
+      <span class="wire-relay-host">a public relay</span>
+      <span>your DuckDB</span>
+    </p>
+  </div>
+
+  <div class="dialog-actions">
+    <button class="ghost" id="splash-serve" type="button">Show me how to start one</button>
+    <!-- Focused on open rather than the close button, which is what a dialog
+         reaches for by itself. Landing on "close" is an odd thing to hand
+         somebody who has just arrived. -->
+    <button id="splash-add" type="button" autofocus>I have a ticket</button>
+  </div>
+</dialog>
+
+<!-- --- serve the other end ----------------------------------------------- -->
+<!--
+  Adding a remote is two jobs done on two machines, and this is the first of
+  them. It used to carry the second as well -- the ticket field, under a rule at
+  the bottom -- which meant a visitor already holding a ticket scrolled past a
+  screen of setup to reach a text input, and a visitor holding neither could not
+  tell whether the two halves were alternatives. They are not. They are a
+  sequence, and the ticket is what joins them.
+
+  So: a dialog per job, which is the trade #connect already makes and for the
+  same reason. Each names the way to the other rather than hiding it.
+
+  Two ways to serve, and they are alternatives -- you need one. The order means
+  something: it runs from the machine you are not typing into to the DuckDB you
+  have open. The agent prompt leads because the machine worth querying is
+  usually one nobody is typing into -- a sandbox, a VM, a box behind SSH -- and
+  an agent is already sitting in it.
+
+  Not numbered. That order is a gradient rather than a sequence, and 01/02 would
+  promise steps to be done in turn. The steps are these two dialogs.
+
+  `npx quackhole` used to be a third tab. It serves a sample table in a temp
+  directory rather than anything of yours, so what it demonstrates is the
+  connection -- a thing to read about, not a way to add a remote. It is still in
+  the README and the npm package.
+-->
+<dialog id="serve">
+  <form method="dialog" class="dialog-x"><button value="cancel" aria-label="Close">×</button></form>
+
+  <h2>Start DuckDB on a VM, sandbox, or laptop</h2>
+  <p class="dialog-lede">
+    Start DuckDB somewhere with the quackhole extension. Whichever way you
+    start it, it prints a ticket which connects this browser tab to it.
+  </p>
+
+  <!--
+    Labelled by what you do rather than by what the thing is, because the
+    question being answered here is "which of these is me?" and the answer is a
+    situation. Each panel's first line names the situation its tab is short for.
+  -->
+  <div class="tabs" role="tablist" aria-label="Ways to serve the other end">
+    <!-- Focused on open rather than leaving the close button first in the tab
+         order, which is what a dialog focuses by itself. This one opens on
+         arrival, and landing on "close" is an odd thing to hand somebody who
+         has just arrived. -->
+    <button type="button" role="tab" id="tab-agent" aria-controls="panel-agent" aria-selected="true" autofocus>Ask an agent</button>
+    <button type="button" role="tab" id="tab-sql" aria-controls="panel-sql" aria-selected="false" tabindex="-1">Paste SQL</button>
+  </div>
+
+  <div class="tabpanel" role="tabpanel" id="panel-agent" aria-labelledby="tab-agent">
+    <p class="panel-lede">
+      Hand this to the agent that has access to DuckDB (it's a small binary that runs everywhere).
+    </p>
+    <!-- Built by app.js rather than written out here, for the two things it has to
+         interpolate: the token minted in this tab, so this path and the SQL beside
+         it are one credential rather than two, and the docs URL resolved against
+         this page. -->
+    <div class="cmd">
+      <div class="cmd-head">
+        <span class="cmd-os">prompt — for claude code, codex, cursor, an agent over ssh…</span>
+        <button class="copy" data-copy="#cmd-agent" type="button">copy</button>
+      </div>
+      <pre id="cmd-agent"><code></code></pre>
+    </div>
+    <p class="fineprint">
+      It sends the agent to <a href="./llms.txt" target="_blank" rel="noreferrer">llms.txt</a> — this project's docs written
+      for one — rather than spelling the steps out, so it installs the signed extension
+      instead of guessing at flags. Read it yourself if you would rather know what you are
+      asking for.
+    </p>
+  </div>
+
+  <div class="tabpanel" role="tabpanel" id="panel-sql" aria-labelledby="tab-sql" hidden>
+    <p class="panel-lede">
+      For a DuckDB you already have open. <code>quackhole_serve</code> waits for the
+      endpoint to learn its home relay and returns the link to open.
     </p>
     <div class="cmd">
       <div class="cmd-head">
-        <span class="cmd-os">any platform — needs node 20+</span>
-        <button class="copy" data-copy="#cmd-npx" type="button">copy</button>
+        <span class="cmd-os">SQL</span>
+        <button class="copy" data-copy="#cmd-manual" type="button">copy</button>
       </div>
-      <pre id="cmd-npx"><code>npx quackhole</code></pre>
+      <pre id="cmd-manual"><code></code></pre>
     </div>
     <p class="fineprint">
-      That runs the <a href="https://www.npmjs.com/package/quackhole">quackhole</a> package —
-      <a href="https://github.com/smithclay/quackhole/tree/main/npm">read it first</a> if you
-      would rather.
+      <code>INSTALL … FROM community</code> fetches the signed build, so no flags and no
+      downloads.
     </p>
-  </details>
+  </div>
 
   <hr>
 
-  <p class="dialog-lede">
-    Opening the link any of these prints connects this workbench automatically. If you are
-    on a different machine, paste the ticket instead:
+  <!-- The forward step, and the only filled button in here: everything above is
+       something to copy, and this is the thing you do once it has run. -->
+  <div class="dialog-actions">
+    <button id="to-add" type="button">I have a ticket →</button>
+  </div>
+</dialog>
+
+<!-- --- add a remote ------------------------------------------------------- -->
+<!--
+  The second job, and the one `+ add remote` opens: by the time somebody presses
+  that they are holding a ticket more often than not, and a returning visitor
+  should not have to read the setup again to reach a field. Whoever is not
+  holding one is one press from the dialog above.
+
+  Not the same as #connect, which handles a ticket that arrived in the URL. That
+  one has a ticket already and has to name whose machine it is before anything
+  dials; this one is an empty field.
+-->
+<dialog id="add">
+  <form method="dialog" class="dialog-x"><button value="cancel" aria-label="Close">×</button></form>
+
+  <h2 id="add-title">Add a remote DuckDB</h2>
+  <p class="dialog-lede" id="add-lede">
+    Paste the ticket the other machine printed. Opening the link it printed does this
+    for you.
   </p>
+
   <form class="paste" id="paste-form">
-    <input id="ticket" name="ticket" type="text" spellcheck="false" autocomplete="off" placeholder="qh1_…">
+    <!-- Focused on open, because this dialog is one field and pasting into it is
+         the whole reason it is up. -->
+    <input id="ticket" name="ticket" type="text" spellcheck="false" autocomplete="off" placeholder="qh1_…" autofocus>
     <button id="paste-go" type="submit">connect</button>
   </form>
+  <!-- Pasting a ticket is the same act as opening a link, so it cannot be the
+       one path that says nothing about what the act does. Short rather than a
+       second copy of #connect's four claims: whoever is here already chose to
+       be, and the two would drift. -->
+  <p class="fineprint">
+    A ticket grants this tab query access to that machine, and grants it nothing
+    on yours — DuckDB runs in this tab. It carries an access token that does not
+    expire, so treat it like a password.
+  </p>
   <p class="paste-error" id="paste-error" hidden></p>
   <p class="paste-note" id="paste-note" hidden></p>
-</dialog>
 
-<!-- --- what is actually happening ---------------------------------------- -->
-<dialog id="notes">
-  <form method="dialog" class="dialog-x"><button value="cancel" aria-label="Close">×</button></form>
-  <h2>What is actually happening</h2>
+  <hr>
 
-  <div class="notes-grid">
-    <section>
-      <h3>The address is a public key</h3>
-      <p>
-        <code>quack:&lt;endpoint-id&gt;.iroh:9494</code>. That is a 32-byte ed25519 public
-        key in z-base-32 — 52 characters, so it fits a DNS label. Nothing resolves it;
-        quackhole intercepts before a socket exists. Connecting to the right address and
-        authenticating the server are the same operation, so there is no certificate to
-        issue, renew or trust.
-      </p>
-    </section>
-    <section>
-      <h3>Quack is still the protocol</h3>
-      <p>
-        quackhole is a transport bridge and nothing else.
-        <a href="https://github.com/hafenkran/duckdb-quack">Quack</a> stays the database
-        protocol; its HTTP rides <a href="https://www.iroh.computer/">iroh</a> QUIC streams,
-        which supply identity, NAT traversal, relay fallback and encryption. The machine
-        you query cannot tell this tab apart from a native DuckDB.
-      </p>
-    </section>
-    <section>
-      <h3>A browser can only relay</h3>
-      <p>
-        iroh compiles its IP transport out entirely under <code>cfg(wasm_browser)</code>,
-        because a browser cannot open a UDP socket. There is no hole punching and no direct
-        path from here — ever. Traffic stays end-to-end encrypted; the relay forwards
-        ciphertext it cannot read. Between two native peers, a direct path is possible.
-      </p>
-    </section>
-    <section>
-      <h3>The bridge under this tab</h3>
-      <p>
-        DuckDB-Wasm's Quack client makes <em>synchronous</em> XHR calls from a worker, so the
-        transport has to block. This page replaces <code>XMLHttpRequest</code> inside that
-        worker and parks it in <code>Atomics.wait</code> on a <code>SharedArrayBuffer</code>
-        while a second worker does the async iroh work — which is why the page needs
-        cross-origin isolation.
-      </p>
-    </section>
+  <div class="dialog-actions">
+    <button class="ghost" id="to-serve" type="button">No ticket yet? Set up the other end →</button>
   </div>
-
-  <p class="fineprint">
-    Source, protocol notes and the cross-network test harness:
-    <a href="https://github.com/smithclay/quackhole">github.com/smithclay/quackhole</a>
-  </p>
 </dialog>
+
 
 <script type="module" src="app.js"></script>
 </body>

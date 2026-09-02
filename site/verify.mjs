@@ -68,6 +68,15 @@ if (REMOTE) {
   console.log(`\n  serving ${OUT}\n  ${base}  (isolation via ${VIA_SW ? 'service worker' : 'headers'})\n`);
 }
 
+// The rail's remote connections, by name.
+//
+// The bar used to carry a status pill and this script synchronised on it. The
+// rail is where that state actually lives -- it is what renderConnections draws
+// from the session -- and it is what a visitor reads, so asserting on it checks
+// the thing being relied on rather than a summary of it.
+const remotes = (page) =>
+  page.$$eval('.conn[data-kind="remote"] .conn-name', (els) => els.map((e) => e.textContent.trim()));
+
 // Wait for the rail to list a catalog's tables.
 async function waitForTables(page, prefix) {
   await page.waitForFunction(
@@ -77,57 +86,117 @@ async function waitForTables(page, prefix) {
   );
 }
 
-// Wait until at least `want` non-blank cells exist and none is still running.
-async function settledCells(page, want) {
+// Everything on the shell's screen, as text.
+//
+// xterm renders to a canvas when WebGL is there and to the DOM when it is not,
+// and only the DOM path leaves anything to read -- which is what the WebGL
+// denial below the browser launch is for. `.xterm-rows` is the DOM renderer's
+// own element, one child per visible row.
+const terminal = (page) => page.$eval('.xterm-rows', (e) => e.innerText);
+
+// The screen holding nothing but a prompt with nothing typed at it. Written
+// against the trailing whitespace on purpose: while `.clear` is being typed the
+// only line is `duckdb> .clear`, which starts with a prompt and would satisfy
+// anything looser -- so the wait would pass before the clear had happened.
+// The shell at a prompt with nothing running: the last thing on screen is a bare
+// prompt. Not the same as IDLE below, which also wants an otherwise empty screen.
+const SETTLED = () => {
+  const lines = document.querySelector('.xterm-rows').innerText.split('\n').filter((l) => l.trim());
+  return lines.length > 0 && /^duckdb>\s*$/.test(lines[lines.length - 1]);
+};
+
+const IDLE = () => {
+  const lines = document.querySelector('.xterm-rows').innerText.split('\n').filter((l) => l.trim());
+  return lines.length === 1 && /^duckdb>\s*$/.test(lines[0]);
+};
+
+/// Type a statement at the prompt and wait for the shell to come back.
+///
+/// The way a visitor runs one, because it is the only way there is: the shell
+/// owns its terminal and publishes no way to put text on it, which is the same
+/// fact that made the page stop seeding queries. Clicking the terminal first
+/// throws if a dialog is over it, which is the failure worth having.
+///
+/// The screen is cleared first, so what is left afterwards is this statement
+/// and its result and nothing before it. Without that the assertions would have
+/// to find where the previous statement's output ended, and the terminal
+/// scrolls -- earlier rows leave `.xterm-rows` entirely once the screen fills.
+///
+/// The whole screen comes back rather than the result alone. A statement longer
+/// than the terminal is wrapped across rows, so the echo is not reliably one
+/// line and there is no honest place to cut; callers look for what they expect
+/// instead.
+async function run(page, sql) {
+  // The page types into this terminal too -- the greeting at boot, and a
+  // statement over each remote as it attaches -- and both are round trips this
+  // script does not otherwise wait for. Clearing the screen underneath one of
+  // them loses it, and then nothing ever reaches IDLE.
+  await page.waitForFunction(SETTLED, null, { timeout: 90_000 });
+
+  await page.click('#shell');
+  await page.keyboard.type('.clear');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(IDLE, null, { timeout: 30_000 });
+
+  await page.keyboard.type(sql);
+  await page.keyboard.press('Enter');
   await page.waitForFunction(
-    (n) => {
-      const cells = [...document.querySelectorAll('.cell')].filter((c) => c.querySelector('.cell-sql').value.trim());
-      return cells.length >= n && cells.every((c) => c.dataset.state !== 'running');
+    () => {
+      const lines = document.querySelector('.xterm-rows').innerText.split('\n').filter((l) => l.trim());
+      return lines.length > 1 && /^duckdb>\s*$/.test(lines[lines.length - 1]);
     },
-    want,
+    null,
     { timeout: 90_000 },
   );
+
+  const text = await terminal(page);
+  // The shell prints an error where it would have printed a table, so whether a
+  // statement worked is a question about the text. Anchored to the start of a
+  // line and to DuckDB's own `<Kind> Error:` shape: a bare /error/ would fail
+  // the demo server's own `SELECT level, count(*) ... FROM events`, whose
+  // result has a row called `error` in it.
+  return { text, ok: !/^[A-Z][A-Za-z ]*Error[:!]/m.test(text) };
 }
 
-// Type into the trailing blank cell and run it, the way a visitor would.
-async function runOwnCell(page, sql) {
-  // Wait for the blank one rather than taking whatever is last: attaching a
-  // remote appends its seeded cells and only then a fresh blank, so the last
-  // cell is briefly a running query nobody typed.
+/// Wait for the shell to finish announcing a freshly attached remote.
+///
+/// The page types a statement over the new catalog once the attach lands, and
+/// that is a round trip through the relay. Waiting for it is not politeness: it
+/// is the terminal this script also types into, and `run` below would otherwise
+/// be able to clear the screen halfway through a statement the page was still
+/// putting on it. Doubles as the assertion that the announcement happens.
+async function announced(page, name) {
   await page.waitForFunction(
-    () => {
-      const cells = [...document.querySelectorAll('.cell')];
-      return cells.length > 0 && !cells[cells.length - 1].querySelector('.cell-sql').value.trim();
-    },
-    null,
+    (n) => new RegExp(`${n} connected`).test(document.querySelector('.xterm-rows')?.innerText ?? ''),
+    name,
     { timeout: 60_000 },
   );
-  return runInLastCell(page, sql);
+  // The text appears before the prompt that follows it does.
+  await page.waitForFunction(SETTLED, null, { timeout: 30_000 });
 }
 
-async function runInLastCell(page, sql) {
-  const last = page.locator('.cell').last();
-  await last.locator('.cell-sql').fill(sql);
-  await last.locator('.cell-run').click();
-  await page.waitForFunction(
-    () => {
-      const c = document.querySelector('.cell:last-child');
-      return c && c.dataset.state !== 'running' && c.dataset.state !== 'idle';
-    },
-    null,
-    { timeout: 60_000 },
-  );
-  return {
-    state: await last.getAttribute('data-state'),
-    meta: (await last.locator('.result-meta, .result-error').first().textContent()).trim(),
-    rows: await last
-      .locator('.result table tr')
-      .evaluateAll((trs) => trs.map((tr) => [...tr.children].map((c) => c.textContent.trim()).join(' | '))),
-  };
-}
+// The last thing the shell printed before the trailing prompt, for the log.
+const tail = (text, n = 6) =>
+  text
+    .split('\n')
+    .filter((l) => l.trim() && !/^duckdb>\s*$/.test(l))
+    .slice(-n)
+    .join('\n            ');
 
 const browser = await chromium.launch();
 const page = await browser.newPage();
+
+// Deny WebGL, so xterm falls back to its DOM renderer and the terminal's text
+// is in the page rather than painted onto a canvas. Nothing else here needs it,
+// and a canvas would leave this script with a shell it can drive and cannot
+// read. The shell picks its renderer once, at embed, from these three.
+await page.addInitScript(() => {
+  const no = () => false;
+  for (const m of ['probablySupportsContext', 'supportsContext']) {
+    if (m in HTMLCanvasElement.prototype) HTMLCanvasElement.prototype[m] = no;
+  }
+  delete window.WebGL2RenderingContext;
+});
 
 page.on('console', (m) => {
   const t = m.text();
@@ -168,8 +237,19 @@ try {
   console.log(`  offered   ${offered}`);
   await page.click('#connect-go');
 
-  await page.waitForSelector('#status[data-state="live"]', { timeout: 90_000 });
-  console.log(`  ${(await page.textContent('#connect-note')).trim()}`);
+  await page.waitForFunction(() => document.querySelector('.conn[data-kind="remote"]') !== null, null, {
+    timeout: 90_000,
+  });
+
+  // The shell greets over the database it was handed, so its banner is the
+  // first evidence that resolveDatabase gave it a live one rather than a
+  // half-built one -- and that the page's own INSTALL/LOAD did not race it.
+  await page.waitForFunction(
+    () => /DuckDB Web Shell/.test(document.querySelector('.xterm-rows')?.innerText ?? ''),
+    null,
+    { timeout: 90_000 },
+  );
+  console.log(`  shell     ${(await terminal(page)).split('\n').find((l) => l.includes('Database:'))?.trim()}`);
 
   // The relay legend lives in a sibling of the SVG mount, so it is easy to
   // query from the wrong root -- which fails silently and leaves the
@@ -193,44 +273,43 @@ try {
   // connects but never shows anything to query looks the same as one that did
   // not connect.
   await waitForTables(page, 'remote.');
-
-  // Every seeded cell must land, not just the first: stopping at the first
-  // failure would make "some cells ran" indistinguishable from success. Three,
-  // because the demo server has host_info and events and the local hello cell
-  // ran on arrival -- waiting for "any settled cell" would be satisfied by the
-  // hello cell alone, before the seeded ones exist.
-  await settledCells(page, 3);
-
-  const cells = await page.$$eval('.cell', (els) =>
-    els
-      .filter((el) => el.querySelector('.cell-sql').value.trim())
-      .map((el) => ({
-        state: el.dataset.state,
-        sql: el.querySelector('.cell-sql').value.trim(),
-        ms: el.querySelector('.cell-ms').textContent,
-        out: (el.querySelector('.result-meta') ?? el.querySelector('.result-error'))?.textContent ?? '',
-      })),
-  );
-
-  console.log('');
-  for (const c of cells) {
-    console.log(`  ${c.state === 'ok' ? 'ok  ' : 'FAIL'}  ${c.ms.padStart(7)}  ${c.out}`);
-    console.log(`          ${c.sql.replace(/\s+/g, ' ')}`);
-  }
-
-  // Least specific first, so the more useful message wins.
-  const bad = cells.filter((c) => c.state !== 'ok');
-  if (cells.length < 2) failed = `expected the seeded cells, saw ${cells.length}`;
-  if (bad.length) failed = `${bad.length} of ${cells.length} cell(s) failed: ${bad[0].out}`;
+  await announced(page, 'remote');
+  console.log('  announced  the shell says the remote is connected');
 
   const tables = await page.$$eval('.schema-item', (els) => els.map((e) => e.textContent.trim()));
   console.log(`  tables    ${tables.join(', ') || '(none)'}`);
 
-  // The empty cell at the end is the half a visitor drives themselves, and it
-  // is a different code path from the seeded ones, so exercise it too.
-  const own = await runOwnCell(page, 'SELECT count(*) AS n, max(ts) AS newest FROM remote.events');
-  console.log(`\n  own cell  ${own.state}  ${own.meta}`);
-  if (own.state !== 'ok') failed = `the hand-typed cell failed: ${own.meta}`;
+  // What the notebook used to seed and run for a freshly attached remote. The
+  // shell takes nothing from the page, so these are typed now -- by a visitor,
+  // and here by this. Run in full rather than stopping at the first failure:
+  // "some of them worked" and "all of them worked" have to look different.
+  //
+  // Both spellings of the info table are accepted for the same reason the page
+  // used to accept both: this site ships on a push to main and the CLI on a
+  // release tag, so a visitor can arrive against either one.
+  const info = ['remote.host_info', 'remote.laptop_info'].find((t) => tables.includes(t));
+  const first = [
+    info && `SELECT host, os, duckdb_version FROM ${info};`,
+    tables.includes('remote.events') &&
+      'SELECT level, count(*) AS n FROM remote.events GROUP BY level ORDER BY n DESC;',
+  ].filter(Boolean);
+  if (first.length < 2) {
+    failed = `expected host_info and events on the demo server, saw ${tables.join(', ') || '(none)'}`;
+  }
+
+  console.log('');
+  for (const sql of first) {
+    const r = await run(page, sql);
+    console.log(`  ${r.ok ? 'ok  ' : 'FAIL'}  ${sql}`);
+    console.log(`            ${tail(r.text)}`);
+    if (!r.ok) failed = `${sql} failed`;
+  }
+
+  // A statement of the visitor's own, over the remote, through the terminal --
+  // the half of the workbench nothing above drives.
+  const own = await run(page, 'SELECT count(*) AS n, max(ts) AS newest FROM remote.events;');
+  console.log(`\n  own query  ${own.ok ? 'ok' : 'FAIL'}\n            ${tail(own.text)}`);
+  if (!own.ok) failed = `the hand-typed query failed:\n${own.text}`;
 
   // --- the second server, if one was offered -------------------------------
   if (TICKET2) {
@@ -245,6 +324,7 @@ try {
     );
     console.log(`\n  ${(await page.textContent('#paste-note')).trim()}`);
     await waitForTables(page, 'remote2.');
+    await announced(page, 'remote2');
 
     // Each remote draws its own route, because each is reached over its own
     // relay. One diagram for two peers would have to name one of them.
@@ -252,23 +332,22 @@ try {
     console.log(`  routes    ${routes.join(', ')}`);
     if (routes.length !== 2) failed = `expected two routes drawn, saw ${routes.length}`;
 
-    const status = (await page.textContent('#status-text')).trim();
-    console.log(`  status    ${status}`);
-    if (!status.startsWith('2 remotes')) failed = `status reads "${status}", expected 2 remotes`;
+    const both = await remotes(page);
+    console.log(`  remotes   ${both.join(', ')}`);
+    if (both.length !== 2) failed = `expected two remotes in the rail, saw ${both.join(', ') || 'none'}`;
 
     // One statement across both catalogs. sqlite_master rather than a table
     // name, because the second server is allowed to be any DuckDB -- and this
     // is the assertion that says the two secrets and the two relays did not get
     // crossed, since a mix-up authenticates as the wrong peer or dials the
     // wrong one.
-    const cross = await runOwnCell(
+    const cross = await run(
       page,
-      "SELECT 'remote' AS peer, string_agg(name, ', ' ORDER BY name) AS tables FROM remote.sqlite_master" +
-        " UNION ALL SELECT 'remote2', string_agg(name, ', ' ORDER BY name) FROM remote2.sqlite_master",
+      "SELECT 'remote' AS peer, count(*) AS tables FROM remote.sqlite_master" +
+        " UNION ALL SELECT 'remote2', count(*) FROM remote2.sqlite_master;",
     );
-    console.log(`  both      ${cross.state}  ${cross.meta}`);
-    for (const r of cross.rows) console.log(`            ${r}`);
-    if (cross.state !== 'ok') failed = `querying both remotes at once failed: ${cross.meta}`;
+    console.log(`  both      ${cross.ok ? 'ok' : 'FAIL'}\n            ${tail(cross.text)}`);
+    if (!cross.ok) failed = `querying both remotes at once failed:\n${cross.text}`;
   }
 
   // Taken here rather than at the end: this is the workbench with everything
@@ -289,7 +368,7 @@ try {
   const dupe = (await page.textContent('#paste-error')).trim();
   console.log(`\n  duplicate  ${dupe}`);
   if (!/already attached/i.test(dupe)) failed = `a duplicate ticket said "${dupe}"`;
-  await page.click('#onboard .dialog-x button');
+  await page.click('#add .dialog-x button');
 
   // Detaching gives the name and the route back. Without it a peer that has
   // gone away stays in the rail forever and its name stays taken.
@@ -302,17 +381,18 @@ try {
       null,
       { timeout: 30_000 },
     );
-    const after = (await page.textContent('#status-text')).trim();
+    const left = await remotes(page);
     const routesAfter = await page.$$eval('.wire-frame', (els) => els.length);
-    console.log(`  detached   ${after}, ${routesAfter} route`);
-    if (!after.startsWith('1 remote')) failed = `after detaching, status reads "${after}"`;
+    console.log(`  detached   ${left.join(', ') || 'none'} left, ${routesAfter} route`);
+    if (left.length !== 1) failed = `after detaching, the rail lists ${left.join(', ') || 'none'}`;
     if (routesAfter !== 1) failed = `after detaching, ${routesAfter} routes are still drawn`;
   }
 
   // The other way to detach: typing it. The rail has to notice, or it goes on
   // listing a connection the session no longer has -- which is the one thing a
   // list of connections must never do.
-  await runInLastCell(page, 'DETACH remote');
+  const detach = await run(page, 'DETACH remote;');
+  if (!detach.ok) failed = `a hand-typed DETACH failed:\n${detach.text}`;
   await page.waitForFunction(
     () => {
       const names = [...document.querySelectorAll('.conn .conn-name')].map((e) => e.textContent.trim());
@@ -321,9 +401,7 @@ try {
     null,
     { timeout: 30_000 },
   );
-  const bare = (await page.textContent('#status-text')).trim();
-  console.log(`  hand DETACH  rail back to memory only, status "${bare}"`);
-  if (bare !== 'local only') failed = `after a hand-typed DETACH, status reads "${bare}"`;
+  console.log('  hand DETACH  rail back to memory only, no routes drawn');
 
   // Checked last, so it covers the whole run. Nothing above asserts on the
   // service worker directly -- it is meant to be invisible -- and "invisible"

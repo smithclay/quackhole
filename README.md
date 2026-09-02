@@ -183,10 +183,11 @@ Quackhole is early-stage. Over a public relay, across two networks with no route
 them, we measured `ATTACH` at about a second, warm queries at 0.14–0.21s, and a 200k-row scan
 under 2.5s.
 
-- **Hole punching is unverified.** Every number above came over a relay. Our test harness
-  firewalls the only direct-address candidates, and browsers have no direct path, so we
-  cannot tell you how often iroh gets a direct connection through CGNAT or a symmetric NAT.
-  Budget for relay latency until you measure your own.
+- **Hole punching works, on the one network we have measured.** A laptop on home Wi-Fi
+  serving to a cloud VM held the relay for about 80 seconds, upgraded to a direct path, and
+  stayed there: 71% of 46 iterations went direct, and `ping` p50 fell from 66 ms to 29 ms as
+  it did. That is one home connection and one provider, so budget for relay latency until you
+  measure your own.
 - **Quackhole carries Quack traffic only.** `read_csv('https://<id>.iroh:9494/x.csv')` goes
   to httpfs, which knows nothing about iroh. Reach for `ATTACH` and SQL.
 - **Browsers connect as clients over relays**, and need cross-origin isolation (COOP/COEP).

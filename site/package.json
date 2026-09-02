@@ -10,11 +10,15 @@
   },
   "comments": {
     "dependencies": "What building the site needs. The Pages workflow installs only these.",
+    "@duckdb/duckdb-wasm-shell": "The query surface. Released in lockstep with duckdb-wasm -- same version string, same day, out of the same monorepo -- so these two ranges move together and there is no skew to manage.",
+    "xterm": "For its stylesheet, which the shell package does not carry. Held at the major the shell depends on: @xterm/xterm superseded it and ships a different stylesheet for a different major.",
     "devDependencies": "Only verify.mjs needs playwright, and CI never runs it -- it wants a live relay and a native server."
   },
   "dependencies": {
     "@duckdb/duckdb-wasm": "^1.33.1-dev57.0",
-    "vite": "^8.2.2"
+    "@duckdb/duckdb-wasm-shell": "^1.33.1-dev57.0",
+    "vite": "^8.2.2",
+    "xterm": "^5.3.0"
   },
   "devDependencies": {
     "playwright": "^1.49.0"
