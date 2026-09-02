@@ -263,6 +263,14 @@ dialog {
 }
 dialog::backdrop { background: rgba(6, 8, 14, 0.72); backdrop-filter: blur(3px); }
 
+/* Anchored to the top rather than centred, which is what a modal dialog does by
+   itself. The onboarding panels are different heights, and a centred dialog
+   re-centres on every switch -- so the tab strip slides out from under the
+   cursor that just clicked it and the three cannot be read in a row. Growing
+   downwards instead leaves the tabs where they were. auto on the bottom so a
+   panel taller than the window still scrolls rather than being cut off. */
+#onboard { margin-block: 3rem auto; }
+
 .dialog-x { display: flex; justify-content: flex-end; margin: -0.5rem -0.5rem 0 0; }
 .dialog-x button {
   background: transparent; border-color: transparent; color: var(--dim);
@@ -318,11 +326,45 @@ dialog hr { border: 0; border-top: 1px solid var(--line); margin: 1.6rem 0; }
 }
 .copy:hover { background: transparent; color: var(--signal); border-color: var(--signal); }
 
-.aside { margin-top: 1.1rem; }
-.aside summary { cursor: pointer; font: 400 0.85rem/1.5 var(--body); color: var(--dim); }
-.aside summary:hover { color: var(--paper); }
-.aside > p { margin: 0.85rem 0; font-size: 0.88rem; color: #b9c1d4; }
-.aside .fineprint { margin-top: 0.7rem; }
+/* --- tabs ---------------------------------------------------------------- */
+
+/* Three ways to serve the other end. They are alternatives rather than steps,
+   so stacking them down the dialog made everyone scroll past two things they
+   had already decided against -- and put the ticket field, which is what a
+   returning visitor came for, three screens down.
+
+   Display type rather than the uppercase micro-label the rail uses: these are
+   the headings the three sections used to have, and demoting them to chrome
+   would make the dialog look like it had one way and some settings. */
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem;
+  margin: 0 0 1.35rem;
+  border-bottom: 1px solid var(--line);
+}
+.tabs button {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 0.5rem 0.8rem;
+  color: var(--dim);
+  font: 600 0.82rem/1.4 var(--display);
+  letter-spacing: -0.025em;
+  /* The strip sits on a hairline and the indicator has to cover it rather than
+     stack on top of it, or the selected tab reads as underlined twice. */
+  margin-bottom: -1px;
+}
+.tabs button:hover { background: transparent; color: var(--paper); }
+.tabs button[aria-selected='true'] { color: var(--paper); border-bottom-color: var(--signal); }
+
+/* Each panel opens by naming the situation its tab is short for, which is the
+   sentence that used to be the section's lede. Lighter than .dialog-lede: the
+   dialog has one lede, at the top, and three of them competing would leave no
+   way to tell which sentence was about the whole task. */
+.panel-lede { color: #b9c1d4; font-size: 0.88rem; line-height: 1.55; margin: 0 0 1rem; }
+[role='tabpanel'][hidden] { display: none; }
 
 /* --- paste --------------------------------------------------------------- */
 

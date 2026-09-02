@@ -210,6 +210,61 @@ function renderManualCommand() {
   ].join('\n');
 }
 
+/// Wire a tablist up for the keyboard.
+///
+/// Automatic activation -- arrowing onto a tab selects it -- because all three
+/// panels are already in the DOM and switching costs nothing, which is the case
+/// the ARIA practices name it for. Roving tabindex, so Tab moves past the strip
+/// to the panel rather than walking three stops through it.
+///
+/// The markup carries the whole relationship already: aria-controls names the
+/// panel, aria-selected says which is showing, and `hidden` on the other two is
+/// what does the hiding. This adds behaviour and reads state from there rather
+/// than keeping an index of its own.
+function initTabs(list) {
+  const tabs = [...list.querySelectorAll('[role="tab"]')];
+
+  const select = (tab, { focus = true } = {}) => {
+    for (const t of tabs) {
+      const on = t === tab;
+      t.setAttribute('aria-selected', String(on));
+      // Only the selected tab is a Tab stop. Without this the strip costs three
+      // presses to cross, which is the thing roving tabindex exists to stop.
+      t.tabIndex = on ? 0 : -1;
+      $(`#${t.getAttribute('aria-controls')}`).hidden = !on;
+    }
+    if (focus) tab.focus();
+  };
+
+  list.addEventListener('click', (e) => {
+    const tab = e.target.closest('[role="tab"]');
+    if (tab) select(tab);
+  });
+
+  list.addEventListener('keydown', (e) => {
+    const from = tabs.indexOf(document.activeElement);
+    if (from < 0) return;
+    // Wrapping, because a strip of three has no meaningful end to stop at.
+    const to = {
+      ArrowRight: (from + 1) % tabs.length,
+      ArrowLeft: (from - 1 + tabs.length) % tabs.length,
+      Home: 0,
+      End: tabs.length - 1,
+    }[e.key];
+    if (to === undefined) return;
+    // Home and End scroll the dialog otherwise, which moves the thing being
+    // navigated out from under the person navigating it.
+    e.preventDefault();
+    select(tabs[to]);
+  });
+
+  // Whichever the markup marked, so the resting tab is chosen in one place.
+  // Not focused: this runs at load, and taking focus would move it off the page.
+  select(tabs.find((t) => t.getAttribute('aria-selected') === 'true') ?? tabs[0], { focus: false });
+}
+
+for (const list of document.querySelectorAll('[role="tablist"]')) initTabs(list);
+
 for (const btn of document.querySelectorAll('.copy')) {
   btn.addEventListener('click', async () => {
     const was = btn.textContent;

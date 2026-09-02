@@ -161,11 +161,11 @@
       SQL, and not the results.
     </li>
     <li>
-      <b>The exposure is theirs, not yours.</b>
-      The link carries an access token for their database, and it does not
-      expire. Anyone holding it can query that machine until they stop serving —
-      so connect only if you trust who sent it, and treat the link itself like a
-      password.
+      <b>Treat this full link like a password.</b>
+      The access token is part of it and does not expire. Anyone you pass it on
+      to can query that machine until whoever runs it stops serving — so keep it
+      out of chats, issues and commits, and connect only if you trust who sent
+      it to you.
     </li>
   </ul>
 
@@ -184,68 +184,85 @@
   page because it is a task you finish once. Arriving with #qh1_... goes to
   #connect above instead, so a link from the server never shows this form.
 
-  Three ways to serve the other end, ordered by how much of your own data they
-  reach. The agent prompt leads because the machine worth querying is usually
-  one you are not typing into -- a sandbox, a VM, a box behind SSH -- and an
-  agent is already sitting in it. The SQL is second because it serves the
-  database you have open. `npx quackhole` is last and folded away: it seeds its
-  own sample table in a temp directory and takes no path, so it demonstrates the
-  connection rather than serving anything of yours.
+  Three ways to serve the other end, and they are alternatives -- you need one.
+  Stacked down the dialog they asked everyone to scroll past two things they had
+  already decided against, so they are tabs. The order survives the change and
+  still means something: it runs from the machine you are not typing into, to
+  the DuckDB you have open, to a sample database that is nobody's. The agent
+  prompt leads because the machine worth querying is usually one nobody is
+  typing into -- a sandbox, a VM, a box behind SSH -- and an agent is already
+  sitting in it.
+
+  Not numbered. The order is a gradient rather than a sequence, and 01/02/03
+  would promise steps that have to be done in turn.
 -->
 <dialog id="onboard">
   <form method="dialog" class="dialog-x"><button value="cancel" aria-label="Close">×</button></form>
 
   <h2 id="onboard-title">Add a remote DuckDB</h2>
   <p class="dialog-lede" id="onboard-lede">
-    Something has to serve the other end. If an agent is already working on the machine
-    that has the data — a sandbox, a VM, a box you SSH into — hand it this and it will
-    set up quackhole and come back with a ticket.
+    Something has to serve the other end. Which way depends on where the data is.
   </p>
 
-  <!-- Built by app.js rather than written out here, for the two things it has to
-       interpolate: the token minted in this tab, so this path and the SQL below
-       are one credential rather than two, and the docs URL resolved against this
-       page. -->
-  <div class="cmd">
-    <div class="cmd-head">
-      <span class="cmd-os">prompt — for claude code, codex, cursor, an agent over ssh…</span>
-      <button class="copy" data-copy="#cmd-agent" type="button">copy</button>
-    </div>
-    <pre id="cmd-agent"><code></code></pre>
+  <!--
+    Labelled by what you do rather than by what the thing is, because the
+    question being answered here is "which of these is me?" and the answer is a
+    situation, not a technology. Each panel's first line names the situation the
+    tab is short for.
+  -->
+  <div class="tabs" role="tablist" aria-label="Ways to serve the other end">
+    <button type="button" role="tab" id="tab-agent" aria-controls="panel-agent" aria-selected="true">Ask an agent</button>
+    <button type="button" role="tab" id="tab-sql" aria-controls="panel-sql" aria-selected="false" tabindex="-1">Paste SQL</button>
+    <button type="button" role="tab" id="tab-npx" aria-controls="panel-npx" aria-selected="false" tabindex="-1">Run npx</button>
   </div>
 
-  <p class="fineprint">
-    It sends the agent to <a href="./llms.txt" target="_blank" rel="noreferrer">llms.txt</a> — this project's docs written
-    for one — rather than spelling the steps out, so it installs the signed extension
-    instead of guessing at flags. Read it yourself if you would rather know what you are
-    asking for.
-  </p>
-
-  <hr>
-
-  <h3 class="step">Or paste this into a DuckDB you already have open</h3>
-  <p class="dialog-lede">
-    Same result, no agent. <code>quackhole_serve</code> waits for the endpoint to
-    learn its home relay and returns the link to open.
-  </p>
-  <div class="cmd">
-    <div class="cmd-head">
-      <span class="cmd-os">SQL</span>
-      <button class="copy" data-copy="#cmd-manual" type="button">copy</button>
+  <div class="tabpanel" role="tabpanel" id="panel-agent" aria-labelledby="tab-agent">
+    <p class="panel-lede">
+      For a machine you are not typing into — a sandbox, a VM, a box you SSH into. Hand
+      this to the agent already working there and it comes back with a ticket.
+    </p>
+    <!-- Built by app.js rather than written out here, for the two things it has to
+         interpolate: the token minted in this tab, so this path and the SQL beside
+         it are one credential rather than two, and the docs URL resolved against
+         this page. -->
+    <div class="cmd">
+      <div class="cmd-head">
+        <span class="cmd-os">prompt — for claude code, codex, cursor, an agent over ssh…</span>
+        <button class="copy" data-copy="#cmd-agent" type="button">copy</button>
+      </div>
+      <pre id="cmd-agent"><code></code></pre>
     </div>
-    <pre id="cmd-manual"><code></code></pre>
+    <p class="fineprint">
+      It sends the agent to <a href="./llms.txt" target="_blank" rel="noreferrer">llms.txt</a> — this project's docs written
+      for one — rather than spelling the steps out, so it installs the signed extension
+      instead of guessing at flags. Read it yourself if you would rather know what you are
+      asking for.
+    </p>
   </div>
-  <p class="fineprint">
-    <code>INSTALL … FROM community</code> fetches the signed build, so no flags and no
-    downloads.
-  </p>
 
-  <details class="aside">
-    <summary>Or just watch it work — a sample database, no data of your own</summary>
-    <p>
-      This one seeds its own table in a temp directory and takes no path, so it
-      demonstrates the connection rather than serving anything you have. Ctrl-C stops
-      it and removes the sample data.
+  <div class="tabpanel" role="tabpanel" id="panel-sql" aria-labelledby="tab-sql" hidden>
+    <p class="panel-lede">
+      For a DuckDB you already have open. <code>quackhole_serve</code> waits for the
+      endpoint to learn its home relay and returns the link to open.
+    </p>
+    <div class="cmd">
+      <div class="cmd-head">
+        <span class="cmd-os">SQL</span>
+        <button class="copy" data-copy="#cmd-manual" type="button">copy</button>
+      </div>
+      <pre id="cmd-manual"><code></code></pre>
+    </div>
+    <p class="fineprint">
+      <code>INSTALL … FROM community</code> fetches the signed build, so no flags and no
+      downloads.
+    </p>
+  </div>
+
+  <div class="tabpanel" role="tabpanel" id="panel-npx" aria-labelledby="tab-npx" hidden>
+    <p class="panel-lede">
+      For seeing it work with no data of your own. It seeds a sample table in a temp
+      directory and takes no path, so it demonstrates the connection rather than serving
+      anything you have. Ctrl-C stops it and removes the sample.
     </p>
     <div class="cmd">
       <div class="cmd-head">
@@ -259,7 +276,7 @@
       <a href="https://github.com/smithclay/quackhole/tree/main/npm">read it first</a> if you
       would rather.
     </p>
-  </details>
+  </div>
 
   <hr>
 
