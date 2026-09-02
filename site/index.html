@@ -109,8 +109,8 @@
 <!--
   Its own dialog rather than a retitled #onboard, because the visitor who
   followed a link has already done the setup the onboarding explains: showing
-  them the npx command, the by-hand SQL and a paste field asks them to read past
-  all of it to reach the one button that matters.
+  them the agent prompt, the by-hand SQL and a paste field asks them to read
+  past all of it to reach the one button that matters.
 
   It offers rather than acts. The fragment carries a token that grants query
   access to somebody's machine, so naming the endpoint and the relay before
@@ -184,17 +184,21 @@
   page because it is a task you finish once. Arriving with #qh1_... goes to
   #connect above instead, so a link from the server never shows this form.
 
-  Three ways to serve the other end, and they are alternatives -- you need one.
-  Stacked down the dialog they asked everyone to scroll past two things they had
-  already decided against, so they are tabs. The order survives the change and
-  still means something: it runs from the machine you are not typing into, to
-  the DuckDB you have open, to a sample database that is nobody's. The agent
-  prompt leads because the machine worth querying is usually one nobody is
+  Two ways to serve the other end, and they are alternatives -- you need one.
+  Stacked down the dialog they asked everyone to scroll past the one they had
+  already decided against, so they are tabs. The order means something: it runs
+  from the machine you are not typing into to the DuckDB you have open. The
+  agent prompt leads because the machine worth querying is usually one nobody is
   typing into -- a sandbox, a VM, a box behind SSH -- and an agent is already
   sitting in it.
 
-  Not numbered. The order is a gradient rather than a sequence, and 01/02/03
-  would promise steps that have to be done in turn.
+  Not numbered. The order is a gradient rather than a sequence, and 01/02 would
+  promise steps that have to be done in turn.
+
+  `npx quackhole` used to be a third. It serves a sample table in a temp
+  directory rather than anything of yours, so what it demonstrates is the
+  connection -- which is a thing to read about, not a way to add the remote this
+  dialog is for. It is still in the README and the npm package.
 -->
 <dialog id="onboard">
   <form method="dialog" class="dialog-x"><button value="cancel" aria-label="Close">×</button></form>
@@ -213,7 +217,6 @@
   <div class="tabs" role="tablist" aria-label="Ways to serve the other end">
     <button type="button" role="tab" id="tab-agent" aria-controls="panel-agent" aria-selected="true">Ask an agent</button>
     <button type="button" role="tab" id="tab-sql" aria-controls="panel-sql" aria-selected="false" tabindex="-1">Paste SQL</button>
-    <button type="button" role="tab" id="tab-npx" aria-controls="panel-npx" aria-selected="false" tabindex="-1">Run npx</button>
   </div>
 
   <div class="tabpanel" role="tabpanel" id="panel-agent" aria-labelledby="tab-agent">
@@ -255,26 +258,6 @@
     <p class="fineprint">
       <code>INSTALL … FROM community</code> fetches the signed build, so no flags and no
       downloads.
-    </p>
-  </div>
-
-  <div class="tabpanel" role="tabpanel" id="panel-npx" aria-labelledby="tab-npx" hidden>
-    <p class="panel-lede">
-      For seeing it work with no data of your own. It seeds a sample table in a temp
-      directory and takes no path, so it demonstrates the connection rather than serving
-      anything you have. Ctrl-C stops it and removes the sample.
-    </p>
-    <div class="cmd">
-      <div class="cmd-head">
-        <span class="cmd-os">any platform — needs node 20+</span>
-        <button class="copy" data-copy="#cmd-npx" type="button">copy</button>
-      </div>
-      <pre id="cmd-npx"><code>npx quackhole</code></pre>
-    </div>
-    <p class="fineprint">
-      That runs the <a href="https://www.npmjs.com/package/quackhole">quackhole</a> package —
-      <a href="https://github.com/smithclay/quackhole/tree/main/npm">read it first</a> if you
-      would rather.
     </p>
   </div>
 

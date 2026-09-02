@@ -49,31 +49,33 @@ Onboarding is a dialog, not a page: adding a remote is a task you finish once,
 and after that the page is a DuckDB shell. Arriving with `#qh1_...` skips the
 form entirely and shows the dialog already connecting.
 
-The dialog offers three ways to serve that other end, as tabs. They are
+The dialog offers two ways to serve that other end, as tabs. They are
 alternatives — you need one — so stacking them down the dialog made everyone
-scroll past two things they had already decided against, and left the ticket
-field, which is what a returning visitor came for, below two screens of prose.
+scroll past the one they had already decided against, and left the ticket field,
+which is what a returning visitor came for, below a screen of prose.
 
-The order survives the change and is still the argument. **The prompt for a
-coding agent leads**, because the machine worth querying is usually one nobody
-is typing into — a sandbox, a VM, a box behind SSH — and an agent is already
-sitting in it. It carries the token minted in the tab and points at
-[`public/llms.txt`](public/llms.txt) rather than spelling out the SQL, so the
-steps live in a document that gets to be wrong once instead of in a string that
-ages inside a copied prompt. **The SQL is second**, because it serves the
-database you already have open. **`npx quackhole` is last**: it seeds its own
-sample table in a temp directory and takes no database path, so it demonstrates
-the connection rather than serving anything of yours.
+The order is the argument. **The prompt for a coding agent leads**, because the
+machine worth querying is usually one nobody is typing into — a sandbox, a VM, a
+box behind SSH — and an agent is already sitting in it. It carries the token
+minted in the tab and points at [`public/llms.txt`](public/llms.txt) rather than
+spelling out the SQL, so the steps live in a document that gets to be wrong once
+instead of in a string that ages inside a copied prompt. **The SQL is second**,
+because it serves the database you already have open.
 
-Nothing numbers them. The order is a gradient — from the machine you are not
-typing into, to the DuckDB you have open, to a database that is nobody's —
-rather than a sequence, and `01/02/03` would promise steps to be done in turn.
-The tabs are labelled by what you do rather than by what the thing is, because
-the question being answered is "which of these is me?" and the answer is a
-situation. `#onboard` is anchored to the top of the viewport rather than
-centred, which a modal dialog is by default: the panels are different heights,
-and a centred dialog re-centres on every switch, sliding the tab strip out from
-under the cursor that just clicked it.
+`npx quackhole` used to be a third. It seeds a sample table in a temp directory
+and takes no database path, so what it demonstrates is the connection rather
+than anything of yours — which makes it a thing to read about, not a way to add
+the remote this dialog exists to add. It is still in the root README and the npm
+package, and this file still reaches for it below to test against a real server.
+
+Nothing numbers the tabs. The order is a gradient — from the machine you are not
+typing into to the DuckDB you have open — rather than a sequence, and `01/02`
+would promise steps to be done in turn. They are labelled by what you do rather
+than by what the thing is, because the question being answered is "which of
+these is me?" and the answer is a situation. `#onboard` is anchored to the top
+of the viewport rather than centred, which a modal dialog is by default: the
+panels are different heights, and a centred dialog re-centres on every switch,
+sliding the tab strip out from under the cursor that just clicked it.
 
 ## More than one remote
 

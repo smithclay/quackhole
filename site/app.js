@@ -149,10 +149,10 @@ const { parseTicket } = await import(/* @vite-ignore */ asset('peer.js'));
 
 // --- what to run on the other machine ---------------------------------------
 
-// A token minted here rather than by the CLI, so the two paths that do not
-// generate one -- the agent prompt and the by-hand SQL -- share a single
-// credential rather than inviting the visitor to invent two. `npx quackhole`
-// generates its own.
+// A token minted here rather than by the CLI, so the two ways the dialog offers
+// -- the agent prompt and the by-hand SQL -- share a single credential rather
+// than inviting the visitor to invent two. `npx quackhole` is not one of them
+// and generates its own.
 const manualToken = (() => {
   const b = new Uint8Array(12);
   crypto.getRandomValues(b);
@@ -195,9 +195,8 @@ function renderAgentPrompt() {
   ].join('\n');
 }
 
-// `npx quackhole` is the same command on every platform, so it is written out
-// in index.html rather than built here. This is only the by-hand path, which
-// needs a token minted in this tab.
+// The by-hand path, built here rather than written into index.html because it
+// carries the token minted in this tab.
 function renderManualCommand() {
   $('#cmd-manual').querySelector('code').textContent = [
     'INSTALL quack; LOAD quack;',
@@ -618,7 +617,7 @@ $('#add-remote').addEventListener('click', () => {
   if (session?.connections.some((c) => c.kind === 'remote')) {
     $('#onboard-title').textContent = 'Add another remote';
     $('#onboard-lede').textContent =
-      'Same three ways, on the next machine. Each remote is attached under its own name and reached over its own relay.';
+      'Same two ways, on the next machine. Each remote is attached under its own name and reached over its own relay.';
   }
   onboard.showModal();
 });
