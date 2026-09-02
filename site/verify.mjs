@@ -136,6 +136,21 @@ async function run(page, sql) {
   return { text, ok: !/^[A-Z][A-Za-z ]*Error[:!]/m.test(text) };
 }
 
+/// Wait for the shell to finish announcing a freshly attached remote.
+///
+/// The page types a statement over the new catalog once the attach lands, and
+/// that is a round trip through the relay. Waiting for it is not politeness: it
+/// is the terminal this script also types into, and `run` below would otherwise
+/// be able to clear the screen halfway through a statement the page was still
+/// putting on it. Doubles as the assertion that the announcement happens.
+async function announced(page, name) {
+  await page.waitForFunction(
+    (n) => new RegExp(`${n} is attached: run one of these`).test(document.querySelector('.xterm-rows')?.innerText ?? ''),
+    name,
+    { timeout: 60_000 },
+  );
+}
+
 // The last thing the shell printed before the trailing prompt, for the log.
 const tail = (text, n = 6) =>
   text
@@ -232,6 +247,8 @@ try {
   // connects but never shows anything to query looks the same as one that did
   // not connect.
   await waitForTables(page, 'remote.');
+  await announced(page, 'remote');
+  console.log('  announced  the shell listed the remote\'s tables as runnable statements');
 
   const tables = await page.$$eval('.schema-item', (els) => els.map((e) => e.textContent.trim()));
   console.log(`  tables    ${tables.join(', ') || '(none)'}`);
@@ -281,6 +298,7 @@ try {
     );
     console.log(`\n  ${(await page.textContent('#paste-note')).trim()}`);
     await waitForTables(page, 'remote2.');
+    await announced(page, 'remote2');
 
     // Each remote draws its own route, because each is reached over its own
     // relay. One diagram for two peers would have to name one of them.

@@ -540,6 +540,31 @@ async function embedShell() {
   greet();
 }
 
+/// Say what a newly attached remote holds, in the shell, as a statement the
+/// visitor could have typed.
+///
+/// The rail lists the same tables. This is a different claim: that they are
+/// reachable from the prompt, with ordinary SQL, over the connection just made.
+/// Every row it returns is a statement that runs, so reading one is the whole
+/// instruction -- which is what the notebook's seeded cells used to do before
+/// the shell took the terminal.
+///
+/// `sqlite_master` because a Quack catalog enumerates nothing else: duckdb_tables(),
+/// SHOW TABLES and information_schema are all empty for it. That makes this a
+/// real round trip over the relay rather than a local lookup, which is the point
+/// -- it is the first evidence the remote answers.
+///
+/// The catalog name is interpolated unquoted, safe for the reason session.js
+/// gives where it does the same: nothing but its `#uniqueName` produces one, and
+/// that builds them from a fixed base.
+///
+/// Kept to ASCII. Every character here is dispatched as a `keydown` with itself
+/// as `key`, and xterm is only reliable about that for printable ASCII.
+function announce(conn) {
+  const c = conn.name;
+  typeIntoShell(`SELECT 'FROM ${c}.' || name AS "${c} is attached: run one of these" FROM ${c}.sqlite_master;`);
+}
+
 /// The statement the shell opens on. Named, because two places have to agree on
 /// it: the one that types it and the one that notices it ran.
 const GREETING = 'FROM welcome;';
@@ -735,10 +760,10 @@ $('#paste-form').addEventListener('submit', async (e) => {
       ' That is three round trips through the relay.';
     pasteNote.hidden = false;
     add.close();
-    // The rail is the only thing that changes here now. The notebook used to
-    // open cells over the new remote and run them; the shell owns its terminal
-    // and takes nothing from this side, so the first query is the visitor's.
+    // The rail first, so the tables are listed beside the terminal by the time
+    // the statement that reads them lands in it.
     await refreshSchema();
+    announce(conn);
   } catch (err) {
     // Leave the dialog open: the error is about the ticket, and the field it
     // refers to is in here. The pill only goes red when nothing is attached --
@@ -792,6 +817,7 @@ async function offerConnect(ticket) {
       note.hidden = false;
       dialog.close();
       await refreshSchema();
+      announce(conn);
     } catch (err) {
       // Same reasoning as the paste form: the dialog stays open because the
       // thing that failed is the ticket this dialog is about.
