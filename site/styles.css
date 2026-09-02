@@ -396,17 +396,6 @@ dialog hr { border: 0; border-top: 1px solid var(--line); margin: 1.6rem 0; }
 .paste-error { color: var(--bad); white-space: pre-wrap; }
 .paste-note { color: var(--dim); }
 
-/* --- notes --------------------------------------------------------------- */
-
-/* margin-top, or the first h3 sits straight under the dialog's h2 and the two
-   read as one two-line heading in the same face. */
-.notes-grid { display: grid; gap: 1.75rem; grid-template-columns: repeat(auto-fit, minmax(22ch, 1fr)); margin: 1.5rem 0 1.75rem; }
-.notes-grid h3 { font: 600 0.95rem/1.3 var(--display); letter-spacing: -0.03em; margin: 0 0 0.5rem; }
-.notes-grid p { margin: 0; font-size: 0.87rem; color: #a9b2c7; }
-/* Each section is a claim and then what follows from it. Without this they run
-   together into one block and the turn is lost. */
-.notes-grid p + p { margin-top: 0.75rem; }
-
 /* --- narrow -------------------------------------------------------------- */
 
 @media (max-width: 52rem) {

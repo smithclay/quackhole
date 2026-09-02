@@ -295,6 +295,22 @@ let session = null;
 let db = null;
 let worker = null;
 
+/// What the shell opens on, kept as a view so the statement that shows it is
+/// short enough to read as an invitation.
+///
+/// Typed out in full it would be three quoted strings wrapping across the
+/// terminal, which looks like output nobody meant to produce. `FROM welcome;` is
+/// the whole of it, and it stays runnable afterwards.
+///
+/// A view rather than a table because the rail lists `duckdb_tables()`, which
+/// does not include views -- that panel is for the visitor's own tables, and a
+/// greeting sitting in it would be the first thing they had to tidy up.
+const WELCOME = `CREATE OR REPLACE VIEW welcome AS SELECT unnest([
+  'This is a full DuckDB SQL shell, running inside your browser tab.',
+  'Nothing was installed, and it all goes away when you close the tab.',
+  'Press "+ add remote" to attach a DuckDB on another machine and query it here.'
+]) AS welcome`;
+
 /// A session over a fresh connection, with the transport extension loaded.
 ///
 /// Separate from bootLocal because it happens more than once: `.open` in the
@@ -304,6 +320,9 @@ async function newSession() {
   const conn = await db.connect();
   await conn.query('INSTALL quack');
   await conn.query('LOAD quack');
+  // Recreated here rather than once at boot, because `.open` resets the database
+  // and `FROM welcome;` should keep working after it.
+  await conn.query(WELCOME);
   return new QuackholeSession({ conn, worker });
 }
 
@@ -515,6 +534,61 @@ async function embedShell() {
   // after the rail appears beside it. Invoking the property rather than
   // reaching into the shell keeps this at the handoff point the shell chose.
   new ResizeObserver(() => mount.onresize?.()).observe(mount);
+
+  // Greet by running a query rather than printing a line, because what there is
+  // to say about this page is that it runs queries.
+  greet();
+}
+
+/// The statement the shell opens on. Named, because two places have to agree on
+/// it: the one that types it and the one that notices it ran.
+const GREETING = 'FROM welcome;';
+let greeted = false;
+
+/// Type the greeting, once the shell is ready to take it.
+///
+/// `embed` resolves before the shell is. It starts the Rust half's
+/// `configureDatabase` and does not await it, so the prompt is still being drawn
+/// when the promise settles, and anything typed before it arrives is dropped
+/// when the prompt resets the input.
+///
+/// Nothing published says when that finishes, and the terminal cannot be read to
+/// find out either: xterm draws to a canvas wherever WebGL is available, which
+/// leaves no text in the DOM. So this tries, and the proxy is what says whether
+/// to stop -- the greeting runs through `runQuery` like any other statement, so
+/// `greeted` is set from the same place the wire pulses are.
+///
+/// Bounded, and quiet when it runs out: a shell that opens at an empty prompt is
+/// where this page was before the greeting existed.
+function greet(tries = 12) {
+  if (greeted || tries === 0) return;
+  typeIntoShell(GREETING);
+  setTimeout(() => greet(tries - 1), 250);
+}
+
+/// Type a statement at the shell's prompt and run it, the way a visitor does.
+///
+/// There is no other way in. `embed` takes a database and four display settings
+/// and resolves to `undefined`, and the package exports that function, a URL
+/// helper and five version strings -- no terminal, no shell handle, nothing on a
+/// global. Its one startup-query path is the `#queries=v0,…` fragment its share
+/// links use, which is read before `embed` is called and is exactly the fragment
+/// this page clears on arrival because a ticket lives there.
+///
+/// So this goes in the way a keyboard does: xterm reads printable characters off
+/// `keydown` on the textarea it keeps for the purpose, and Enter submits. The
+/// events are dispatched straight at that textarea rather than through focus,
+/// because at boot the onboarding dialog is the modal that should have it.
+///
+/// Reaching past a published interface, so it is written to fail quietly: if
+/// xterm moves that element or stops reading `key`, nothing is typed and the
+/// shell opens at an empty prompt, which is where it was before this existed.
+function typeIntoShell(sql) {
+  const input = $('#shell .xterm-helper-textarea');
+  if (!input) return;
+  const press = (key) => input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  for (const ch of sql) press(ch);
+  press('Enter');
 }
 
 /// The database the shell drives: `db`, with the queries it runs observed.
@@ -587,6 +661,9 @@ function observed(database) {
 /// `remote.` in the text is the signal. The session uniquifies names from a
 /// fixed base, so there is nothing to escape.
 function afterQuery(text, ms) {
+  // Stops `greet` retrying. Set here rather than where it is typed, because
+  // reaching the prompt and being run are different things.
+  if (text === GREETING) greeted = true;
   if (!session) return;
   for (const c of session.connections) {
     if (c.kind === 'remote' && new RegExp(`\\b${c.name}\\s*\\.`, 'i').test(text)) views.get(c.name)?.wire.pulse(ms);
@@ -643,7 +720,6 @@ function openAdd() {
 }
 
 $('#add-remote').addEventListener('click', openAdd);
-$('#open-notes').addEventListener('click', () => $('#notes').showModal());
 
 $('#paste-form').addEventListener('submit', async (e) => {
   e.preventDefault();

@@ -149,12 +149,29 @@ the npm README's own quickstart block against a live server.
   temporal-dead-zone bug in `shim.js` survived until `site/` left it out.
 - **The embedded shell reads `window.location.hash` and runs it as SQL.**
   `@duckdb/duckdb-wasm-shell`'s `embed()` splits the fragment on commas and
-  passes everything after the first one to the prompt -- that is how
-  shell.duckdb.org shares a session. A quackhole link puts a *credential* in the
-  fragment, so `site/app.js` reads the ticket and then clears the fragment with
-  `replaceState` before embedding. A ticket is base64url and carries no comma of
-  its own; a link with one appended would otherwise be a page that runs a
-  stranger's SQL on arrival.
+  hands everything after the first to `passInitQueries` -- that is how
+  shell.duckdb.org used to share a session. Reading only that function is
+  misleading: it just stores them, and `configure_database` in `shell.rs` is what
+  replays each one into the input and calls `on_sql`, which runs it. A quackhole
+  link puts a *credential* in the fragment, so `site/app.js` reads the ticket and
+  then clears the fragment with `replaceState` before embedding. A ticket is
+  base64url and carries no comma of its own; a link with one appended would
+  otherwise be a page that runs a stranger's SQL on arrival.
+- **The shell publishes no way to write to its terminal.** `embed()` takes a
+  database and four display settings and resolves to `undefined`; the package
+  exports it, `getJsDelivrModule` and five version strings, and puts nothing on a
+  global. So `typeIntoShell` in `site/app.js` dispatches `keydown` at
+  `.xterm-helper-textarea`, which is how the greeting gets typed. Two things make
+  that work: xterm reads printable characters off `key`, and dispatching at the
+  element does not need focus -- which matters, because at boot the onboarding
+  dialog is the modal that should have it.
+- **`embed()` resolves before the shell is ready.** It starts the Rust half's
+  `configureDatabase` and never awaits it, so the prompt is still being drawn
+  when the promise settles and anything typed before it lands is dropped when the
+  prompt resets the input. There is no readiness event, and the terminal cannot
+  be polled for one either: xterm draws to a canvas wherever WebGL is available,
+  which leaves no text in the DOM. `greet()` retries and stops on a flag set in
+  `afterQuery`, so what says the greeting arrived is the proxy watching it run.
 - **`embed()` hands its resize handler back by assigning `container.onresize`,
   and a `<div>` never fires `resize`.** Nothing calls it, so the terminal keeps
   the width it measured on its first frame and every result wraps there for the

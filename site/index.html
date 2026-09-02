@@ -48,15 +48,15 @@
   </div>
 </div>
 
-<!-- The workbench is the page. Everything that used to be prose lives either in
-     the onboarding dialog (which is where a first-time visitor needs it) or in
-     the notes panel (which is where a curious one goes looking). -->
+<!-- The workbench is the page. What a first-time visitor needs is in the
+     onboarding dialog; what a curious one wants is on GitHub, which the bar
+     links to. The shell greets by running a query, which says what this is
+     better than a paragraph beside it would. -->
 
 <header class="bar">
   <span class="brand">quackhole</span>
   <div class="bar-right">
     <span class="pill" id="status" data-state="booting"><i></i><span id="status-text">booting</span></span>
-    <button class="ghost" id="open-notes" type="button">what is this</button>
     <!-- Octicon's mark, inline rather than fetched: it is 400 bytes and the page
          is cross-origin isolated, so a remote icon is a CORP negotiation for a
          link. currentColor, so it takes the bar's palette rather than bringing
@@ -332,80 +332,6 @@
   </div>
 </dialog>
 
-<!-- --- what is actually happening ---------------------------------------- -->
-<dialog id="notes">
-  <form method="dialog" class="dialog-x"><button value="cancel" aria-label="Close">×</button></form>
-  <h2>What is actually happening</h2>
-
-  <!--
-    Written for somebody who has met neither DuckDB nor iroh, and not written
-    down to them. The order is the order the questions arrive in: why a laptop
-    needs any of this, what the address is, why the traffic goes through a
-    relay, and what is actually running in the tab. Terms are used, not avoided
-    -- but each is explained the first time, and none is left to be looked up.
-  -->
-  <div class="notes-grid">
-    <section>
-      <h3>Why a laptop needs this</h3>
-      <p>
-        A database on your laptop has no address the internet can reach. Home routers,
-        office networks and cloud sandboxes all hand out private addresses and turn away
-        connections from outside. The usual ways around that are to open a port, run a
-        tunnel, or copy the data somewhere public. Quackhole does none of them. It gives
-        the database an address of a different kind, and dials it from here.
-      </p>
-    </section>
-    <section>
-      <h3>The address is a public key</h3>
-      <p>
-        It looks like <code>quack:8m4o55…​.iroh:9494</code>. The long middle is not a
-        hostname. It is a public key, and nothing looks it up —
-        <a href="https://www.iroh.computer/">iroh</a> finds the machine holding the
-        matching private key, wherever it is.
-      </p>
-      <p>
-        One consequence carries the whole design: reaching the right machine and proving
-        it is the right machine are a single act. There is no certificate to issue, renew
-        or decide to trust.
-      </p>
-    </section>
-    <section>
-      <h3>The relay carries sealed traffic</h3>
-      <p>
-        Two machines behind routers can often be coaxed into talking directly. A browser
-        cannot: a direct path needs a kind of socket a browser is not allowed to open. So
-        this tab always goes through one of iroh's public relays.
-      </p>
-      <p>
-        A relay is not a middleman. It forwards packets it cannot read, because the
-        encryption runs from this tab to the far machine rather than to the relay. What it
-        learns is which two keys are talking, when, and how much. Two native DuckDBs can
-        still find a direct path; from a browser there is none, and never will be.
-      </p>
-    </section>
-    <section>
-      <h3>A real DuckDB, in this tab</h3>
-      <p>
-        The database on this page is DuckDB compiled to WebAssembly — the same engine,
-        running in your browser, holding what you load into it and nothing else. To reach
-        a remote it speaks <a href="https://github.com/hafenkran/duckdb-quack">Quack</a>,
-        DuckDB's own protocol for querying another DuckDB over HTTP.
-      </p>
-      <p>
-        Quackhole changes nothing about that conversation, only what carries it. The far
-        machine cannot tell this tab from a native DuckDB. One wrinkle makes the page
-        unusual: Quack's client stops and waits for each answer, so the transport has to
-        stop with it. A second worker does the network and wakes the first — which is why
-        this page must be served with the headers that permit shared memory.
-      </p>
-    </section>
-  </div>
-
-  <p class="fineprint">
-    Source, protocol notes and the cross-network test harness:
-    <a href="https://github.com/smithclay/quackhole">github.com/smithclay/quackhole</a>
-  </p>
-</dialog>
 
 <script type="module" src="app.js"></script>
 </body>
