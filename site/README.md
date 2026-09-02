@@ -46,8 +46,22 @@ found.
 | browser | opening that link `ATTACH`es the remote into the session already running |
 
 Onboarding is a dialog, not a page: adding a remote is a task you finish once,
-and after that the page is a DuckDB shell. Arriving with `#qh1_...` skips the
-form entirely and shows the dialog already connecting.
+and after that the page is a DuckDB shell. Arriving with `#qh1_...` skips all of
+it and offers the one peer the link names.
+
+Four dialogs, one job each. `#splash` is the front door and the only screen that
+says what this is rather than what to do next — a sentence, the wire diagram the
+rail draws per remote, and the two ways on. `#serve` is how to start something
+serving. `#add` is a ticket field. `#connect` handles a ticket that arrived in
+the URL, which has to name whose machine it is before anything dials.
+
+The splash draws the wire live rather than broken. The rail's copies open broken
+because that is the honest state of a connection nobody has made yet; this one
+is not reporting a state, it is a picture of what is on offer. It pulses slowly,
+because a still diagram says only that a path exists and the offer is that
+queries travel it — and it checks `prefers-reduced-motion` itself, since the
+stylesheet's blanket rule turns off CSS animation and this is the Web Animations
+API.
 
 The dialog offers two ways to serve that other end, as tabs. They are
 alternatives — you need one — so stacking them down the dialog made everyone
@@ -72,7 +86,7 @@ Nothing numbers the tabs. The order is a gradient — from the machine you are n
 typing into to the DuckDB you have open — rather than a sequence, and `01/02`
 would promise steps to be done in turn. They are labelled by what you do rather
 than by what the thing is, because the question being answered is "which of
-these is me?" and the answer is a situation. `#onboard` is anchored to the top
+these is me?" and the answer is a situation. `#serve` is anchored to the top
 of the viewport rather than centred, which a modal dialog is by default: the
 panels are different heights, and a centred dialog re-centres on every switch,
 sliding the tab strip out from under the cursor that just clicked it.

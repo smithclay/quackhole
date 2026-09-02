@@ -188,6 +188,52 @@
   </div>
 </dialog>
 
+<!-- --- the front door ----------------------------------------------------- -->
+<!--
+  What a visitor sees before anything else, and the only screen that explains
+  what this is rather than what to do next. It was missing: cold arrival opened
+  straight onto "Start DuckDB on a VM, sandbox, or laptop", which is an
+  instruction to somebody who has not been told why.
+
+  The graphic is the wire the rail draws per remote, which is the page's whole
+  thesis in three shapes. Drawn live rather than broken -- the rail's copies open
+  broken because that is the honest state of a connection nobody has made yet,
+  and this one is not reporting a state, it is a picture of what is on offer.
+
+  Two ways out, because there are two kinds of arrival: somebody was handed a
+  ticket, or somebody has a machine and no idea how to serve it.
+-->
+<dialog id="splash">
+  <form method="dialog" class="dialog-x"><button value="cancel" aria-label="Close">×</button></form>
+
+  <h2>Query a DuckDB that isn't here</h2>
+  <p class="dialog-lede">
+    A database on a laptop, a VM or a sandbox has no address the internet can reach.
+    Quackhole gives it one, and this browser tab queries it directly: nothing
+    installed here, no ports opened there.
+  </p>
+
+  <!-- .wire-frame because createWire resolves its relay label by walking up to
+       one. Nothing sets that label here, but the class is what the lookup keys
+       on and a frameless mount would be a silent null. -->
+  <div class="splash-wire wire-frame">
+    <div class="wire-mount"></div>
+    <p class="wire-legend">
+      <span>this tab</span>
+      <span class="wire-relay-host">a public relay</span>
+      <span>your DuckDB</span>
+    </p>
+  </div>
+
+  <div class="dialog-actions">
+    <button class="ghost" id="splash-serve" type="button">Show me how to start one</button>
+    <!-- Focused on open rather than the close button, which is what a dialog
+         reaches for by itself. Landing on "close" is an odd thing to hand
+         somebody who has just arrived. -->
+    <button id="splash-add" type="button" autofocus>I have a ticket</button>
+  </div>
+</dialog>
+
 <!-- --- serve the other end ----------------------------------------------- -->
 <!--
   Adding a remote is two jobs done on two machines, and this is the first of

@@ -341,6 +341,18 @@ dialog hr { border: 0; border-top: 1px solid var(--line); margin: 1.6rem 0; }
 }
 .copy:hover { background: transparent; color: var(--signal); border-color: var(--signal); }
 
+/* --- the front door ------------------------------------------------------ */
+
+/* Room around the diagram, because it is the argument rather than an ornament
+   beside one. Wider than the rail's copies get, and the legend spreads to sit
+   under the three shapes instead of stacking under the middle of them. */
+.splash-wire { margin: 1.75rem auto 2rem; max-width: 34rem; }
+/* Columns chosen so their centres land under the shapes: the diagram puts its
+   three nodes at 10%, 50% and 90% of the viewBox, which equal thirds would miss
+   by half a column each. */
+.splash-wire .wire-legend { grid-template-columns: 24% 52% 24%; gap: 0 0.4rem; }
+.splash-wire .wire-relay-host { color: var(--relay); }
+
 /* --- tabs ---------------------------------------------------------------- */
 
 /* Three ways to serve the other end. They are alternatives rather than steps,

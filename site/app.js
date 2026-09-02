@@ -731,6 +731,7 @@ function afterQuery(text, ms) {
 // then bring its ticket here. One dialog each, which is the trade #connect
 // already makes -- a visitor holding a ticket has done the first and should not
 // have to scroll past it to reach a field.
+const splash = $('#splash');
 const serve = $('#serve');
 const add = $('#add');
 const pasteError = $('#paste-error');
@@ -751,6 +752,29 @@ const cross = (from, to) => {
 };
 $('#to-add').addEventListener('click', () => cross(serve, add));
 $('#to-serve').addEventListener('click', () => cross(add, serve));
+$('#splash-add').addEventListener('click', () => cross(splash, add));
+$('#splash-serve').addEventListener('click', () => cross(splash, serve));
+
+/// Draw the concept on the front door.
+///
+/// The same diagram the rail draws per remote, because what this page is for is
+/// exactly what that diagram shows, and a picture of it beats a paragraph about
+/// it. Live rather than broken: the rail's copies open broken because that is
+/// the honest state of a connection nobody has made, and this one is not
+/// reporting a state.
+///
+/// The round trip repeats, slowly, because the still diagram says only that a
+/// path exists and the offer is that queries travel it. Stopped when the splash
+/// closes -- and never started at all for anyone who asked not to see motion,
+/// which the stylesheet's reduced-motion rule cannot do for it: that turns off
+/// CSS animation, and this is the Web Animations API.
+function drawSplash() {
+  const wire = createWire($('#splash .wire-mount'), 'the DuckDB you want');
+  wire.setState('live');
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const beat = setInterval(() => splash.open && wire.pulse(900), 2600);
+  splash.addEventListener('close', () => clearInterval(beat), { once: true });
+}
 
 /// Open the ticket field, cleared.
 ///
@@ -904,8 +928,10 @@ if (fragment.startsWith('qh1_')) {
   // opening the setup story the visitor has already been through.
   await offerConnect(fragment);
 } else if (session) {
-  // Nothing to attach and nothing serving yet, so the first half is the one to
-  // open. It names the way to the second for whoever was handed a ticket
-  // somewhere other than a link.
-  serve.showModal();
+  // Nothing to attach and nothing serving yet, so the front door: it is the only
+  // screen that says what this is rather than what to do next, and it offers
+  // both ways on -- a ticket somebody was handed, or the instructions for
+  // producing one.
+  drawSplash();
+  splash.showModal();
 }
