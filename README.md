@@ -187,9 +187,7 @@ under 2.5s.
   serving to a cloud VM held the relay for about 80 seconds, upgraded to a direct path, and
   stayed there: 71% of 46 iterations went direct, and `ping` p50 fell from 66 ms to 29 ms as
   it did. That is one home connection and one provider, so budget for relay latency until you
-  measure your own — but it is no longer true that we have never seen a direct path.
-  **Browsers are the exception and always will be**: iroh compiles its IP transport out under
-  `cfg(wasm_browser)`, so a tab has no direct path to upgrade to.
+  measure your own.
 - **Quackhole carries Quack traffic only.** `read_csv('https://<id>.iroh:9494/x.csv')` goes
   to httpfs, which knows nothing about iroh. Reach for `ATTACH` and SQL.
 - **Browsers connect as clients over relays**, and need cross-origin isolation (COOP/COEP).
