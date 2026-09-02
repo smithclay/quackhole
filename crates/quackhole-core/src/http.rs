@@ -58,11 +58,16 @@ fn reject_injection(what: &str, value: &str) -> Result<()> {
 
 /// Headers we own. A caller-supplied copy is dropped rather than merged,
 /// because framing is ours end to end.
+///
+/// The compression header is ours for a sharper reason than the rest: it is a
+/// promise about what *this* code can decode on the way back, and a caller that
+/// set it would be making that promise on behalf of `compress::decode`.
 fn is_framing_header(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
     matches!(
-        name.to_ascii_lowercase().as_str(),
+        lower.as_str(),
         "host" | "content-length" | "connection" | "transfer-encoding"
-    )
+    ) || lower == crate::compress::ACCEPT_HEADER.to_ascii_lowercase()
 }
 
 /// Serialise a request: head, then body.
@@ -103,6 +108,16 @@ pub fn build_request(req: &Request) -> Result<Vec<u8>> {
             head.push_str(&format!("Content-Type: {effective}\r\n"));
         }
     }
+
+    // Sent on every request, by the core, so neither client has to remember to
+    // and the two cannot disagree about the spelling. A peer that has never
+    // heard of it passes it to Quack, which ignores headers it does not know --
+    // so asking costs nothing against a server that cannot answer.
+    head.push_str(&format!(
+        "{}: {}\r\n",
+        crate::compress::ACCEPT_HEADER,
+        crate::compress::ACCEPT_VALUE
+    ));
 
     // One request per bi-stream. Asking the peer to close is what makes the
     // loopback TCP FIN propagate to a QUIC stream FIN, which is our

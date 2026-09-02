@@ -40,6 +40,36 @@ Connection reuse lives in the core for a related reason: DuckDB constructs a fre
 `HTTPClient` for every request and closes it afterwards, so there is no C++ object with a long
 enough life to hold a QUIC connection.
 
+## Responses are compressed, requests are not
+
+Quack answers in `application/vnd.duckdb`, which is not compressed. Measured against a live
+`quack_serve` by splicing a proxy between the bridge and Quack: 51 MB of real responses gzip to
+18 MB at level 1, per response, which is what ships — 2.79x off every byte that crosses a relay
+somebody else runs.
+
+The compression is quackhole's own, not HTTP's. `Content-Encoding` belongs to the origin
+server, and the origin server here is cpp-httplib, which does not compress; asking for it with
+`Accept-Encoding` would be asking a question nothing answers, and would be actively unsafe the
+day something did, because `parse_response` decodes no content coding and would hand Quack a
+gzip stream as a result set.
+
+So the client advertises `X-Quackhole-Accept-Encoding: gzip` — added by the core, so neither
+client has to remember it — and the bridge reads the request head far enough to see it. If it
+is there, the whole response *stream* is gzipped and prefixed with a magic beginning `\0`,
+which no HTTP response can start with. That is the entire negotiation, and it degrades in both
+directions: an old server forwards the header to Quack, which ignores what it does not know,
+and answers plainly; an old client never sends it, so a new server never compresses at it. A
+client that asked and got a plain answer cannot tell and does not need to.
+
+Only the response is compressed. That is where the bytes are — a request is a query, a response
+is the rows — and one-directional means one side advertises and the other decides, with no
+state and no extra round trip. Compressing the whole stream rather than the body keeps the
+bridge from parsing responses at all: it stays a byte pipe, with one question asked of the
+request head on the way past.
+
+Level 1 rather than 6. On the same capture level 6 gets 2.96x against level 1's 2.79x, and the
+serving side is somebody's laptop answering queries with the same cores.
+
 ## Never half-close the request stream
 
 Quackhole always sends `Connection: close` and never half-closes.

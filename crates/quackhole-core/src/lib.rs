@@ -5,6 +5,7 @@
 //! request bytes and parses response bytes, so there is exactly one HTTP
 //! implementation and this FFI surface stays small.
 
+mod compress;
 mod dial;
 mod http;
 mod peer;

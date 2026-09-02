@@ -185,7 +185,12 @@ pub async fn request_async(
     // Sampled after every round trip rather than once at connect, so an upgrade
     // from relay to direct shows up in quackhole_status().
     record_peer(peers, id, observed_path(&conn), "out");
-    Ok(body)
+    // Here rather than in either caller, because this is the one funnel both of
+    // them come through: native DuckDB and the browser get the envelope undone
+    // by the same code, and neither can be built without it. A response from a
+    // server that does not compress arrives without the magic and is returned
+    // untouched.
+    crate::compress::decode(body)
 }
 
 #[cfg(not(target_family = "wasm"))]
