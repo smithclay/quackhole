@@ -56,7 +56,12 @@
 <header class="bar">
   <span class="brand">quackhole</span>
   <div class="bar-right">
-    <span class="pill" id="status" data-state="booting"><i></i><span id="status-text">booting</span></span>
+    <!-- The bar used to carry a status pill, which said "local only" almost all
+         of the time and repeated the rail underneath it: the rail lists the
+         connections, draws a route per remote, and names their tables. What the
+         bar had no room for was the thing wanted when something goes wrong. -->
+    <a class="ghost" href="https://github.com/smithclay/quackhole/blob/main/docs/TROUBLESHOOTING.md"
+       target="_blank" rel="noreferrer">get help</a>
     <!-- Octicon's mark, inline rather than fetched: it is 400 bytes and the page
          is cross-origin isolated, so a remote icon is a CORP negotiation for a
          link. currentColor, so it takes the bar's palette rather than bringing
@@ -206,7 +211,7 @@
 <dialog id="splash">
   <form method="dialog" class="dialog-x"><button value="cancel" aria-label="Close">×</button></form>
 
-  <h2>Query a DuckDB that isn't here</h2>
+  <h2>quackhole: connect to DuckDB from anywhere</h2>
   <p class="dialog-lede">
     A database on a laptop, a VM or a sandbox has no address the internet can reach.
     Quackhole gives it one, and this browser tab queries it directly: nothing

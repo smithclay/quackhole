@@ -47,23 +47,6 @@ const $ = (sel) => document.querySelector(sel);
 // Pages site under /quackhole/ where a leading slash means github.io itself.
 const asset = (path) => new URL(path, document.baseURI).href;
 
-const statusEl = $('#status');
-const statusText = $('#status-text');
-
-function setStatus(state, text) {
-  statusEl.dataset.state = state;
-  statusText.textContent = text;
-}
-
-// The pill's resting state, recomputed rather than set at each call site: with
-// more than one remote, "live" is a property of the list, not of whichever
-// attach happened last.
-function setRestingStatus() {
-  const n = session ? session.connections.filter((c) => c.kind === 'remote').length : 0;
-  if (n === 0) setStatus('local', 'local only');
-  else setStatus('live', `${n} remote${n === 1 ? '' : 's'} · relay`);
-}
-
 // --- what to do about an error -----------------------------------------------
 
 // Known failures, matched against the raw message and paired with the one line
@@ -331,7 +314,6 @@ async function newSession() {
 }
 
 async function bootLocal() {
-  setStatus('booting', 'booting duckdb');
   const bundle = await duckdb.selectBundle(DUCKDB_BUNDLES);
 
   // qh-worker installs the XHR shim into the worker global and only then loads
@@ -346,7 +328,6 @@ async function bootLocal() {
   // Booting is the app's half -- which bundle, which logger, where the .wasm
   // is served from. Everything after it is the session's.
   session = await newSession();
-  setRestingStatus();
 
   await embedShell();
 }
@@ -432,7 +413,6 @@ async function refreshSchema() {
   const groups = await session.tables();
   syncWires();
   renderConnections();
-  setRestingStatus();
 
   const list = $('#schema-list');
   list.replaceChildren();
@@ -477,13 +457,11 @@ async function refreshSchema() {
 /// is the second the visitor is waiting through -- drawing it afterwards would
 /// show the connection only once there was nothing left to watch.
 async function addRemote(ticket) {
-  setStatus('connecting', 'dialling');
   let drawn = null;
   try {
     const conn = await session.attach(ticket, { onDialing: (record) => (drawn = addWire(record)) });
     drawn.wire.setState('live');
     renderConnections();
-    setRestingStatus();
     return conn;
   } catch (err) {
     // A route for a remote that is not attached would be a claim the session
@@ -816,10 +794,7 @@ $('#paste-form').addEventListener('submit', async (e) => {
     announce(conn);
   } catch (err) {
     // Leave the dialog open: the error is about the ticket, and the field it
-    // refers to is in here. The pill only goes red when nothing is attached --
-    // a failed second remote does not make the first one stop working.
-    if (session?.connections.some((c) => c.kind === 'remote')) setRestingStatus();
-    else setStatus('failed', 'no route');
+    // refers to is in here.
     showError(err);
   } finally {
     btn.disabled = false;
@@ -871,7 +846,6 @@ async function offerConnect(ticket) {
     } catch (err) {
       // Same reasoning as the paste form: the dialog stays open because the
       // thing that failed is the ticket this dialog is about.
-      setStatus('failed', 'no route');
       renderError(error, err);
     } finally {
       btn.disabled = false;
@@ -915,7 +889,6 @@ try {
   $('#boot').hidden = true;
   await refreshSchema();
 } catch (err) {
-  setStatus('failed', 'duckdb failed');
   // The overlay stays up and turns into the error. Dismissing it would reveal a
   // workbench with a dead terminal in it and no way to find out why.
   $('#boot').dataset.state = 'failed';

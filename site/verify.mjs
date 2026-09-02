@@ -68,6 +68,15 @@ if (REMOTE) {
   console.log(`\n  serving ${OUT}\n  ${base}  (isolation via ${VIA_SW ? 'service worker' : 'headers'})\n`);
 }
 
+// The rail's remote connections, by name.
+//
+// The bar used to carry a status pill and this script synchronised on it. The
+// rail is where that state actually lives -- it is what renderConnections draws
+// from the session -- and it is what a visitor reads, so asserting on it checks
+// the thing being relied on rather than a summary of it.
+const remotes = (page) =>
+  page.$$eval('.conn[data-kind="remote"] .conn-name', (els) => els.map((e) => e.textContent.trim()));
+
 // Wait for the rail to list a catalog's tables.
 async function waitForTables(page, prefix) {
   await page.waitForFunction(
@@ -228,7 +237,9 @@ try {
   console.log(`  offered   ${offered}`);
   await page.click('#connect-go');
 
-  await page.waitForSelector('#status[data-state="live"]', { timeout: 90_000 });
+  await page.waitForFunction(() => document.querySelector('.conn[data-kind="remote"]') !== null, null, {
+    timeout: 90_000,
+  });
 
   // The shell greets over the database it was handed, so its banner is the
   // first evidence that resolveDatabase gave it a live one rather than a
@@ -321,9 +332,9 @@ try {
     console.log(`  routes    ${routes.join(', ')}`);
     if (routes.length !== 2) failed = `expected two routes drawn, saw ${routes.length}`;
 
-    const status = (await page.textContent('#status-text')).trim();
-    console.log(`  status    ${status}`);
-    if (!status.startsWith('2 remotes')) failed = `status reads "${status}", expected 2 remotes`;
+    const both = await remotes(page);
+    console.log(`  remotes   ${both.join(', ')}`);
+    if (both.length !== 2) failed = `expected two remotes in the rail, saw ${both.join(', ') || 'none'}`;
 
     // One statement across both catalogs. sqlite_master rather than a table
     // name, because the second server is allowed to be any DuckDB -- and this
@@ -370,10 +381,10 @@ try {
       null,
       { timeout: 30_000 },
     );
-    const after = (await page.textContent('#status-text')).trim();
+    const left = await remotes(page);
     const routesAfter = await page.$$eval('.wire-frame', (els) => els.length);
-    console.log(`  detached   ${after}, ${routesAfter} route`);
-    if (!after.startsWith('1 remote')) failed = `after detaching, status reads "${after}"`;
+    console.log(`  detached   ${left.join(', ') || 'none'} left, ${routesAfter} route`);
+    if (left.length !== 1) failed = `after detaching, the rail lists ${left.join(', ') || 'none'}`;
     if (routesAfter !== 1) failed = `after detaching, ${routesAfter} routes are still drawn`;
   }
 
@@ -390,9 +401,7 @@ try {
     null,
     { timeout: 30_000 },
   );
-  const bare = (await page.textContent('#status-text')).trim();
-  console.log(`  hand DETACH  rail back to memory only, status "${bare}"`);
-  if (bare !== 'local only') failed = `after a hand-typed DETACH, status reads "${bare}"`;
+  console.log('  hand DETACH  rail back to memory only, no routes drawn');
 
   // Checked last, so it covers the whole run. Nothing above asserts on the
   // service worker directly -- it is meant to be invisible -- and "invisible"
