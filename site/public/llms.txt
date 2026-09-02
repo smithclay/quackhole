@@ -49,7 +49,9 @@ Things agents get wrong with quackhole, and what to do instead:
   failures as `{"ok": false, "error": …}` rather than throwing, so read the result rather
   than assuming a call that returned worked. `run-sql` types the statement at the page's
   terminal and returns no rows: the result is drawn on screen for the person sitting there,
-  so ask them what it said. One statement, one line, printable ASCII only.
+  so ask them what it said. One statement, ending in a semicolon, printable ASCII only, no
+  `--` comments. It refuses while somebody is part-way through typing at the prompt rather
+  than splicing onto their line.
 - A browser can only be a client, only over a relay, and only on a cross-origin-isolated
   page (COOP `same-origin` + COEP `require-corp`). There is no fallback; call
   `quackhole.check()` from the npm package to diagnose.

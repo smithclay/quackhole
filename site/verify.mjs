@@ -101,12 +101,12 @@ const terminal = (page) => page.$eval('.xterm-rows', (e) => e.innerText);
 // The shell at a prompt with nothing running: the last thing on screen is a bare
 // prompt. Not the same as IDLE below, which also wants an otherwise empty screen.
 const SETTLED = () => {
-  const lines = document.querySelector('.xterm-rows').innerText.split('\n').filter((l) => l.trim());
+  const lines = (document.querySelector('.xterm-rows')?.innerText ?? '').split('\n').filter((l) => l.trim());
   return lines.length > 0 && /^duckdb>\s*$/.test(lines[lines.length - 1]);
 };
 
 const IDLE = () => {
-  const lines = document.querySelector('.xterm-rows').innerText.split('\n').filter((l) => l.trim());
+  const lines = (document.querySelector('.xterm-rows')?.innerText ?? '').split('\n').filter((l) => l.trim());
   return lines.length === 1 && /^duckdb>\s*$/.test(lines[0]);
 };
 
@@ -428,9 +428,14 @@ try {
   await page.keyboard.press('Enter');
   await page.waitForFunction(IDLE, null, { timeout: 30_000 });
 
-  const agentSql = 'SELECT count(*) AS n FROM remote.events;';
+  // Deliberately without a terminator. The shell reads a statement as finished
+  // only when it ends in one; without it the prompt drops to `   ...>` and the
+  // next thing typed there is appended and the pair run as a single statement.
+  // So `runInShell` adds one, and what has to appear on screen is the terminated
+  // form.
+  const agentSql = 'SELECT count(*) AS n FROM remote.events';
   const ran = await tool(page, 'run-sql', { sql: agentSql });
-  await drawn(page, agentSql);
+  await drawn(page, `${agentSql};`);
   const screen = await terminal(page);
   console.log(`  run-sql   ran in ${ran?.elapsedMs}ms\n            ${tail(screen)}`);
   if (ran === null) failed = 'run-sql came back with nothing at all';
@@ -439,6 +444,31 @@ try {
   else if (ran.rows !== undefined) failed = `run-sql handed back rows: ${JSON.stringify(ran)}`;
   else if (!/\b\d+\b/.test(screen.replace(agentSql, ''))) failed = `no result was drawn:\n${screen}`;
   else if (/^[A-Z][A-Za-z ]*Error[:!]/m.test(screen)) failed = `run-sql errored on screen:\n${screen}`;
+  // The remedy is a field of its own, so the message must be DuckDB's alone --
+  // not the copy `withRemedy` builds for the terminal, which carries carriage
+  // returns and a URL because a terminal is what they are for.
+  else if (/\r|TROUBLESHOOTING/.test(JSON.stringify(ran))) {
+    failed = `run-sql returned terminal formatting: ${JSON.stringify(ran)}`;
+  }
+
+  // A statement is never typed into a line somebody else started. This is the
+  // one that matters: spliced onto a half-written `DELETE FROM events WHERE `,
+  // an agent's statement is a statement nobody wrote, and the shell runs it
+  // without hesitating. What gets typed here is harmless on purpose -- a test
+  // must not leave a real DELETE at a real remote's prompt on the chance that
+  // whatever lands after it parses. The terminal cannot be read to check -- it is a canvas wherever
+  // WebGL is available -- so the page counts keystrokes instead, and this is
+  // what says the count is wired to the right element.
+  await page.click('#shell');
+  await page.keyboard.type('SELECT 99 AS ninety_nine ');
+  const spliced = await tool(page, 'run-sql', { sql: 'SELECT 1 AS one;' });
+  console.log(`  busy      ${spliced?.error ?? JSON.stringify(spliced)}`);
+  if (spliced === null || spliced.ok) failed = `run-sql typed into a half-written line: ${JSON.stringify(spliced)}`;
+  else if (!/already typed/i.test(spliced.error ?? '')) failed = `the refusal did not say why: ${spliced.error}`;
+  else if ((await terminal(page)).includes('SELECT 1 AS one')) failed = 'the statement was spliced on anyway';
+  // Put the terminal back for whatever runs next.
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(SETTLED, null, { timeout: 30_000 });
 
   // Refused rather than typed wrong. xterm reads printable characters off `key`
   // and is only dependable about ASCII, so this would otherwise run a statement

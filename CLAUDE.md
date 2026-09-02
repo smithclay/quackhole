@@ -209,20 +209,34 @@ the npm README's own quickstart block against a live server.
   returns rows today, but `JSON.stringify` throws on a BigInt and DuckDB
   answers `count(*)` with one, so a tool that starts returning them breaks on
   the first statement anybody runs and breaks silently.
-- **`run-sql` types at the shell's prompt rather than querying beside it**, so
-  the rows land where the visitor can see them and the agent gets back only
-  that the statement ran. Three things fall out of that, all in `runInShell` in
-  `site/app.js`. Newlines are collapsed, because every character goes in as a
-  `keydown` and Enter submits -- a statement with one in it would send its first
-  half. Non-ASCII is refused, because xterm reads printable characters off `key`
-  and is only dependable about ASCII, so `'Zürich'` would type as `'Zurich'` and
-  run as a query nobody wrote. And nothing is retried: the outcome is settled by
-  the `observed` proxy, keyed by the exact text the shell hands `runQuery` -- the
-  same fact `greet` uses to know its greeting ran -- so a statement that does
-  not settle is reported rather than typed again, because it may already have
-  carried an INSERT to another machine. The tool resolves on DuckDB's answer,
-  which is routinely *before* xterm has painted; only a test needs to wait for
-  the paint.
+- **A statement typed at the shell's prompt must end in a semicolon.** Without
+  one the shell drops to its `   ...>` continuation prompt and waits, and the
+  next thing typed there -- by the visitor, or by `greet` still retrying -- is
+  appended and the pair run as a single statement. `SELECT 41 + 1 AS answer`
+  and `FROM welcome;` became one query returning three rows of 42 that way.
+  `runInShell` in `site/app.js` adds the terminator, and refuses `--` comments
+  for the same reason: it collapses the statement to one line, so a comment
+  would swallow the terminator too.
+- **Nothing may be typed into a line somebody else started.** Spliced onto a
+  half-written `DELETE FROM events WHERE `, a statement is one nobody wrote and
+  the shell runs it. There is nothing to reach for: the terminal cannot be read
+  (it is a canvas wherever WebGL is available) and none of Ctrl+C, Ctrl+U,
+  Escape or End clears the line -- all four were tried, and 256 backspaces only
+  delete leftward from a cursor whose position is also unknowable. So
+  `promptLen` counts keystrokes in the capture phase on the container and
+  `typeIntoShell` refuses while it is non-zero, erring towards busy. Statements
+  are also serialized: the shell does not read input while a query is in
+  flight, so a second one typed over the first lands nowhere and times out
+  having never run.
+- **`run-sql` types at the prompt rather than querying beside it**, so the rows
+  land where the visitor can see them and the agent gets back only that the
+  statement ran. Nothing is retried -- delivery is at-most-once here for the
+  same reason it is on the wire -- and the outcome is settled by the `observed`
+  proxy, keyed by the exact text the shell hands `runQuery`, which is the same
+  fact `greet` uses to know its greeting ran. It settles with the error DuckDB
+  threw, not `withRemedy`'s: that one carries carriage returns and a URL because
+  a terminal is what they are for. The tool resolves on DuckDB's answer, which
+  is routinely *before* xterm has painted; only a test needs to wait for paint.
 - **`registerTool` needs an origin-keyed agent cluster**, and rejects with
   `SecurityError` without one. `site/` never has to ask: cross-origin isolation
   forces origin keying (HTML's "obtain a similar-origin window agent" sets the

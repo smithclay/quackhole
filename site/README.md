@@ -178,7 +178,7 @@ put text on its prompt.
 
 | | |
 |---|---|
-| `index.html` | The workbench shell, plus the onboarding and notes dialogs |
+| `index.html` | The workbench shell, plus the four onboarding dialogs |
 | `app.js` | A view over `web/session.js`: the DuckDB-Wasm boot, the rail, the embedded shell, the dialogs. No connection model of its own |
 | `wire.js` | The topology diagram, one per remote. Opens broken; pulses per query at the measured latency |
 | `webmcp.js` | The three WebMCP tools, registered on `document.modelContext` when a browser has one. Same session and same redraw as the dialogs; `run-sql` types at the terminal and returns no rows |
@@ -210,25 +210,44 @@ somebody's machine over a connection of its own, invisibly, beside a terminal
 showing nothing, is the version of this page nobody should ship — and the
 visible one costs the agent only a thing it can ask a person for.
 
-Three consequences, all in `runInShell`:
+Typing rather than querying is most of what `runInShell` is, and the prompt is
+a worse target than it looks:
 
-- **One line of printable ASCII, or it is refused.** Every character goes in as
-  its own `keydown` and Enter submits, so a newline inside a statement would
-  send the first half of it — those are collapsed to spaces. xterm reads
-  printable characters off `key` and is only dependable about ASCII, so
+- **It ends in a semicolon, added if it is missing.** The shell reads a
+  statement as finished only when it ends in one. Without it the prompt drops
+  to `   ...>` and waits, and the *next* thing typed there is appended and the
+  pair run as one statement — which is how `SELECT 41 + 1 AS answer` and a
+  greeting retry became a single query returning three rows of 42. For the same
+  reason `--` comments are refused: everything after one is on the same line
+  now, including the terminator.
+- **One line of printable ASCII.** Every character goes in as its own `keydown`
+  and Enter submits, so newlines collapse to spaces. xterm reads printable
+  characters off `key` and is only dependable about ASCII, so
   `WHERE city = 'Zürich'` is turned away rather than typed as `Zurich` and run
   as a query nobody wrote.
-- **Typed once, never retried.** `greet` retries because a greeting that
-  arrives twice is still a greeting. A statement may have carried an INSERT to
+- **Nothing is typed into a line somebody else started.** Spliced onto a
+  half-written `DELETE FROM events WHERE `, an agent's statement is a statement
+  nobody wrote, and the shell runs it without hesitating. The terminal cannot
+  be read to check — it is a canvas wherever WebGL is available — and none of
+  Ctrl+C, Ctrl+U, Escape or End clears the line, so there is nothing to reach
+  for. `promptLen` counts keystrokes instead, in the capture phase on the
+  container, and `run-sql` refuses while it is above zero. It errs towards
+  busy: a needless refusal costs an agent a retry, and the other mistake runs
+  SQL nobody wrote.
+- **One statement at a time.** The terminal is a serial device, and the shell
+  is not reading input while a query is in flight — a second statement typed
+  over the first lands nowhere and waits out its timeout having never run. So
+  callers queue for the prompt rather than racing for it.
+- **Typed once, never retried.** A statement may have carried an INSERT to
   another machine, so delivery here is at-most-once for the same reason it is
-  on the wire — and a statement that does not settle says so rather than going
-  again.
+  on the wire. One that does not settle says so rather than going again.
 - **The outcome comes back through `observed`.** The proxy already wraps
   `runQuery` for the wire pulse and the rail redraw; it now also settles
-  whoever typed the statement, keyed by the exact text the shell hands DuckDB.
-  That is the same fact `greet` leans on to know its greeting ran. If something
-  else was at the prompt, nothing matches and the wait times out — which is the
-  honest answer, because the statement that ran was not the one asked for.
+  whoever typed the statement, keyed by the exact text the shell hands DuckDB —
+  the same fact `greet` leans on to know its greeting ran. It settles with the
+  error DuckDB threw, not the one bound for the terminal: `withRemedy` folds a
+  remedy and a URL into the message with carriage returns, and the caller
+  attaches the remedy itself in a field of its own.
 
 Two more things about the API are worth knowing before reading `webmcp.js`:
 

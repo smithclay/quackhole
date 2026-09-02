@@ -63,7 +63,7 @@ first. A server started seconds ago routinely has not published yet.
 Fix: use the ticket. `quackhole_attach('qh1_…')` registers the relay the ticket carries
 before it dials. In the browser the same rule holds: pass the ticket, not the id.
 
-## The token a second server printed is rejected
+## "Unauthorized", or a 401 — the token a second server printed is rejected
 
 `quackhole_serve` binds Quack on `127.0.0.1:9494` by default and *reuses* whatever is
 already listening there rather than starting its own. A second server on the same machine
@@ -103,6 +103,19 @@ and fetches `web/qh-worker.js` as a real sibling over the network, and under `+e
 is no sibling to fetch.
 
 Fix: pin the plain file path — `https://cdn.jsdelivr.net/npm/quackhole@0/dist/quackhole.js`.
+
+## "Invalid connection id" in the workbench, after every statement
+
+`.open` at the shell's prompt resets the database. Every connection goes with it, every
+attached catalog goes with it, and so does the `quack` extension the transport needs — but
+the shell writes its message and returns *before* it reconnects, so it is left holding the
+connection id the reset destroyed. Every statement after that fails the same way.
+
+The page rebuilds its own session underneath, which is why the connection rail empties
+rather than going stale, but it cannot hand the shell a new connection id.
+
+Fix: reload the page. Anything that had been loaded into the browser-side database is gone
+either way — that is what `.open` did.
 
 ## `read_csv('https://<id>.iroh:9494/…')` cannot connect
 

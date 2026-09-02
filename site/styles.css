@@ -103,9 +103,6 @@ a.ghost {
 .brand { font: 700 0.82rem/1 var(--display); letter-spacing: -0.03em; }
 .bar-right { display: flex; align-items: center; gap: 0.6rem; }
 
-
-@keyframes throb { 50% { opacity: 0.35; } }
-
 /* --- workbench shell ----------------------------------------------------- */
 
 .workbench {
@@ -283,10 +280,6 @@ dialog h2 {
   letter-spacing: -0.035em; margin: 0 0 0.6rem;
 }
 .dialog-lede { color: #b9c1d4; font-size: 0.92rem; margin: 0 0 1.1rem; }
-/* The onboarding dialog is three ways to do one thing, so each way past the
-   first needs a name of its own. Sits above a .dialog-lede the way the h2 does,
-   which is why it is display type rather than another size of body. */
-.step { font: 600 0.95rem/1.3 var(--display); letter-spacing: -0.03em; margin: 0 0 0.5rem; }
 dialog hr { border: 0; border-top: 1px solid var(--line); margin: 1.6rem 0; }
 .fineprint { font-size: 0.82rem; color: var(--dim); margin: 0; }
 
@@ -340,14 +333,14 @@ dialog hr { border: 0; border-top: 1px solid var(--line); margin: 1.6rem 0; }
 
 /* --- tabs ---------------------------------------------------------------- */
 
-/* Three ways to serve the other end. They are alternatives rather than steps,
-   so stacking them down the dialog made everyone scroll past two things they
-   had already decided against -- and put the ticket field, which is what a
-   returning visitor came for, three screens down.
+/* Two ways to serve the other end. They are alternatives rather than steps,
+   so stacking them down the dialog made everyone scroll past the one they had
+   already decided against -- and put the ticket field, which is what a
+   returning visitor came for, below a screen of prose.
 
    Display type rather than the uppercase micro-label the rail uses: these are
-   the headings the three sections used to have, and demoting them to chrome
-   would make the dialog look like it had one way and some settings. */
+   the headings those sections used to have, and demoting them to chrome would
+   make the dialog look like it had one way and some settings. */
 .tabs {
   display: flex;
   flex-wrap: wrap;

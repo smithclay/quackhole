@@ -61,7 +61,10 @@ const REMEDIES = [
     'A hand-written secret has to be named and scoped to the exact ATTACH address. "+ add remote" builds it that way from the ticket.',
   ],
   [
-    /unauthori[sz]ed|\b401\b/i,
+    // Anchored to something that names a response, because `withRemedy` is on
+    // the path of every statement the shell runs and a bare /401/ matches
+    // `date field value out of range: "401"`.
+    /unauthori[sz]ed|\b(?:http|status|code)\b[^\n]{0,40}\b401\b|\b401\b[^\n]{0,20}\bunauthor/i,
     'The server rejected the token. A second server on one machine reuses Quack on port 9494 and prints a token the first never issued — restart it with --port 9495 and use its new link.',
   ],
   [
@@ -175,7 +178,7 @@ function renderAgentPrompt() {
     `Read ${AGENT_DOCS} first.`,
     '',
     `Then serve the database I would want to query and leave it running.`,
-    `Use the the token '${manualToken}'.`,
+    `Use the token '${manualToken}'.`,
     '',
     'Reply with the qh1_… ticket and nothing else: it grants query access',
     'to this machine, so keep it out of files, logs and commits.',
@@ -200,10 +203,10 @@ function renderManualCommand() {
 
 /// Wire a tablist up for the keyboard.
 ///
-/// Automatic activation -- arrowing onto a tab selects it -- because all three
-/// panels are already in the DOM and switching costs nothing, which is the case
-/// the ARIA practices name it for. Roving tabindex, so Tab moves past the strip
-/// to the panel rather than walking three stops through it.
+/// Automatic activation -- arrowing onto a tab selects it -- because every panel
+/// is already in the DOM and switching costs nothing, which is the case the ARIA
+/// practices name it for. Roving tabindex, so Tab moves past the strip to the
+/// panel rather than stopping at each tab on the way.
 ///
 /// The markup carries the whole relationship already: aria-controls names the
 /// panel, aria-selected says which is showing, and `hidden` on the other two is
@@ -216,8 +219,9 @@ function initTabs(list) {
     for (const t of tabs) {
       const on = t === tab;
       t.setAttribute('aria-selected', String(on));
-      // Only the selected tab is a Tab stop. Without this the strip costs three
-      // presses to cross, which is the thing roving tabindex exists to stop.
+      // Only the selected tab is a Tab stop. Without this the strip costs a
+      // press per tab to cross, which is the thing roving tabindex exists to
+      // stop.
       t.tabIndex = on ? 0 : -1;
       $(`#${t.getAttribute('aria-controls')}`).hidden = !on;
     }
@@ -232,7 +236,7 @@ function initTabs(list) {
   list.addEventListener('keydown', (e) => {
     const from = tabs.indexOf(document.activeElement);
     if (from < 0) return;
-    // Wrapping, because a strip of three has no meaningful end to stop at.
+    // Wrapping, because a strip this short has no meaningful end to stop at.
     const to = {
       ArrowRight: (from + 1) % tabs.length,
       ArrowLeft: (from - 1 + tabs.length) % tabs.length,
@@ -487,7 +491,16 @@ async function addRemote(ticket) {
 /// remote's tables is a relay round trip and nobody should watch a modal
 /// through one.
 async function attached(conn) {
-  await refreshSchema();
+  // Never throws. By the time this runs the ATTACH has landed, and the dialog
+  // that called it has already closed -- so a redraw that fails would render
+  // its error into a dialog nobody can see, and would tell an agent the attach
+  // failed when the remote is sitting there attached. Same trade `rebuild`
+  // makes, for the same reason: the half worth keeping is the one that worked.
+  try {
+    await refreshSchema();
+  } catch (err) {
+    console.error('[quackhole] could not redraw after attaching:', err);
+  }
   announce(conn);
 }
 
@@ -538,6 +551,11 @@ async function embedShell() {
     backgroundColor: style.getPropertyValue('--ink-2').trim() || '#111',
     resolveDatabase: async () => observed(db),
   });
+
+  // Counting keystrokes is the only way to know whether a line is part-typed,
+  // because the terminal renders to a canvas and cannot be read. Registered
+  // after `embed`, since xterm creates the textarea these arrive at.
+  watchPrompt(mount);
 
   // `embed` hands its resize handler back by assigning `container.onresize`,
   // and a <div> never fires a resize event -- so nothing calls it. Without an
@@ -620,6 +638,46 @@ function greet(tries = 12) {
   setTimeout(() => greet(tries - 1), 250);
 }
 
+/// Roughly how much is sitting at the prompt, unsubmitted.
+///
+/// The terminal cannot be read to find out: xterm draws to a canvas wherever
+/// WebGL is available, which is the same fact that stops `greet` polling for
+/// readiness. So this counts the keys instead -- every one the visitor presses
+/// reaches the helper textarea, and Enter is what hands the line to the shell.
+///
+/// It only ever has to be right about the difference between "empty" and "not",
+/// and it errs towards not: an arrow key or a paste moves the real line in ways
+/// this does not model, and every one of those makes it read as busier than it
+/// is. Refusing to type when the prompt was actually clear costs an agent one
+/// retry. Typing into a line that was not clear runs a statement nobody wrote,
+/// which is what this exists to stop.
+let promptLen = 0;
+
+/// Is somebody part-way through a line at the prompt?
+const promptBusy = () => promptLen > 0;
+
+/// Count what the terminal is handed, including what this page types into it.
+///
+/// Registered in the capture phase on the container, so it runs before xterm
+/// sees the key and regardless of what xterm does with it. Synthetic keys from
+/// `typeIntoShell` come through here too, which is what makes the count land
+/// back at zero on the Enter that submits them.
+function watchPrompt(mount) {
+  mount.addEventListener(
+    'keydown',
+    (e) => {
+      if (e.key === 'Enter') promptLen = 0;
+      else if (e.key === 'Backspace') promptLen = Math.max(0, promptLen - 1);
+      else if (e.key.length === 1) promptLen += 1;
+    },
+    true,
+  );
+  // Paste never fires a keydown, and is the one way a long line arrives at once.
+  // The length is not tracked past "there is something there", because nothing
+  // here needs it to be.
+  mount.addEventListener('paste', () => (promptLen += 1), true);
+}
+
 /// Type a statement at the shell's prompt and run it, the way a visitor does.
 ///
 /// There is no other way in. `embed` takes a database and four display settings
@@ -638,6 +696,10 @@ function greet(tries = 12) {
 /// xterm moves that element or stops reading `key`, nothing is typed and the
 /// shell opens at an empty prompt, which is where it was before this existed.
 function typeIntoShell(sql) {
+  // Typing into a line somebody else started splices the two together and runs
+  // the result. `DELETE FROM events WHERE ` with a statement appended is a
+  // statement nobody wrote, and the shell runs it without hesitating.
+  if (promptBusy()) return false;
   const input = $('#shell .xterm-helper-textarea');
   if (!input) return false;
   const press = (key) => input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
@@ -655,6 +717,11 @@ function typeIntoShell(sql) {
 /// line reaching DuckDB is not the line that was typed, nothing matches and the
 /// wait times out, which is the honest outcome: something else was at the
 /// prompt and the statement that ran was not the one asked for.
+///
+/// One waiter per text is enough, because `runInShell` lets only one statement
+/// be at the prompt at a time. Without that it would not be: two identical
+/// statements in flight would share a key, and the second registration would
+/// drop the first one's waiter on the floor.
 const pending = new Map();
 
 /// Hand a typed statement's outcome back to whoever typed it.
@@ -679,7 +746,24 @@ const settle = (text, err, ms) => {
 /// twice is still a greeting; a statement may have carried an INSERT to another
 /// machine, and delivery is at-most-once here for the same reason it is on the
 /// wire.
-async function runInShell(sql, { timeoutMs = 60_000 } = {}) {
+///
+/// One at a time. The terminal is a serial device with a single prompt, and the
+/// shell is not reading input while a query is in flight -- so a second
+/// statement typed over the first lands nowhere at all, and waits out its
+/// timeout having never run. Callers queue rather than race for the prompt.
+let inTurn = Promise.resolve();
+function runInShell(sql, opts) {
+  const turn = inTurn.then(() => typeAtPrompt(sql, opts));
+  // The chain carries the turn, not the outcome: without the catch, one failed
+  // statement would reject every statement queued behind it.
+  inTurn = turn.catch(() => {});
+  return turn;
+}
+
+/// Type one statement and wait for the shell to answer it.
+///
+/// Never called directly -- `runInShell` is what serialises the callers.
+async function typeAtPrompt(sql, { timeoutMs = 60_000 } = {}) {
   // One line. Every character goes in as its own keydown and Enter submits, so
   // a newline inside the statement would send the first half of it.
   const text = String(sql ?? '').replace(/\s+/g, ' ').trim();
@@ -695,10 +779,51 @@ async function runInShell(sql, { timeoutMs = 60_000 } = {}) {
     );
   }
 
-  const settled = new Promise((resolve, reject) => pending.set(text, { resolve, reject }));
-  if (!typeIntoShell(text)) {
-    pending.delete(text);
-    throw new Error('The terminal is not ready to take a statement.');
+  // A line comment would swallow the rest of the statement, because the rest of
+  // the statement is now on the same line -- including the terminator added
+  // below, which is what would leave the shell waiting mid-statement. The check
+  // is deliberately blunt: `--` inside a string literal is refused too, and
+  // rewriting the statement without a comment is a cheaper answer than a SQL
+  // scanner living here.
+  if (text.includes('--')) {
+    throw new Error(
+      'A -- comment cannot be used here: the statement is typed as one line, so everything after' +
+        ' it would be commented out, including the terminator. Use /* */ instead.',
+    );
+  }
+
+  // The shell treats a statement as finished only when it ends in a semicolon.
+  // Without one it drops to its `...>` continuation prompt and waits, and the
+  // next thing typed at that prompt -- by the visitor, or by `greet` still
+  // retrying its greeting -- is appended and the pair run as one statement.
+  // That is how `SELECT 41 + 1 AS answer` and `FROM welcome;` became a single
+  // query returning three rows.
+  const statement = text.endsWith(';') ? text : `${text};`;
+
+  if (promptBusy()) {
+    throw new Error(
+      'Something is already typed at the terminal, so this statement was not sent -- it would have' +
+        ' run joined onto whatever is there. Ask whoever is at the keyboard to finish or clear the' +
+        ' line, then send it again. Nothing ran.',
+    );
+  }
+
+  let waiter;
+  const settled = new Promise((resolve, reject) => {
+    waiter = { resolve, reject };
+    pending.set(statement, waiter);
+  });
+
+  // Only if the registration is still this call's own. `settle` has already
+  // removed it by the time this runs on the happy path, and on a later identical
+  // statement the entry belongs to that one.
+  const forget = () => {
+    if (pending.get(statement) === waiter) pending.delete(statement);
+  };
+
+  if (!typeIntoShell(statement)) {
+    forget();
+    throw new Error('The terminal is not ready to take a statement. Nothing ran.');
   }
 
   const expired = new Promise((_, reject) => {
@@ -715,9 +840,7 @@ async function runInShell(sql, { timeoutMs = 60_000 } = {}) {
     );
   });
 
-  // Cleared either way, so a later statement with the same text is not settled
-  // by the waiter this one left behind.
-  return Promise.race([settled, expired]).finally(() => pending.delete(text));
+  return Promise.race([settled, expired]).finally(forget);
 }
 
 /// The database the shell drives: `db`, with the queries it runs observed.
@@ -751,11 +874,14 @@ function observed(database) {
           try {
             result = await value.call(target, conn, text);
           } catch (err) {
-            // Settled with the remedy already folded in, so an agent that typed
-            // this reads the same sentence the terminal is showing the visitor.
-            const wrapped = withRemedy(err);
-            settle(text, wrapped);
-            throw wrapped;
+            // Settled with the error as DuckDB threw it, not the one bound for
+            // the terminal: `withRemedy` folds the remedy and a URL into the
+            // message with CRLFs, which are there so the terminal wraps them,
+            // and whoever typed this attaches the remedy itself in its own
+            // shape. Handing over the terminal's copy would send an agent
+            // carriage returns and the same sentence twice.
+            settle(text, err);
+            throw withRemedy(err);
           }
           const ms = performance.now() - t0;
           afterQuery(text, ms);
@@ -811,7 +937,12 @@ function afterQuery(text, ms) {
   // DDL typed at the prompt changes what the rail should show. ATTACH and
   // DETACH are the ones that matter, and the session reconciles against
   // duckdb_databases(), so a remote removed by hand leaves the rail on its own.
-  if (/^\s*(create|drop|attach|detach|alter)\b/i.test(text)) refreshSchema();
+  // Not awaited -- this is on the shell's own path and nothing here can wait --
+  // so it needs a catch of its own, or a redraw against the connection `.open`
+  // just destroyed surfaces as an unhandled rejection instead of a log line.
+  if (/^\s*(create|drop|attach|detach|alter)\b/i.test(text)) {
+    refreshSchema().catch((err) => console.error('[quackhole] could not redraw after a statement:', err));
+  }
 }
 
 // --- dialogs -----------------------------------------------------------------
@@ -837,7 +968,12 @@ function showError(err, fallback = null) {
 /// dimmed, behind a dialog it did not open.
 const cross = (from, to) => {
   from.close();
-  to.showModal();
+  // `#add` is the one with state to carry: a ticket that failed is still in the
+  // field, its error is still under it, and `openAdd` may have retitled it.
+  // Reaching it from `#serve` or from the front door is a fresh attempt, so it
+  // opens the way pressing "+ add remote" does.
+  if (to === add) openAdd();
+  else to.showModal();
 };
 $('#to-add').addEventListener('click', () => cross(serve, add));
 $('#to-serve').addEventListener('click', () => cross(add, serve));
@@ -933,7 +1069,14 @@ async function offerConnect(ticket) {
   }
 
   $('#connect-id').textContent = peer.endpointId;
-  $('#connect-relay').textContent = new URL(peer.relayUrl).host;
+  // Guarded like wire.js guards it: a ticket minted before the endpoint learned
+  // its home relay carries an empty string, and a throw here would lose the
+  // dialog entirely rather than showing a peer with no relay to name.
+  try {
+    $('#connect-relay').textContent = new URL(peer.relayUrl).host;
+  } catch {
+    $('#connect-relay').textContent = peer.relayUrl || 'none — this ticket names no relay';
+  }
   dialog.showModal();
 
   $('#connect-no').addEventListener('click', () => dialog.close(), { once: true });
@@ -1005,6 +1148,7 @@ try {
     session: () => session,
     attach: attachForAgent,
     run: runInShell,
+    refresh: refreshSchema,
     remedyFor,
   });
 } catch (err) {

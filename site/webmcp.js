@@ -38,6 +38,22 @@
 /// both is used through the shape that is going to survive.
 const modelContext = () => document.modelContext ?? navigator.modelContext ?? null;
 
+/// A relay's host, or null for a peer whose ticket carried no relay.
+///
+/// `relayUrl` is a plain string off the ticket, and `peer.rs` has an explicit
+/// empty case for an endpoint that had not learned its home relay yet -- so
+/// `new URL(...)` here is a throw waiting on an unusual ticket. Unguarded inside
+/// `list-connections` that would be one relay-less remote turning the whole
+/// answer into `Invalid URL`, telling an agent nothing about any of the other
+/// connections. `wire.js` guards the same call for the same reason.
+const relayHost = (url) => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
+};
+
 /// Report a failure to the agent as a value, not as a rejection.
 ///
 /// A rejected `execute` promise loses everything it was rejected with: the spec
@@ -73,7 +89,7 @@ const failure = (err, remedyFor) => {
 /// cross-origin isolated, which this page has to be anyway because the transport
 /// parks a thread in `Atomics.wait` on a `SharedArrayBuffer`. The COOP/COEP pair
 /// that buys the transport its memory buys the tools their agent cluster.
-export async function registerAgentTools({ session, attach, run, remedyFor }) {
+export async function registerAgentTools({ session, attach, run, refresh, remedyFor }) {
   const ctx = modelContext();
   if (!ctx) return false;
 
@@ -108,7 +124,7 @@ export async function registerAgentTools({ session, attach, run, remedyFor }) {
             ok: true,
             name: conn.name,
             endpointId: conn.endpointId,
-            relay: new URL(conn.relayUrl).host,
+            relay: relayHost(conn.relayUrl),
             attachedInMs: Math.round(conn.attachMs),
           };
         } catch (err) {
@@ -134,15 +150,19 @@ export async function registerAgentTools({ session, attach, run, remedyFor }) {
         const s = session();
         if (!s) return { ok: false, error: 'The workbench has no DuckDB session.' };
         try {
-          // Reconciles against duckdb_databases() on the way, so a remote that
-          // was detached by hand at the prompt is already gone from the answer.
-          const groups = await s.tables();
+          // The view's own refresh rather than `session.tables()` directly, even
+          // though the tool wants only what it returns. `tables()` reconciles
+          // against duckdb_databases() and drops remotes that have gone, so
+          // calling it bare would answer correctly and leave the rail beside it
+          // still listing a catalog the session no longer has -- which is the
+          // one thing a list of connections must never do.
+          const groups = await refresh();
           return {
             ok: true,
             connections: s.connections.map((c) => ({
               name: c.name,
               kind: c.kind,
-              ...(c.kind === 'remote' && { endpointId: c.endpointId, relay: new URL(c.relayUrl).host }),
+              ...(c.kind === 'remote' && { endpointId: c.endpointId, relay: relayHost(c.relayUrl) }),
               tables: groups.get(c.name) ?? [],
             })),
           };
@@ -160,7 +180,7 @@ export async function registerAgentTools({ session, attach, run, remedyFor }) {
         ' in front of it would. The result is drawn in their terminal rather than returned here: what' +
         ' comes back is whether the statement ran and how long it took, so ask the person what it said.' +
         ' Reach a remote table by qualifying it with the catalog name list-connections reports, as in' +
-        ' "SELECT * FROM remote.events". A statement that writes runs on the machine that owns the' +
+        ' "SELECT * FROM remote.events;". A statement that writes runs on the machine that owns the' +
         ' catalog and is delivered at most once -- if one fails, check whether it landed before' +
         ' sending it again.',
       inputSchema: {
@@ -168,7 +188,9 @@ export async function registerAgentTools({ session, attach, run, remedyFor }) {
         properties: {
           sql: {
             type: 'string',
-            description: 'One SQL statement, in printable ASCII. Newlines are collapsed to spaces.',
+            description:
+              'One SQL statement ending in a semicolon, in printable ASCII. Newlines are collapsed' +
+              ' to spaces, so -- comments cannot be used; use /* */ instead.',
           },
         },
         required: ['sql'],
