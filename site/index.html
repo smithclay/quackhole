@@ -77,26 +77,36 @@
 
 <main class="workbench">
 
+  <!-- Each block is a <details> rather than a <section>, which is what makes the
+       rail work on a phone: there it sits above the terminal instead of beside
+       it, and three panels of content in front of the thing the page is for is a
+       scroll nobody asked for. Collapsed, they are three rows.
+
+       The platform's own disclosure rather than a button and a class: the
+       keyboard behaviour, the ARIA expanded state and the open/closed styling
+       hook all come with it, and none of them have to be kept working here. A
+       heading inside <summary> is allowed, and keeps the rail navigable by
+       heading for a screen reader -- which a bare summary would have cost. -->
   <aside class="rail">
-    <section class="rail-block">
-      <h2>Connections</h2>
+    <details class="rail-block" open>
+      <summary><h2>Connections</h2></summary>
       <ul class="conns" id="conn-list"></ul>
       <button class="add" id="add-remote" type="button">+ add remote</button>
-    </section>
+    </details>
 
     <!-- Hidden until there is a remote: an empty wire drawn next to a workbench
          with nothing attached reads as broken rather than as not-yet-connected.
          One route per remote, because each has its own relay -- drawing two
          remotes as one wire would claim they share a path they do not. -->
-    <section class="rail-block" id="wire-panel" hidden>
-      <h2>Routes</h2>
+    <details class="rail-block" id="wire-panel" open hidden>
+      <summary><h2>Routes</h2></summary>
       <ul class="wires" id="wire-list"></ul>
-    </section>
+    </details>
 
-    <section class="rail-block">
-      <h2>Tables</h2>
+    <details class="rail-block" open>
+      <summary><h2>Tables</h2></summary>
       <ul class="schema" id="schema-list"><li class="schema-empty">nothing attached yet</li></ul>
-    </section>
+    </details>
   </aside>
 
   <!-- duckdb's own web shell mounts here, and builds its terminal itself. This

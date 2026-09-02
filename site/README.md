@@ -288,6 +288,49 @@ ordinary outcome, and the page has to be exactly as good then — which is why
 `registerAgentTools` resolves false rather than throwing, and why nothing else
 on the page reads its result.
 
+## On a phone
+
+Below `52rem` the rail stops being a wall beside the terminal and becomes a
+stack of disclosures above it. Each block is a `<details>` — the platform's own
+disclosure, so the keyboard behaviour, the `aria-expanded` state and the
+open/closed styling hook all come with it. `app.js` sets `open` per breakpoint
+rather than per resize, so a panel you opened stays open until the layout
+itself changes underneath it.
+
+Four things were load-bearing and none of them were obvious:
+
+- **The rail's `height` was never overridden.** It kept `calc(100vh - bar)` at
+  every width, so on a phone it was a full screen of mostly empty panel and the
+  terminal — the thing the page is for — started below the fold. That single
+  declaration was most of the bad mobile experience.
+- **`100vh` is the wrong unit on a phone.** It measures the *large* viewport,
+  with the URL bar retracted, so a full-height terminal spends its life with
+  its last rows behind browser chrome. Everything reads `--app-h`, which
+  defaults to `100dvh` and is overwritten by `app.js` with
+  `visualViewport.height` — the only thing that reports the on-screen keyboard,
+  which shrinks the visual viewport and leaves the layout viewport alone. The
+  shell's existing `ResizeObserver` picks it up from there and xterm reflows.
+- **`.shell` needs `flex: 1 1 0`, not `auto`.** `.shell > * { height: 100% }`
+  makes the terminal's height circular with its own content, so an auto basis
+  resolves to the whole scrollback — 2400px of shell under a 390px screen. And
+  the rail needs `align-self: stretch`, because the base rule's `align-self:
+  start` means the *cross* axis once the workbench is a flex column, which puts
+  the whole rail in a 129px strip down the left.
+- **`zoom` is the only lever on the terminal's width.** `embed()` takes a font
+  family and no size, and xterm measures its cell from its own configured size
+  rather than from the container — setting `font-size` on `.shell` changes
+  nothing, which was worth measuring before resorting to a trick. `zoom` affects
+  layout, so xterm measures the larger box and lays out more columns. At 390px
+  that is 44 columns against 52, and the shell answers 44 by narrowing every
+  column until `platform` is `plat/form` and a version is `v1.5/.4`. A browser
+  without `zoom` gets the 44, which is what it had.
+
+Touch gets two fixes that are not layout. The detach `×` was `opacity: 0` until
+hover, and a touch screen has no hover — so on a phone there was no way to
+remove a remote at all. And rail rows are padded up to a 24px target under
+`@media (hover: none)`, which is what WCAG 2.5.8 asks and what a row of table
+names at rail density is under.
+
 ## Cross-origin isolation, on a host that cannot send headers
 
 The transport parks the DuckDB thread in `Atomics.wait` on a

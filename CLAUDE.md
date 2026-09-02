@@ -252,6 +252,27 @@ the npm README's own quickstart block against a live server.
   U+2500 in none of them -- so every result table's borders come from whatever
   fallback the browser picks, at metrics that are not the cell width, and render
   as broken dashes.
+- **The embedded shell has no font size, and `zoom` is the only lever on its
+  width.** `embed()` takes `fontFamily` and nothing else about type, and xterm
+  measures its cell from its own configured size rather than from the container
+  -- so `font-size` on `.shell` changes the column count by zero, which is worth
+  knowing before trying it. `zoom` is a layout-affecting scale, so xterm measures
+  the larger box and lays out more columns; `site/styles.css` uses it below
+  52rem to get 52 columns out of a 390px phone instead of 44. It matters because
+  the shell answers a narrow terminal by narrowing every column until `platform`
+  is `plat/form`, rather than by scrolling.
+- **`100vh` is the wrong height on a phone, and `100dvh` is not enough either.**
+  `vh` is the *large* viewport, measured with the URL bar retracted, so a
+  full-height terminal keeps its last rows -- the prompt among them -- behind
+  browser chrome. `dvh` tracks the URL bar and still misses the on-screen
+  keyboard, which shrinks the *visual* viewport and leaves the layout viewport
+  alone. So `--app-h` in `site/styles.css` defaults to `100dvh` and
+  `trackViewport` in `site/app.js` overwrites it from `visualViewport.height`.
+  Two flex traps sit next to it, both silent: `.shell` needs `flex: 1 1 0`
+  because `.shell > * { height: 100% }` makes an `auto` basis circular with the
+  scrollback and resolve to ~2400px, and `.rail` needs `align-self: stretch`
+  because the base rule's `align-self: start` becomes a *cross*-axis rule once
+  the workbench is a flex column and squeezes the rail into a 129px strip.
 - **`site/verify.mjs` has to deny WebGL to read the terminal at all.** xterm
   renders to a canvas when WebGL is available and to the DOM when it is not, and
   only the DOM path leaves text in `.xterm-rows`. The renderer is chosen once,
