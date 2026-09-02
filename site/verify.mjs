@@ -101,12 +101,12 @@ const terminal = (page) => page.$eval('.xterm-rows', (e) => e.innerText);
 // The shell at a prompt with nothing running: the last thing on screen is a bare
 // prompt. Not the same as IDLE below, which also wants an otherwise empty screen.
 const SETTLED = () => {
-  const lines = document.querySelector('.xterm-rows').innerText.split('\n').filter((l) => l.trim());
+  const lines = (document.querySelector('.xterm-rows')?.innerText ?? '').split('\n').filter((l) => l.trim());
   return lines.length > 0 && /^duckdb>\s*$/.test(lines[lines.length - 1]);
 };
 
 const IDLE = () => {
-  const lines = document.querySelector('.xterm-rows').innerText.split('\n').filter((l) => l.trim());
+  const lines = (document.querySelector('.xterm-rows')?.innerText ?? '').split('\n').filter((l) => l.trim());
   return lines.length === 1 && /^duckdb>\s*$/.test(lines[0]);
 };
 
@@ -198,6 +198,88 @@ await page.addInitScript(() => {
   delete window.WebGL2RenderingContext;
 });
 
+// Stand in for the browser's WebMCP implementation, which this Chromium does
+// not have: the API is behind chrome://flags/#enable-webmcp-testing wherever it
+// exists at all, and Playwright ships a build with neither the flag nor an
+// origin trial token. So the page registers its tools against this instead.
+//
+// It is not a polyfill and nothing ships it. What it models is the one part of
+// the spec the tools have to survive, which is that a result is JSON-serialized
+// by the user agent after `execute` resolves -- so a row carrying a BigInt, as
+// every `count(*)` does, fails here exactly the way it would in Chrome. It
+// models the other half too: a rejected `execute` reaches the agent as a
+// failure with its reason dropped, which is why the tools report errors as
+// values instead.
+await page.addInitScript(() => {
+  const tools = new Map();
+  Object.defineProperty(document, 'modelContext', {
+    configurable: true,
+    value: {
+      async registerTool(tool) {
+        if (tools.has(tool.name)) throw new DOMException(`${tool.name} is registered`, 'InvalidStateError');
+        if (!tool.name || !tool.description) throw new TypeError('a tool needs a name and a description');
+        tools.set(tool.name, tool);
+      },
+      async getTools() {
+        return [...tools.values()].map(({ name, title, description, inputSchema, annotations }) => ({
+          name,
+          title,
+          description,
+          inputSchema,
+          annotations,
+        }));
+      },
+      async executeTool(tool, inputObject = {}) {
+        const found = tools.get(tool?.name ?? tool);
+        if (!found) throw new DOMException('no such tool', 'NotFoundError');
+        const signal = new AbortController().signal;
+        // Null is the spec's answer for a rejected execute *and* for a result
+        // that would not serialize -- the agent is told the call failed and
+        // nothing else. Collapsing both to null here is the point.
+        try {
+          return JSON.stringify(await found.execute(inputObject, { signal }));
+        } catch {
+          return null;
+        }
+      },
+    },
+  });
+
+  // What this script drives the tools through, since it cannot be an agent.
+  window.__qhTools = {
+    list: () => document.modelContext.getTools(),
+    call: async (name, input) => {
+      const [tool] = (await document.modelContext.getTools()).filter((t) => t.name === name);
+      const out = await document.modelContext.executeTool(tool, input);
+      return out === null ? null : JSON.parse(out);
+    },
+  };
+});
+
+/// Wait for a statement an agent tool typed to be drawn and answered.
+///
+/// The tool resolves when DuckDB returns, which is routinely before xterm has
+/// painted anything: the keydowns go in as a synchronous loop and the terminal
+/// renders on its own frames. Waiting on a bare prompt alone would pass on the
+/// prompt that was already there.
+const drawn = (page, sql) =>
+  page.waitForFunction(
+    (s) => {
+      const text = document.querySelector('.xterm-rows')?.innerText ?? '';
+      const lines = text.split('\n').filter((l) => l.trim());
+      return text.includes(s) && lines.length > 0 && /^duckdb>\s*$/.test(lines[lines.length - 1]);
+    },
+    sql,
+    { timeout: 60_000 },
+  );
+
+/// Call one of the page's WebMCP tools, the way an agent would.
+///
+/// Null means the call failed with nothing to say, which is the outcome the
+/// tools exist to avoid.
+const tool = (page, name, input = {}) =>
+  page.evaluate(([n, i]) => window.__qhTools.call(n, i), [name, input]);
+
 page.on('console', (m) => {
   const t = m.text();
   if (m.type() === 'error' || /qh-shim|qh-bridge|coi/.test(t)) console.log(`  console  ${t}`);
@@ -278,6 +360,9 @@ try {
 
   const tables = await page.$$eval('.schema-item', (els) => els.map((e) => e.textContent.trim()));
   console.log(`  tables    ${tables.join(', ') || '(none)'}`);
+  // The local database opens holding one, so the rail is never empty and the
+  // first thing to click does not need a remote.
+  if (!tables.includes('memory.browser_info')) failed = `the local browser_info table is missing: ${tables.join(', ')}`;
 
   // What the notebook used to seed and run for a freshly attached remote. The
   // shell takes nothing from the page, so these are typed now -- by a visitor,
@@ -310,6 +395,102 @@ try {
   const own = await run(page, 'SELECT count(*) AS n, max(ts) AS newest FROM remote.events;');
   console.log(`\n  own query  ${own.ok ? 'ok' : 'FAIL'}\n            ${tail(own.text)}`);
   if (!own.ok) failed = `the hand-typed query failed:\n${own.text}`;
+
+  // --- the tools an agent in the browser gets ------------------------------
+  //
+  // Driven through the stub above rather than by a real agent, which is as far
+  // as this can go: no shipping browser exposes the API without a flag. What
+  // that still proves is everything between `registerTool` and the answer --
+  // that the tools registered at all, that they read the session the page is
+  // actually holding, and that what they return survives being stringified.
+  const registered = await page.evaluate(() => window.__qhTools.list());
+  const names = registered.map((t) => t.name);
+  console.log(`\n  webmcp    ${names.join(', ') || '(none registered)'}`);
+  for (const want of ['attach-remote', 'list-connections', 'run-sql']) {
+    if (!names.includes(want)) failed = `the page did not register the ${want} tool`;
+  }
+  // Read-only is the hint an agent uses to decide a call is safe to make on its
+  // own, and listing connections is the only one of the three that earns it.
+  const readOnly = registered.filter((t) => t.annotations?.readOnlyHint).map((t) => t.name);
+  if (readOnly.join() !== 'list-connections') {
+    failed = `readOnlyHint is on ${readOnly.join(', ') || 'nothing'}, expected list-connections alone`;
+  }
+
+  const listed = await tool(page, 'list-connections');
+  console.log(`  list      ${listed?.connections?.map((c) => `${c.name}(${c.tables.length})`).join(', ')}`);
+  const remoteEntry = listed?.connections?.find((c) => c.name === 'remote');
+  if (!listed?.ok) failed = `list-connections answered ${JSON.stringify(listed)}`;
+  else if (!remoteEntry?.tables.length) failed = 'list-connections found no tables on the remote';
+
+  // run-sql types at the terminal rather than answering with rows, so what it
+  // did is a question about the visitor's screen. Cleared first for the reason
+  // `run` clears: the terminal scrolls, and earlier rows leave the DOM entirely.
+  await page.waitForFunction(SETTLED, null, { timeout: 90_000 });
+  await page.click('#shell');
+  await page.keyboard.type('.clear');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(IDLE, null, { timeout: 30_000 });
+
+  // Deliberately without a terminator. The shell reads a statement as finished
+  // only when it ends in one; without it the prompt drops to `   ...>` and the
+  // next thing typed there is appended and the pair run as a single statement.
+  // So `runInShell` adds one, and what has to appear on screen is the terminated
+  // form.
+  const agentSql = 'SELECT count(*) AS n FROM remote.events';
+  const ran = await tool(page, 'run-sql', { sql: agentSql });
+  await drawn(page, `${agentSql};`);
+  const screen = await terminal(page);
+  console.log(`  run-sql   ran in ${ran?.elapsedMs}ms\n            ${tail(screen)}`);
+  if (ran === null) failed = 'run-sql came back with nothing at all';
+  else if (!ran.ok) failed = `run-sql answered ${JSON.stringify(ran)}`;
+  // The point of the whole tool: the rows are the visitor's, not the agent's.
+  else if (ran.rows !== undefined) failed = `run-sql handed back rows: ${JSON.stringify(ran)}`;
+  else if (!/\b\d+\b/.test(screen.replace(agentSql, ''))) failed = `no result was drawn:\n${screen}`;
+  else if (/^[A-Z][A-Za-z ]*Error[:!]/m.test(screen)) failed = `run-sql errored on screen:\n${screen}`;
+  // The remedy is a field of its own, so the message must be DuckDB's alone --
+  // not the copy `withRemedy` builds for the terminal, which carries carriage
+  // returns and a URL because a terminal is what they are for.
+  else if (/\r|TROUBLESHOOTING/.test(JSON.stringify(ran))) {
+    failed = `run-sql returned terminal formatting: ${JSON.stringify(ran)}`;
+  }
+
+  // A statement is never typed into a line somebody else started. This is the
+  // one that matters: spliced onto a half-written `DELETE FROM events WHERE `,
+  // an agent's statement is a statement nobody wrote, and the shell runs it
+  // without hesitating. What gets typed here is harmless on purpose -- a test
+  // must not leave a real DELETE at a real remote's prompt on the chance that
+  // whatever lands after it parses. The terminal cannot be read to check -- it is a canvas wherever
+  // WebGL is available -- so the page counts keystrokes instead, and this is
+  // what says the count is wired to the right element.
+  await page.click('#shell');
+  await page.keyboard.type('SELECT 99 AS ninety_nine ');
+  const spliced = await tool(page, 'run-sql', { sql: 'SELECT 1 AS one;' });
+  console.log(`  busy      ${spliced?.error ?? JSON.stringify(spliced)}`);
+  if (spliced === null || spliced.ok) failed = `run-sql typed into a half-written line: ${JSON.stringify(spliced)}`;
+  else if (!/already typed/i.test(spliced.error ?? '')) failed = `the refusal did not say why: ${spliced.error}`;
+  else if ((await terminal(page)).includes('SELECT 1 AS one')) failed = 'the statement was spliced on anyway';
+  // Put the terminal back for whatever runs next.
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(SETTLED, null, { timeout: 30_000 });
+
+  // Refused rather than typed wrong. xterm reads printable characters off `key`
+  // and is only dependable about ASCII, so this would otherwise run a statement
+  // nobody wrote -- and it would look like it worked.
+  const nonAscii = await tool(page, 'run-sql', { sql: "SELECT 'Z\u00fcrich' AS city;" });
+  console.log(`  ascii     ${nonAscii?.error ?? JSON.stringify(nonAscii)}`);
+  if (nonAscii === null || nonAscii.ok || !/ascii/i.test(nonAscii.error ?? '')) {
+    failed = `run-sql took a non-ASCII statement: ${JSON.stringify(nonAscii)}`;
+  }
+
+  // The refusal has to arrive as a value. A tool that threw would reach an
+  // agent as a failed call with the reason dropped, and "already attached" is
+  // the whole of what makes it fixable.
+  const dupeTool = await tool(page, 'attach-remote', { ticket: TICKET });
+  console.log(`  duplicate ${dupeTool?.error ?? JSON.stringify(dupeTool)}`);
+  if (dupeTool === null) failed = 'attach-remote threw at a duplicate ticket instead of reporting it';
+  else if (dupeTool.ok || !/already attached/i.test(dupeTool.error ?? '')) {
+    failed = `attach-remote took a duplicate ticket: ${JSON.stringify(dupeTool)}`;
+  }
 
   // --- the second server, if one was offered -------------------------------
   if (TICKET2) {
@@ -402,6 +583,24 @@ try {
     { timeout: 30_000 },
   );
   console.log('  hand DETACH  rail back to memory only, no routes drawn');
+
+  // Nothing is attached now, which is the state the last tool needs. Attaching
+  // through it has to leave the workbench where the ticket field leaves it --
+  // same catalog in the rail, same tables under it -- because it goes through
+  // the same `addRemote` and the same redraw, and a tool with a path of its own
+  // would be the one thing this page does not do anywhere else.
+  const reattached = await tool(page, 'attach-remote', { ticket: TICKET });
+  const how = reattached?.ok ? `${reattached.name} via ${reattached.relay}` : JSON.stringify(reattached);
+  console.log(`\n  attach-remote  ${how}`);
+  if (!reattached?.ok) failed = `attach-remote could not attach: ${JSON.stringify(reattached)}`;
+  else {
+    await waitForTables(page, `${reattached.name}.`);
+    const railAfter = await remotes(page);
+    console.log(`  rail      ${railAfter.join(', ')}`);
+    if (!railAfter.includes(reattached.name)) {
+      failed = `the tool attached "${reattached.name}" but the rail lists ${railAfter.join(', ') || 'nothing'}`;
+    }
+  }
 
   // Checked last, so it covers the whole run. Nothing above asserts on the
   // service worker directly -- it is meant to be invisible -- and "invisible"

@@ -29,8 +29,10 @@ Three things make this a usable loop rather than a fast one:
   the link one server printed, and every reload comes back already attached —
   you are iterating on the connected page, not on the empty one.
 - **You do not need a second machine for most of it.** The shell, the connection rail
-  and the schema list all work against the local `memory` connection alone. Only
-  the routes panel and remote queries need a real remote.
+  and the schema list all work against the local `memory` connection alone —
+  which opens holding a `browser_info` table, so the rail has something in it
+  and there is something to click before any remote exists. Only the routes
+  panel and remote queries need a real remote.
 
 `vite.config.js` owns the two things Vite does not do by itself, and the
 comments there say why each is the way it is: the files that must ship
@@ -168,24 +170,123 @@ failure still arrives with its remedy from `docs/TROUBLESHOOTING.md` attached.
 It wraps `open` too, because `.open` at the prompt resets the database and takes
 every attached remote with it.
 
-Two things went with the notebook and are not coming back through this seam. The
-page no longer seeds and runs a first query against a freshly attached remote,
-and clicking a table in the rail copies a `SELECT` rather than running one —
-both because the shell takes its input from the keyboard and publishes no way to
-put text on its prompt.
+The keyboard is the only way in, so anything the page wants to run goes in as
+keystrokes — `runInShell`, which is also what the agent tools use, with all the
+constraints listed under them. Clicking a table in the rail runs
+`DESCRIBE <catalog>.<table>;` through it. That used to copy a `SELECT` to the
+clipboard instead, because there was no way to put text on the prompt; there is
+now, and handing somebody a thing to paste was never the better half of that
+trade.
+
+`DESCRIBE` rather than a `SELECT`, because the question a table name in a rail
+asks is "what is in it?", and the answer that is always safe to run is its
+shape. A `SELECT` on a remote is a relay round trip over however many rows,
+decided by a click on a name.
+
+The one thing that did go with the notebook and is not coming back: the page no
+longer seeds and runs a first query against a freshly attached remote. It says
+the remote is connected and leaves the rail beside it to say what is in it.
 
 ## Files
 
 | | |
 |---|---|
-| `index.html` | The workbench shell, plus the onboarding and notes dialogs |
+| `index.html` | The workbench shell, plus the four onboarding dialogs |
 | `app.js` | A view over `web/session.js`: the DuckDB-Wasm boot, the rail, the embedded shell, the dialogs. No connection model of its own |
 | `wire.js` | The topology diagram, one per remote. Opens broken; pulses per query at the measured latency |
+| `webmcp.js` | The three WebMCP tools, registered on `document.modelContext` when a browser has one. Same session and same redraw as the dialogs; `run-sql` types at the terminal and returns no rows |
 | `styles.css` | Yellow is DuckDB, periwinkle is iroh. Nothing else is coloured |
 | `public/llms.txt` | The docs an agent is sent to read, shipped unhashed at the site root. The onboarding prompt names it, so it is part of the product rather than a courtesy |
 | `public/coi-serviceworker.js` | See below. In `public/` so it ships unhashed at the root — it registers itself by its own URL, so a move into `assets/` would scope it there |
 | `vite.config.js` | The build. Vite owns `index.html`, `styles.css` and `app.js`; two plugins own the verbatim copies and the fonts |
 | `verify.mjs` | Drives the built page against a real server, headless. `QH_URL` points it at a deployment instead of `dist/`; `QH_TICKET2` adds a second server |
+
+## Tools for an agent in the browser
+
+The page registers three [WebMCP](https://webmachinelearning.github.io/webmcp/)
+tools on `document.modelContext`, so an agent driving the browser can do what a
+visitor does: `attach-remote` takes a `qh1_…` ticket, `list-connections` says
+what is attached and what tables each one holds, and `run-sql` runs a statement.
+
+They go through `QuackholeSession` and then the view's own redraw, so a remote
+an agent attached leaves the rail, the routes and the terminal exactly where a
+click would have left them. That is the same trade the rest of `app.js` makes,
+and it is why `webmcp.js` is here rather than in `web/`: the transport is
+copied verbatim into anything that vendors it, and a library that reached for
+its host page's `document` and hung tools on it would be deciding something
+that is not the transport's to decide. An agent surface is a view.
+
+**`run-sql` returns no rows.** It types the statement at the terminal and the
+result is drawn there, for whoever is sitting in front of it; what comes back
+to the agent is that the statement ran and how long it took. An agent querying
+somebody's machine over a connection of its own, invisibly, beside a terminal
+showing nothing, is the version of this page nobody should ship — and the
+visible one costs the agent only a thing it can ask a person for.
+
+Typing rather than querying is most of what `runInShell` is, and the prompt is
+a worse target than it looks:
+
+- **It ends in a semicolon, added if it is missing.** The shell reads a
+  statement as finished only when it ends in one. Without it the prompt drops
+  to `   ...>` and waits, and the *next* thing typed there is appended and the
+  pair run as one statement — which is how `SELECT 41 + 1 AS answer` and a
+  greeting retry became a single query returning three rows of 42. For the same
+  reason `--` comments are refused: everything after one is on the same line
+  now, including the terminator.
+- **One line of printable ASCII.** Every character goes in as its own `keydown`
+  and Enter submits, so newlines collapse to spaces. xterm reads printable
+  characters off `key` and is only dependable about ASCII, so
+  `WHERE city = 'Zürich'` is turned away rather than typed as `Zurich` and run
+  as a query nobody wrote.
+- **Nothing is typed into a line somebody else started.** Spliced onto a
+  half-written `DELETE FROM events WHERE `, an agent's statement is a statement
+  nobody wrote, and the shell runs it without hesitating. The terminal cannot
+  be read to check — it is a canvas wherever WebGL is available — and none of
+  Ctrl+C, Ctrl+U, Escape or End clears the line, so there is nothing to reach
+  for. `promptLen` counts keystrokes instead, in the capture phase on the
+  container, and `run-sql` refuses while it is above zero. It errs towards
+  busy: a needless refusal costs an agent a retry, and the other mistake runs
+  SQL nobody wrote.
+- **One statement at a time.** The terminal is a serial device, and the shell
+  is not reading input while a query is in flight — a second statement typed
+  over the first lands nowhere and waits out its timeout having never run. So
+  callers queue for the prompt rather than racing for it.
+- **Typed once, never retried.** A statement may have carried an INSERT to
+  another machine, so delivery here is at-most-once for the same reason it is
+  on the wire. One that does not settle says so rather than going again.
+- **The outcome comes back through `observed`.** The proxy already wraps
+  `runQuery` for the wire pulse and the rail redraw; it now also settles
+  whoever typed the statement, keyed by the exact text the shell hands DuckDB —
+  the same fact `greet` leans on to know its greeting ran. It settles with the
+  error DuckDB threw, not the one bound for the terminal: `withRemedy` folds a
+  remedy and a URL into the message with carriage returns, and the caller
+  attaches the remedy itself in a field of its own.
+
+Two more things about the API are worth knowing before reading `webmcp.js`:
+
+- **A rejected `execute` reaches the agent with its reason dropped.** The spec
+  hands the user agent null and false, so a thrown error becomes "that call
+  failed" and nothing else — losing the mistyped ticket, the missing table, the
+  token scoped to the wrong peer. So the tools report failures as ordinary
+  results with `ok: false`, carrying the same remedy the page puts under an
+  error on screen. The result is JSON-serialized *after* `execute` resolves, so
+  anything that will not stringify fails the same reasonless way — worth
+  remembering if a tool here ever starts returning rows again, because
+  `JSON.stringify` throws on a BigInt and DuckDB answers `count(*)` with one.
+- **`registerTool` needs an origin-keyed agent cluster** and rejects with
+  `SecurityError` without one. This page gets that for free: cross-origin
+  isolation forces origin keying, and the transport needs to be cross-origin
+  isolated anyway. The COOP/COEP pair that buys it a `SharedArrayBuffer` buys
+  the tools their agent cluster.
+
+No shipping browser exposes the API without a flag. Chrome and Edge have it
+under an origin trial, and preview builds put it behind
+`chrome://flags/#enable-webmcp-testing`; the
+[Model Context Tool Inspector](https://chromewebstore.google.com/detail/model-context-tool-inspec/gbpdfapgefenggkahomfgkhfehlcenpd)
+extension is the way to call a tool by hand. Registering nothing is the
+ordinary outcome, and the page has to be exactly as good then — which is why
+`registerAgentTools` resolves false rather than throwing, and why nothing else
+on the page reads its result.
 
 ## Cross-origin isolation, on a host that cannot send headers
 
@@ -242,6 +343,14 @@ different Quack port locally: `quackhole_serve` binds `127.0.0.1:9494` by
 default and reuses whatever is already there rather than starting its own, so
 the second one needs `npx ../npm --port 9495`. It refuses to start otherwise,
 because the token it would print is not the token that server accepts.
+
+It drives the WebMCP tools too, against a stub it installs in place of the
+browser's own implementation — Playwright ships a Chromium with neither the flag
+nor an origin trial token, so there is nothing else to register against. The
+stub is not a polyfill and nothing ships it; what it models is the part the
+tools have to survive, which is that a result is JSON-serialized after `execute`
+resolves and a rejection arrives with its reason gone. What it asserts about
+`run-sql` is the visitor's screen, because that is where the rows are.
 
 It needs a live n0 relay and a native server, so it is not a CI test — it sits
 alongside `test/docker` and `test/browser` as something a human runs.

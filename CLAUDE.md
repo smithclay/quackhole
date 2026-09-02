@@ -200,6 +200,53 @@ the npm README's own quickstart block against a live server.
   at the prompt resets the database and drops every attached catalog *and* the
   quack extension. `QuackholeSession` must keep querying through a connection on
   the real `db`, not the proxy, or `refreshSchema` triggers itself.
+- **A WebMCP tool that throws reaches the agent with nothing to say.** The spec
+  hands the user agent null and false for a rejected `execute`, so the message
+  is dropped and the agent is told only that the call failed -- which is why
+  every tool in `site/webmcp.js` returns `{ok: false, error, remedy}` instead.
+  The same reasonless failure is what a result that will not serialize
+  produces, because the JSON step runs *after* `execute` resolves: nothing
+  returns rows today, but `JSON.stringify` throws on a BigInt and DuckDB
+  answers `count(*)` with one, so a tool that starts returning them breaks on
+  the first statement anybody runs and breaks silently.
+- **A statement typed at the shell's prompt must end in a semicolon.** Without
+  one the shell drops to its `   ...>` continuation prompt and waits, and the
+  next thing typed there -- by the visitor, or by `greet` still retrying -- is
+  appended and the pair run as a single statement. `SELECT 41 + 1 AS answer`
+  and `FROM welcome;` became one query returning three rows of 42 that way.
+  `runInShell` in `site/app.js` adds the terminator, and refuses `--` comments
+  for the same reason: it collapses the statement to one line, so a comment
+  would swallow the terminator too.
+- **Nothing may be typed into a line somebody else started.** Spliced onto a
+  half-written `DELETE FROM events WHERE `, a statement is one nobody wrote and
+  the shell runs it. There is nothing to reach for: the terminal cannot be read
+  (it is a canvas wherever WebGL is available) and none of Ctrl+C, Ctrl+U,
+  Escape or End clears the line -- all four were tried, and 256 backspaces only
+  delete leftward from a cursor whose position is also unknowable. So
+  `promptLen` counts keystrokes in the capture phase on the container and
+  `typeIntoShell` refuses while it is non-zero, erring towards busy. Statements
+  are also serialized: the shell does not read input while a query is in
+  flight, so a second one typed over the first lands nowhere and times out
+  having never run.
+- **`run-sql` types at the prompt rather than querying beside it**, so the rows
+  land where the visitor can see them and the agent gets back only that the
+  statement ran. Nothing is retried -- delivery is at-most-once here for the
+  same reason it is on the wire -- and the outcome is settled by the `observed`
+  proxy, keyed by the exact text the shell hands `runQuery`, which is the same
+  fact `greet` uses to know its greeting ran. It settles with the error DuckDB
+  threw, not `withRemedy`'s: that one carries carriage returns and a URL because
+  a terminal is what they are for. The tool resolves on DuckDB's answer, which
+  is routinely *before* xterm has painted; only a test needs to wait for paint.
+- **`registerTool` needs an origin-keyed agent cluster**, and rejects with
+  `SecurityError` without one. `site/` never has to ask: cross-origin isolation
+  forces origin keying (HTML's "obtain a similar-origin window agent" sets the
+  cluster key to the origin when the group's isolation mode is not `"none"`),
+  and the transport needs COOP/COEP anyway for its `SharedArrayBuffer`. An
+  ordinary site would need `Origin-Agent-Cluster: ?1`. The tools live in
+  `site/webmcp.js` rather than `web/` for the reason the connection model lives
+  the other way round: `web/` is copied verbatim into anything that vendors it,
+  and a transport that hung tools on its host page's `document` would be
+  deciding something that is not the transport's to decide.
 - **The terminal needs `--term`, not `--data`.** `site/vite.config.js` fetches
   IBM Plex Mono in the latin subsets only, and box-drawing characters live at
   U+2500 in none of them -- so every result table's borders come from whatever
