@@ -268,8 +268,11 @@ dialog::backdrop { background: rgba(6, 8, 14, 0.72); backdrop-filter: blur(3px);
    re-centres on every switch -- so the tab strip slides out from under the
    cursor that just clicked it and the three cannot be read in a row. Growing
    downwards instead leaves the tabs where they were. auto on the bottom so a
-   panel taller than the window still scrolls rather than being cut off. */
-#onboard { margin-block: 3rem auto; }
+   panel taller than the window still scrolls rather than being cut off.
+
+   #serve only. #add is one fixed view with nothing to resize it, and a 300px
+   dialog pinned near the top of a tall window reads as having come loose. */
+#serve { margin-block: 3rem auto; }
 
 .dialog-x { display: flex; justify-content: flex-end; margin: -0.5rem -0.5rem 0 0; }
 .dialog-x button {

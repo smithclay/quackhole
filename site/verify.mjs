@@ -324,7 +324,7 @@ try {
   const dupe = (await page.textContent('#paste-error')).trim();
   console.log(`\n  duplicate  ${dupe}`);
   if (!/already attached/i.test(dupe)) failed = `a duplicate ticket said "${dupe}"`;
-  await page.click('#onboard .dialog-x button');
+  await page.click('#add .dialog-x button');
 
   // Detaching gives the name and the route back. Without it a peer that has
   // gone away stays in the rail forever and its name stays taken.

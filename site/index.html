@@ -178,44 +178,52 @@
   </div>
 </dialog>
 
-<!-- --- onboarding / add a remote ----------------------------------------- -->
+<!-- --- serve the other end ----------------------------------------------- -->
 <!--
-  This is the whole "getting started" story, and it is a dialog rather than a
-  page because it is a task you finish once. Arriving with #qh1_... goes to
-  #connect above instead, so a link from the server never shows this form.
+  Adding a remote is two jobs done on two machines, and this is the first of
+  them. It used to carry the second as well -- the ticket field, under a rule at
+  the bottom -- which meant a visitor already holding a ticket scrolled past a
+  screen of setup to reach a text input, and a visitor holding neither could not
+  tell whether the two halves were alternatives. They are not. They are a
+  sequence, and the ticket is what joins them.
 
-  Two ways to serve the other end, and they are alternatives -- you need one.
-  Stacked down the dialog they asked everyone to scroll past the one they had
-  already decided against, so they are tabs. The order means something: it runs
-  from the machine you are not typing into to the DuckDB you have open. The
-  agent prompt leads because the machine worth querying is usually one nobody is
-  typing into -- a sandbox, a VM, a box behind SSH -- and an agent is already
-  sitting in it.
+  So: a dialog per job, which is the trade #connect already makes and for the
+  same reason. Each names the way to the other rather than hiding it.
 
-  Not numbered. The order is a gradient rather than a sequence, and 01/02 would
-  promise steps that have to be done in turn.
+  Two ways to serve, and they are alternatives -- you need one. The order means
+  something: it runs from the machine you are not typing into to the DuckDB you
+  have open. The agent prompt leads because the machine worth querying is
+  usually one nobody is typing into -- a sandbox, a VM, a box behind SSH -- and
+  an agent is already sitting in it.
 
-  `npx quackhole` used to be a third. It serves a sample table in a temp
+  Not numbered. That order is a gradient rather than a sequence, and 01/02 would
+  promise steps to be done in turn. The steps are these two dialogs.
+
+  `npx quackhole` used to be a third tab. It serves a sample table in a temp
   directory rather than anything of yours, so what it demonstrates is the
-  connection -- which is a thing to read about, not a way to add the remote this
-  dialog is for. It is still in the README and the npm package.
+  connection -- a thing to read about, not a way to add a remote. It is still in
+  the README and the npm package.
 -->
-<dialog id="onboard">
+<dialog id="serve">
   <form method="dialog" class="dialog-x"><button value="cancel" aria-label="Close">×</button></form>
 
-  <h2 id="onboard-title">Add a remote DuckDB</h2>
-  <p class="dialog-lede" id="onboard-lede">
-    Something has to serve the other end. Which way depends on where the data is.
+  <h2>Serve the other end</h2>
+  <p class="dialog-lede">
+    A DuckDB has to be serving before this workbench can attach it. Whichever way you
+    start it, it prints a ticket — and that ticket is what you bring back here.
   </p>
 
   <!--
     Labelled by what you do rather than by what the thing is, because the
     question being answered here is "which of these is me?" and the answer is a
-    situation, not a technology. Each panel's first line names the situation the
-    tab is short for.
+    situation. Each panel's first line names the situation its tab is short for.
   -->
   <div class="tabs" role="tablist" aria-label="Ways to serve the other end">
-    <button type="button" role="tab" id="tab-agent" aria-controls="panel-agent" aria-selected="true">Ask an agent</button>
+    <!-- Focused on open rather than leaving the close button first in the tab
+         order, which is what a dialog focuses by itself. This one opens on
+         arrival, and landing on "close" is an odd thing to hand somebody who
+         has just arrived. -->
+    <button type="button" role="tab" id="tab-agent" aria-controls="panel-agent" aria-selected="true" autofocus>Ask an agent</button>
     <button type="button" role="tab" id="tab-sql" aria-controls="panel-sql" aria-selected="false" tabindex="-1">Paste SQL</button>
   </div>
 
@@ -263,18 +271,43 @@
 
   <hr>
 
-  <p class="dialog-lede">
-    Opening the link any of these prints connects this workbench automatically. If you are
-    on a different machine, paste the ticket instead:
+  <!-- The forward step, and the only filled button in here: everything above is
+       something to copy, and this is the thing you do once it has run. -->
+  <div class="dialog-actions">
+    <button id="to-add" type="button">I have a ticket →</button>
+  </div>
+</dialog>
+
+<!-- --- add a remote ------------------------------------------------------- -->
+<!--
+  The second job, and the one `+ add remote` opens: by the time somebody presses
+  that they are holding a ticket more often than not, and a returning visitor
+  should not have to read the setup again to reach a field. Whoever is not
+  holding one is one press from the dialog above.
+
+  Not the same as #connect, which handles a ticket that arrived in the URL. That
+  one has a ticket already and has to name whose machine it is before anything
+  dials; this one is an empty field.
+-->
+<dialog id="add">
+  <form method="dialog" class="dialog-x"><button value="cancel" aria-label="Close">×</button></form>
+
+  <h2 id="add-title">Add a remote DuckDB</h2>
+  <p class="dialog-lede" id="add-lede">
+    Paste the ticket the other machine printed. Opening the link it printed does this
+    for you.
   </p>
+
   <form class="paste" id="paste-form">
-    <input id="ticket" name="ticket" type="text" spellcheck="false" autocomplete="off" placeholder="qh1_…">
+    <!-- Focused on open, because this dialog is one field and pasting into it is
+         the whole reason it is up. -->
+    <input id="ticket" name="ticket" type="text" spellcheck="false" autocomplete="off" placeholder="qh1_…" autofocus>
     <button id="paste-go" type="submit">connect</button>
   </form>
   <!-- Pasting a ticket is the same act as opening a link, so it cannot be the
        one path that says nothing about what the act does. Short rather than a
-       second copy of the connect dialog's four claims: whoever is here already
-       chose to be, and the two would drift. -->
+       second copy of #connect's four claims: whoever is here already chose to
+       be, and the two would drift. -->
   <p class="fineprint">
     A ticket grants this tab query access to that machine, and grants it nothing
     on yours — DuckDB runs in this tab. It carries an access token that does not
@@ -282,6 +315,12 @@
   </p>
   <p class="paste-error" id="paste-error" hidden></p>
   <p class="paste-note" id="paste-note" hidden></p>
+
+  <hr>
+
+  <div class="dialog-actions">
+    <button class="ghost" id="to-serve" type="button">No ticket yet? Set up the other end →</button>
+  </div>
 </dialog>
 
 <!-- --- what is actually happening ---------------------------------------- -->

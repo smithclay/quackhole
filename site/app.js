@@ -599,7 +599,12 @@ function afterQuery(text, ms) {
 
 // --- dialogs -----------------------------------------------------------------
 
-const onboard = $('#onboard');
+// Adding a remote is two jobs done on two machines: start something serving,
+// then bring its ticket here. One dialog each, which is the trade #connect
+// already makes -- a visitor holding a ticket has done the first and should not
+// have to scroll past it to reach a field.
+const serve = $('#serve');
+const add = $('#add');
 const pasteError = $('#paste-error');
 const pasteNote = $('#paste-note');
 
@@ -607,20 +612,37 @@ function showError(err, fallback = null) {
   renderError(pasteError, err, fallback);
 }
 
-$('#add-remote').addEventListener('click', () => {
+/// Cross from one half to the other.
+///
+/// Closed before the next is opened, because two open modals stack their
+/// backdrops and only the newer one takes focus -- so the older stays on screen,
+/// dimmed, behind a dialog it did not open.
+const cross = (from, to) => {
+  from.close();
+  to.showModal();
+};
+$('#to-add').addEventListener('click', () => cross(serve, add));
+$('#to-serve').addEventListener('click', () => cross(add, serve));
+
+/// Open the ticket field, cleared.
+///
+/// What `+ add remote` does, because by the time somebody presses it they are
+/// usually holding a ticket already. Whoever is not is one press from the setup.
+function openAdd() {
   pasteError.hidden = true;
   pasteNote.hidden = true;
   $('#ticket').value = '';
-  // The second time through, the dialog is not onboarding any more -- the
-  // visitor has done this once and needs the command and the field, not the
-  // explanation of what they are about to do.
+  // The second time through, this is not onboarding any more -- the visitor has
+  // done this once and needs the field, not the explanation of what it is for.
   if (session?.connections.some((c) => c.kind === 'remote')) {
-    $('#onboard-title').textContent = 'Add another remote';
-    $('#onboard-lede').textContent =
-      'Same two ways, on the next machine. Each remote is attached under its own name and reached over its own relay.';
+    $('#add-title').textContent = 'Add another remote';
+    $('#add-lede').textContent =
+      'Paste the next machine\'s ticket. Each remote is attached under its own name and reached over its own relay.';
   }
-  onboard.showModal();
-});
+  add.showModal();
+}
+
+$('#add-remote').addEventListener('click', openAdd);
 $('#open-notes').addEventListener('click', () => $('#notes').showModal());
 
 $('#paste-form').addEventListener('submit', async (e) => {
@@ -636,7 +658,7 @@ $('#paste-form').addEventListener('submit', async (e) => {
       `Attached in ${Math.round(conn.attachMs)}ms as "${conn.name}".` +
       ' That is three round trips through the relay.';
     pasteNote.hidden = false;
-    onboard.close();
+    add.close();
     // The rail is the only thing that changes here now. The notebook used to
     // open cells over the new remote and run them; the shell owns its terminal
     // and takes nothing from this side, so the first query is the visitor's.
@@ -672,7 +694,7 @@ async function offerConnect(ticket) {
     // with the ticket still in the field, since it is what needs correcting.
     $('#ticket').value = ticket;
     showError(err, 'A ticket is one qh1_… word with no spaces, so check that the whole string was copied.');
-    onboard.showModal();
+    add.showModal();
     return;
   }
 
@@ -754,5 +776,8 @@ if (fragment.startsWith('qh1_')) {
   // opening the setup story the visitor has already been through.
   await offerConnect(fragment);
 } else if (session) {
-  onboard.showModal();
+  // Nothing to attach and nothing serving yet, so the first half is the one to
+  // open. It names the way to the second for whoever was handed a ticket
+  // somewhere other than a link.
+  serve.showModal();
 }
