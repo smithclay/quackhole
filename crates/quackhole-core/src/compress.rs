@@ -273,6 +273,32 @@ mod tests {
     }
 
     #[test]
+    fn the_request_this_client_builds_is_one_this_server_compresses_at() {
+        // The two halves of the negotiation, joined. Each is covered alone --
+        // http.rs asserts the header is written, `a_client_that_asks_is_heard`
+        // asserts it is read -- but nothing else says the bytes one side
+        // produces are the bytes the other recognises. Both DuckDB and the
+        // browser reach the wire through `build_request`, and a bridge that
+        // quietly stopped compressing looks exactly like a bridge that worked,
+        // so this is the assertion that would notice.
+        //
+        // With a body, because that is the request whose head has to be found
+        // rather than merely ended.
+        let req = crate::http::Request {
+            method: "POST",
+            path: "/quack",
+            host: "peer.iroh",
+            port: "9494",
+            headers: Vec::new(),
+            body: Some(b"SELECT 1"),
+            content_type: "application/json",
+        };
+        let wire = crate::http::build_request(&req).expect("build");
+        let end = head_end(&wire).expect("the head ends");
+        assert!(wants_compression(&wire[..end]));
+    }
+
+    #[test]
     fn a_response_round_trips() {
         let payload: Vec<u8> = (0..200_000u32).map(|n| (n % 251) as u8).collect();
         let mut enc = Encoder::new();
