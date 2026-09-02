@@ -37,13 +37,13 @@
   <div class="boot-card">
     <div class="boot-spin" aria-hidden="true"></div>
     <h2 id="boot-title">Digging the quackhole</h2>
-    <!-- The wait is almost entirely DuckDB's, and saying so is both funnier and
-         more honest than a progress bar that cannot know. duckdb-eh.wasm is 35 MB
+    <!-- The wait is almost entirely DuckDB's, and naming what is downloading is
+         more honest than a progress bar that cannot know: duckdb-eh.wasm is 35 MB
          against 3 MB for the transport, so the name on the tin is a rounding
-         error on the download. The failed state replaces both lines. -->
+         error on the download. The failed state replaces this line and the
+         heading above it. -->
     <p id="boot-detail">
-      Which is mostly loading DuckDB: 35 MB of database against 3 MB of hole.
-      Nothing is installed, and no data leaves your browser.
+      Loading duckdb-wasm...
     </p>
   </div>
 </div>
@@ -214,7 +214,7 @@
   <h2>quackhole: connect to DuckDB from anywhere</h2>
   <p class="dialog-lede">
     A database on a laptop, a VM or a sandbox has no address the internet can reach.
-    Quackhole gives it one, and this browser tab queries it directly: nothing
+    quackhole gives it one, and this browser tab queries it directly: nothing
     installed here, no ports opened there.
   </p>
 
@@ -231,7 +231,7 @@
   </div>
 
   <div class="dialog-actions">
-    <button class="ghost" id="splash-serve" type="button">Show me how to start one</button>
+    <button class="ghost" id="splash-serve" type="button">Show me instructions</button>
     <!-- Focused on open rather than the close button, which is what a dialog
          reaches for by itself. Landing on "close" is an odd thing to hand
          somebody who has just arrived. -->
