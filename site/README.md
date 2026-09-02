@@ -181,7 +181,7 @@ put text on its prompt.
 | `index.html` | The workbench shell, plus the onboarding and notes dialogs |
 | `app.js` | A view over `web/session.js`: the DuckDB-Wasm boot, the rail, the embedded shell, the dialogs. No connection model of its own |
 | `wire.js` | The topology diagram, one per remote. Opens broken; pulses per query at the measured latency |
-| `webmcp.js` | The three WebMCP tools, registered on `document.modelContext` when a browser has one. Goes through the same session and the same redraw the dialogs do |
+| `webmcp.js` | The three WebMCP tools, registered on `document.modelContext` when a browser has one. Same session and same redraw as the dialogs; `run-sql` types at the terminal and returns no rows |
 | `styles.css` | Yellow is DuckDB, periwinkle is iroh. Nothing else is coloured |
 | `public/llms.txt` | The docs an agent is sent to read, shipped unhashed at the site root. The onboarding prompt names it, so it is part of the product rather than a courtesy |
 | `public/coi-serviceworker.js` | See below. In `public/` so it ships unhashed at the root — it registers itself by its own URL, so a move into `assets/` would scope it there |
@@ -193,8 +193,7 @@ put text on its prompt.
 The page registers three [WebMCP](https://webmachinelearning.github.io/webmcp/)
 tools on `document.modelContext`, so an agent driving the browser can do what a
 visitor does: `attach-remote` takes a `qh1_…` ticket, `list-connections` says
-what is attached and what tables each one holds, and `run-sql` runs a statement
-and returns rows.
+what is attached and what tables each one holds, and `run-sql` runs a statement.
 
 They go through `QuackholeSession` and then the view's own redraw, so a remote
 an agent attached leaves the rail, the routes and the terminal exactly where a
@@ -204,22 +203,44 @@ copied verbatim into anything that vendors it, and a library that reached for
 its host page's `document` and hung tools on it would be deciding something
 that is not the transport's to decide. An agent surface is a view.
 
-Three things about the API are worth knowing before reading `webmcp.js`:
+**`run-sql` returns no rows.** It types the statement at the terminal and the
+result is drawn there, for whoever is sitting in front of it; what comes back
+to the agent is that the statement ran and how long it took. An agent querying
+somebody's machine over a connection of its own, invisibly, beside a terminal
+showing nothing, is the version of this page nobody should ship — and the
+visible one costs the agent only a thing it can ask a person for.
+
+Three consequences, all in `runInShell`:
+
+- **One line of printable ASCII, or it is refused.** Every character goes in as
+  its own `keydown` and Enter submits, so a newline inside a statement would
+  send the first half of it — those are collapsed to spaces. xterm reads
+  printable characters off `key` and is only dependable about ASCII, so
+  `WHERE city = 'Zürich'` is turned away rather than typed as `Zurich` and run
+  as a query nobody wrote.
+- **Typed once, never retried.** `greet` retries because a greeting that
+  arrives twice is still a greeting. A statement may have carried an INSERT to
+  another machine, so delivery here is at-most-once for the same reason it is
+  on the wire — and a statement that does not settle says so rather than going
+  again.
+- **The outcome comes back through `observed`.** The proxy already wraps
+  `runQuery` for the wire pulse and the rail redraw; it now also settles
+  whoever typed the statement, keyed by the exact text the shell hands DuckDB.
+  That is the same fact `greet` leans on to know its greeting ran. If something
+  else was at the prompt, nothing matches and the wait times out — which is the
+  honest answer, because the statement that ran was not the one asked for.
+
+Two more things about the API are worth knowing before reading `webmcp.js`:
 
 - **A rejected `execute` reaches the agent with its reason dropped.** The spec
   hands the user agent null and false, so a thrown error becomes "that call
   failed" and nothing else — losing the mistyped ticket, the missing table, the
   token scoped to the wrong peer. So the tools report failures as ordinary
   results with `ok: false`, carrying the same remedy the page puts under an
-  error on screen.
-- **The result is JSON-serialized after `execute` resolves**, and
-  `JSON.stringify` throws on a BigInt — which is what DuckDB hands back for
-  BIGINT, HUGEINT and every `count(*)`. The failure lands in the step *after*
-  the tool, so it arrives as that same reasonless failure. `jsonSafe` is what
-  stops it, and it has two Arrow-shaped corners in it: a DECIMAL is a
-  typed-array view whose `toJSON` returns an *already quoted* string, and a
-  DATE or TIMESTAMP is a bare epoch offset that the column's own type is the
-  only thing explaining.
+  error on screen. The result is JSON-serialized *after* `execute` resolves, so
+  anything that will not stringify fails the same reasonless way — worth
+  remembering if a tool here ever starts returning rows again, because
+  `JSON.stringify` throws on a BigInt and DuckDB answers `count(*)` with one.
 - **`registerTool` needs an origin-keyed agent cluster** and rejects with
   `SecurityError` without one. This page gets that for free: cross-origin
   isolation forces origin keying, and the transport needs to be cross-origin
@@ -296,7 +317,8 @@ browser's own implementation — Playwright ships a Chromium with neither the fl
 nor an origin trial token, so there is nothing else to register against. The
 stub is not a polyfill and nothing ships it; what it models is the part the
 tools have to survive, which is that a result is JSON-serialized after `execute`
-resolves and a rejection arrives with its reason gone.
+resolves and a rejection arrives with its reason gone. What it asserts about
+`run-sql` is the visitor's screen, because that is where the rows are.
 
 It needs a live n0 relay and a native server, so it is not a CI test — it sits
 alongside `test/docker` and `test/browser` as something a human runs.

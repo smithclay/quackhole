@@ -11,6 +11,14 @@
 // visitor's click would have left them in. There is deliberately no second way
 // to attach in here -- that is the same trade the rest of this page makes.
 //
+// `run-sql` takes that further and returns no rows at all: it types the
+// statement at the terminal, where the result is drawn for whoever is sitting
+// in front of it. An agent querying somebody's machine over a connection of its
+// own, invisibly, beside a terminal showing nothing, is the version of this
+// page nobody should ship -- and the visible one costs an agent only the thing
+// it can ask for. So what comes back is that the statement ran, not what it
+// said.
+//
 // Registered from `site/` rather than from `web/`. `web/` is the connection
 // model, copied verbatim into anything that vendors it, and a transport library
 // that reached for its host page's `document` and hung tools on it would be
@@ -29,57 +37,6 @@
 /// builds still answer to both. Reading `document` first means a build that has
 /// both is used through the shape that is going to survive.
 const modelContext = () => document.modelContext ?? navigator.modelContext ?? null;
-
-/// How many rows a statement returns to an agent.
-///
-/// A cap rather than a page: an agent that wants a number should ask DuckDB for
-/// the number, and one that wants the whole table has misunderstood what it is
-/// holding. The full count comes back beside the rows either way, so a
-/// truncated answer is never mistaken for a complete one.
-const MAX_ROWS = 100;
-
-/// A value the user agent can serialize.
-///
-/// Whatever `execute` resolves with is JSON-stringified before the agent sees
-/// it, and `JSON.stringify` throws on a BigInt -- which is what DuckDB hands
-/// back for BIGINT, HUGEINT and every `count(*)`. So the first statement anyone
-/// runs is the one that breaks, and it breaks invisibly: the serialization step
-/// happens after `execute` has resolved, and a failure there reaches the agent
-/// as a tool call that failed with no reason attached.
-///
-/// Integers outside the double-safe range become decimal strings rather than
-/// silently rounding, because a HUGEINT that came back off by four is worse
-/// than one that came back quoted.
-///
-/// `toJSON` covers Arrow's own row and vector types, which is what a STRUCT or
-/// a LIST column arrives as. It has to be reached *after* the typed-array case
-/// rather than before it, because Arrow's wide-integer types are both: a
-/// DECIMAL arrives as a view over its words, and its `toJSON` returns a string
-/// that is already quoted -- Arrow's own convention, for splicing into JSON
-/// text. Calling it would quote `45` a second time and hand the agent `"\"45\""`.
-/// `toString` on the same object is the plain decimal. A view with no `toJSON`
-/// is a BLOB, which is bytes.
-function jsonSafe(v) {
-  if (typeof v === 'bigint') return Number.isSafeInteger(Number(v)) ? Number(v) : v.toString();
-  if (v === null || typeof v !== 'object') return v;
-  if (v instanceof Date) return v.toISOString();
-  if (ArrayBuffer.isView(v)) return typeof v.toJSON === 'function' ? String(v) : [...v].map(jsonSafe);
-  if (typeof v.toJSON === 'function') return jsonSafe(v.toJSON());
-  if (Array.isArray(v)) return v.map(jsonSafe);
-  return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, jsonSafe(x)]));
-}
-
-/// The columns Arrow answers with a bare epoch offset, by name.
-///
-/// A DATE and a TIMESTAMP both come back as milliseconds since the epoch --
-/// `1788220800000` where the query said `current_date`. The number is right and
-/// nothing else about it is: an agent reading a result has no reason to guess
-/// at a unit, and the column type sitting beside it is not an instruction it
-/// should have to follow. The schema says which columns they are, so this reads
-/// it rather than sniffing values -- a plain BIGINT is the same JavaScript
-/// number and must stay one.
-const epochColumns = (schema) =>
-  schema.fields.filter((f) => /^(Date|Timestamp)/.test(String(f.type))).map((f) => f.name);
 
 /// Report a failure to the agent as a value, not as a rejection.
 ///
@@ -116,16 +73,17 @@ const failure = (err, remedyFor) => {
 /// cross-origin isolated, which this page has to be anyway because the transport
 /// parks a thread in `Atomics.wait` on a `SharedArrayBuffer`. The COOP/COEP pair
 /// that buys the transport its memory buys the tools their agent cluster.
-export async function registerAgentTools({ session, attach, afterQuery, remedyFor }) {
+export async function registerAgentTools({ session, attach, run, remedyFor }) {
   const ctx = modelContext();
   if (!ctx) return false;
 
-  // Nothing cancels a statement once it is on the wire. `execute` is handed an
-  // AbortSignal, and a query already dialled through the relay has no way back
-  // -- DuckDB-Wasm's connection is behind the XHR shim, and the shim is what
-  // `Atomics.wait` is parked on. The spec drops the result of a cancelled
-  // execution, so an agent that gives up is not left holding it; the statement
-  // just finishes. Worth knowing before reading the signal as a timeout.
+  // Nothing cancels a statement once it is at the prompt. `execute` is handed an
+  // AbortSignal, and there is nothing to hand it to: the statement was typed
+  // into a terminal this page does not own, and the query under it is behind the
+  // XHR shim with a thread parked in `Atomics.wait`. The spec drops the result
+  // of a cancelled execution, so an agent that gives up is not left holding one;
+  // the statement finishes and its rows land on screen either way. Worth knowing
+  // before reading the signal as a timeout.
   const tools = [
     {
       name: 'attach-remote',
@@ -196,60 +154,35 @@ export async function registerAgentTools({ session, attach, afterQuery, remedyFo
 
     {
       name: 'run-sql',
-      title: 'Run SQL',
+      title: 'Run SQL in the workbench terminal',
       description:
-        'Run one SQL statement against this workbench and return the rows. Reach a remote table by' +
-        ' qualifying it with the catalog name list-connections reports, as in' +
-        ' "SELECT * FROM remote.events". Aggregate in SQL rather than fetching rows: only the first' +
-        ` ${MAX_ROWS} are returned, and DuckDB is faster at counting than you are. A statement that` +
-        ' writes runs on the machine that owns the catalog, and delivery is at most once -- if one' +
-        ' fails with a transport error it may still have landed, so check before running it again.',
+        "Type one SQL statement at the workbench's terminal and run it, exactly as the person sitting" +
+        ' in front of it would. The result is drawn in their terminal rather than returned here: what' +
+        ' comes back is whether the statement ran and how long it took, so ask the person what it said.' +
+        ' Reach a remote table by qualifying it with the catalog name list-connections reports, as in' +
+        ' "SELECT * FROM remote.events". A statement that writes runs on the machine that owns the' +
+        ' catalog and is delivered at most once -- if one fails, check whether it landed before' +
+        ' sending it again.',
       inputSchema: {
         type: 'object',
         properties: {
-          sql: { type: 'string', description: 'One SQL statement.' },
+          sql: {
+            type: 'string',
+            description: 'One SQL statement, in printable ASCII. Newlines are collapsed to spaces.',
+          },
         },
         required: ['sql'],
         additionalProperties: false,
       },
       // Not read-only: this runs whatever it is given, including INSERT and
-      // DDL, and on a remote that means on somebody else's machine. Rows come
-      // back off that machine too.
+      // DDL, and on a remote that means on somebody else's machine. No rows
+      // come back, but a failure's message does, and DuckDB quotes the offending
+      // value into plenty of them -- so what returns from a remote is still
+      // content this page did not write.
       annotations: { untrustedContentHint: true },
       execute: async ({ sql }) => {
-        const s = session();
-        if (!s) return { ok: false, error: 'The workbench has no DuckDB session.' };
-        const text = String(sql ?? '');
         try {
-          const t0 = performance.now();
-          const table = await s.query(text);
-          const ms = performance.now() - t0;
-
-          // The same hook the shell's own statements land on: it pulses the
-          // route to whichever remote the SQL names and redraws the rail after
-          // DDL. The session queries through a connection on the real database
-          // rather than the observed proxy, so nothing calls this for us.
-          afterQuery(text, ms);
-
-          // Taken a row at a time rather than with toArray(), which would
-          // materialise every row of a result this is about to throw away.
-          const epochs = epochColumns(table.schema);
-          const rows = [];
-          for (const row of table) {
-            if (rows.length >= MAX_ROWS) break;
-            const o = jsonSafe(row.toJSON());
-            for (const k of epochs) if (typeof o[k] === 'number') o[k] = new Date(o[k]).toISOString();
-            rows.push(o);
-          }
-
-          return {
-            ok: true,
-            columns: table.schema.fields.map((f) => ({ name: f.name, type: String(f.type) })),
-            rows,
-            rowCount: table.numRows,
-            truncated: table.numRows > rows.length,
-            elapsedMs: Math.round(ms),
-          };
+          return { ok: true, elapsedMs: Math.round(await run(sql)) };
         } catch (err) {
           return failure(err, remedyFor);
         }

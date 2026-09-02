@@ -204,15 +204,25 @@ the npm README's own quickstart block against a live server.
   hands the user agent null and false for a rejected `execute`, so the message
   is dropped and the agent is told only that the call failed -- which is why
   every tool in `site/webmcp.js` returns `{ok: false, error, remedy}` instead.
-  The same reasonless failure is what a result that will not serialize produces,
-  because the JSON step runs *after* `execute` resolves: `JSON.stringify` throws
-  on a BigInt, DuckDB answers `count(*)` with one, and so the first statement
-  anybody runs is the one that breaks. `jsonSafe` is what stops it, and it has
-  to check `ArrayBuffer.isView` before `toJSON`: Arrow's DECIMAL is both, and
-  its `toJSON` returns an *already quoted* string -- Arrow's convention for
-  splicing into JSON text -- so calling it hands the agent `"\"45\""`. DATE and
-  TIMESTAMP need the schema, not the value: they arrive as bare epoch
-  milliseconds that a plain BIGINT is indistinguishable from.
+  The same reasonless failure is what a result that will not serialize
+  produces, because the JSON step runs *after* `execute` resolves: nothing
+  returns rows today, but `JSON.stringify` throws on a BigInt and DuckDB
+  answers `count(*)` with one, so a tool that starts returning them breaks on
+  the first statement anybody runs and breaks silently.
+- **`run-sql` types at the shell's prompt rather than querying beside it**, so
+  the rows land where the visitor can see them and the agent gets back only
+  that the statement ran. Three things fall out of that, all in `runInShell` in
+  `site/app.js`. Newlines are collapsed, because every character goes in as a
+  `keydown` and Enter submits -- a statement with one in it would send its first
+  half. Non-ASCII is refused, because xterm reads printable characters off `key`
+  and is only dependable about ASCII, so `'Zürich'` would type as `'Zurich'` and
+  run as a query nobody wrote. And nothing is retried: the outcome is settled by
+  the `observed` proxy, keyed by the exact text the shell hands `runQuery` -- the
+  same fact `greet` uses to know its greeting ran -- so a statement that does
+  not settle is reported rather than typed again, because it may already have
+  carried an INSERT to another machine. The tool resolves on DuckDB's answer,
+  which is routinely *before* xterm has painted; only a test needs to wait for
+  the paint.
 - **`registerTool` needs an origin-keyed agent cluster**, and rejects with
   `SecurityError` without one. `site/` never has to ask: cross-origin isolation
   forces origin keying (HTML's "obtain a similar-origin window agent" sets the

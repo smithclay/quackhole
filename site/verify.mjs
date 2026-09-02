@@ -256,6 +256,23 @@ await page.addInitScript(() => {
   };
 });
 
+/// Wait for a statement an agent tool typed to be drawn and answered.
+///
+/// The tool resolves when DuckDB returns, which is routinely before xterm has
+/// painted anything: the keydowns go in as a synchronous loop and the terminal
+/// renders on its own frames. Waiting on a bare prompt alone would pass on the
+/// prompt that was already there.
+const drawn = (page, sql) =>
+  page.waitForFunction(
+    (s) => {
+      const text = document.querySelector('.xterm-rows')?.innerText ?? '';
+      const lines = text.split('\n').filter((l) => l.trim());
+      return text.includes(s) && lines.length > 0 && /^duckdb>\s*$/.test(lines[lines.length - 1]);
+    },
+    sql,
+    { timeout: 60_000 },
+  );
+
 /// Call one of the page's WebMCP tools, the way an agent would.
 ///
 /// Null means the call failed with nothing to say, which is the outcome the
@@ -402,16 +419,34 @@ try {
   if (!listed?.ok) failed = `list-connections answered ${JSON.stringify(listed)}`;
   else if (!remoteEntry?.tables.length) failed = 'list-connections found no tables on the remote';
 
-  // count(*) on purpose. DuckDB answers it with a BIGINT, which arrives in the
-  // browser as a BigInt, which `JSON.stringify` throws on -- so a tool that
-  // handed its rows straight back would fail this call and, in a real browser,
-  // fail it with nothing said. `n` coming back as a number is the assertion.
-  const counted = await tool(page, 'run-sql', { sql: 'SELECT count(*) AS n FROM remote.events' });
-  console.log(`  run-sql   ${JSON.stringify(counted?.rows?.[0])} in ${counted?.elapsedMs}ms`);
-  if (counted === null) failed = 'run-sql came back with nothing at all -- its result did not serialize';
-  else if (!counted.ok) failed = `run-sql answered ${JSON.stringify(counted)}`;
-  else if (typeof counted.rows?.[0]?.n !== 'number') {
-    failed = `run-sql returned n as ${typeof counted.rows?.[0]?.n}, expected a number`;
+  // run-sql types at the terminal rather than answering with rows, so what it
+  // did is a question about the visitor's screen. Cleared first for the reason
+  // `run` clears: the terminal scrolls, and earlier rows leave the DOM entirely.
+  await page.waitForFunction(SETTLED, null, { timeout: 90_000 });
+  await page.click('#shell');
+  await page.keyboard.type('.clear');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(IDLE, null, { timeout: 30_000 });
+
+  const agentSql = 'SELECT count(*) AS n FROM remote.events;';
+  const ran = await tool(page, 'run-sql', { sql: agentSql });
+  await drawn(page, agentSql);
+  const screen = await terminal(page);
+  console.log(`  run-sql   ran in ${ran?.elapsedMs}ms\n            ${tail(screen)}`);
+  if (ran === null) failed = 'run-sql came back with nothing at all';
+  else if (!ran.ok) failed = `run-sql answered ${JSON.stringify(ran)}`;
+  // The point of the whole tool: the rows are the visitor's, not the agent's.
+  else if (ran.rows !== undefined) failed = `run-sql handed back rows: ${JSON.stringify(ran)}`;
+  else if (!/\b\d+\b/.test(screen.replace(agentSql, ''))) failed = `no result was drawn:\n${screen}`;
+  else if (/^[A-Z][A-Za-z ]*Error[:!]/m.test(screen)) failed = `run-sql errored on screen:\n${screen}`;
+
+  // Refused rather than typed wrong. xterm reads printable characters off `key`
+  // and is only dependable about ASCII, so this would otherwise run a statement
+  // nobody wrote -- and it would look like it worked.
+  const nonAscii = await tool(page, 'run-sql', { sql: "SELECT 'Z\u00fcrich' AS city;" });
+  console.log(`  ascii     ${nonAscii?.error ?? JSON.stringify(nonAscii)}`);
+  if (nonAscii === null || nonAscii.ok || !/ascii/i.test(nonAscii.error ?? '')) {
+    failed = `run-sql took a non-ASCII statement: ${JSON.stringify(nonAscii)}`;
   }
 
   // The refusal has to arrive as a value. A tool that threw would reach an

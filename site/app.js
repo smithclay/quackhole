@@ -639,10 +639,85 @@ function greet(tries = 12) {
 /// shell opens at an empty prompt, which is where it was before this existed.
 function typeIntoShell(sql) {
   const input = $('#shell .xterm-helper-textarea');
-  if (!input) return;
+  if (!input) return false;
   const press = (key) => input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
   for (const ch of sql) press(ch);
   press('Enter');
+  return true;
+}
+
+// --- statements typed on somebody else's behalf ------------------------------
+
+/// Statements waiting to be told how they went, keyed by their exact text.
+///
+/// The shell hands `runQuery` the line it read, unchanged -- the same fact
+/// `greet` leans on to know its greeting ran -- so the text is the key. If the
+/// line reaching DuckDB is not the line that was typed, nothing matches and the
+/// wait times out, which is the honest outcome: something else was at the
+/// prompt and the statement that ran was not the one asked for.
+const pending = new Map();
+
+/// Hand a typed statement's outcome back to whoever typed it.
+const settle = (text, err, ms) => {
+  const waiter = pending.get(text);
+  if (!waiter) return;
+  pending.delete(text);
+  if (err) waiter.reject(err);
+  else waiter.resolve(ms);
+};
+
+/// Run a statement in the shell, the way a person does, and say how it went.
+///
+/// This is what the agent tools run SQL through. An agent's statement belongs
+/// where the visitor can see it -- typed at the prompt, with its result drawn in
+/// the terminal -- rather than on a connection of its own running invisibly
+/// beside one. So the rows are not collected here: they are on screen, which is
+/// the whole reason for putting the statement there. What comes back is whether
+/// it ran, which the `observed` proxy is already watching for.
+///
+/// Typed once and never retried. `greet` retries because a greeting that arrives
+/// twice is still a greeting; a statement may have carried an INSERT to another
+/// machine, and delivery is at-most-once here for the same reason it is on the
+/// wire.
+async function runInShell(sql, { timeoutMs = 60_000 } = {}) {
+  // One line. Every character goes in as its own keydown and Enter submits, so
+  // a newline inside the statement would send the first half of it.
+  const text = String(sql ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) throw new Error('There is no statement to run.');
+
+  // xterm reads printable characters off `key` and is only dependable about it
+  // for ASCII. Refusing beats typing `Zurich` where the statement said `Zürich`
+  // and running a query nobody wrote.
+  const stray = [...text].find((ch) => ch < ' ' || ch > '~');
+  if (stray) {
+    throw new Error(
+      `The terminal only takes printable ASCII, and this statement holds ${JSON.stringify(stray)}.`,
+    );
+  }
+
+  const settled = new Promise((resolve, reject) => pending.set(text, { resolve, reject }));
+  if (!typeIntoShell(text)) {
+    pending.delete(text);
+    throw new Error('The terminal is not ready to take a statement.');
+  }
+
+  const expired = new Promise((_, reject) => {
+    setTimeout(
+      () =>
+        reject(
+          new Error(
+            `The statement did not finish within ${Math.round(timeoutMs / 1000)}s. It is either still` +
+              ' running or it never reached the prompt -- the terminal shows which. Do not send it' +
+              ' again without looking: it may already have reached the machine.',
+          ),
+        ),
+      timeoutMs,
+    );
+  });
+
+  // Cleared either way, so a later statement with the same text is not settled
+  // by the waiter this one left behind.
+  return Promise.race([settled, expired]).finally(() => pending.delete(text));
 }
 
 /// The database the shell drives: `db`, with the queries it runs observed.
@@ -676,9 +751,15 @@ function observed(database) {
           try {
             result = await value.call(target, conn, text);
           } catch (err) {
-            throw withRemedy(err);
+            // Settled with the remedy already folded in, so an agent that typed
+            // this reads the same sentence the terminal is showing the visitor.
+            const wrapped = withRemedy(err);
+            settle(text, wrapped);
+            throw wrapped;
           }
-          afterQuery(text, performance.now() - t0);
+          const ms = performance.now() - t0;
+          afterQuery(text, ms);
+          settle(text, null, ms);
           return result;
         };
       }
@@ -923,7 +1004,7 @@ try {
   await registerAgentTools({
     session: () => session,
     attach: attachForAgent,
-    afterQuery,
+    run: runInShell,
     remedyFor,
   });
 } catch (err) {
