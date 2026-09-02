@@ -94,6 +94,36 @@
   </div>
 </header>
 
+<!-- --- a statement is running ---------------------------------------------- -->
+<!--
+  The page's answer to "did that do anything?". A query against a remote goes
+  out over a relay and the terminal prints nothing at all until the rows come
+  back, so a statement that takes four seconds is four seconds of a workbench
+  that looks like it dropped the line.
+
+  Fixed under the bar rather than in it. The bar is full at 390px -- brand,
+  chip, "get help" and the mark are 375px of it -- and this has to be legible on
+  a phone, where the rail is above the terminal and may well be collapsed. A
+  strip costs no layout: it overlays the top of the workbench instead of
+  resizing it, which matters because resizing the workbench reflows xterm, and
+  reflowing the terminal on every statement is a worse cure than the disease.
+
+  Indeterminate on purpose. DuckDB reports no progress through Quack -- there is
+  no fraction to fill -- so the bar says "something is out" and the clock beside
+  it says how long it has been, which are the two facts that actually exist.
+
+  role="status" and not alert: this is news, not a problem. The elapsed clock is
+  aria-hidden so a screen reader is told once that a statement is running rather
+  than ten times a second that it still is.
+-->
+<div class="activity" id="activity" hidden>
+  <div class="activity-track"><div class="activity-bar"></div></div>
+  <p class="activity-note" role="status">
+    <span id="activity-phrase"></span>
+    <span class="activity-clock" id="activity-clock" aria-hidden="true"></span>
+  </p>
+</div>
+
 <main class="workbench">
 
   <!-- Each block is a <details> rather than a <section>, which is what makes the

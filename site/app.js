@@ -1009,6 +1009,106 @@ async function typeAtPrompt(sql, { timeoutMs = 60_000 } = {}) {
   return Promise.race([settled, expired]).finally(forget);
 }
 
+// --- what is running ---------------------------------------------------------
+
+/// Which attached remotes a statement names.
+///
+/// Read out of the SQL, exactly as the notebook decided it: duckdb-wasm does not
+/// report which catalogs a query touched, and with several remotes attached,
+/// claiming all of them would draw traffic that never happened. A qualified
+/// reference is the only way to reach a remote, so `remote.` in the text is the
+/// signal. The session uniquifies names from a fixed base, so there is nothing
+/// to escape.
+///
+/// Wrong in one direction on purpose: a view over a remote table is a local name
+/// and reads as local here. Under-claiming the wire beats drawing traffic on a
+/// wire that carried none.
+function remotesIn(text) {
+  if (!session) return [];
+  return session.connections.filter(
+    (c) => c.kind === 'remote' && new RegExp(`\\b${c.name}\\s*\\.`, 'i').test(text),
+  );
+}
+
+const activityEl = $('#activity');
+const activityPhrase = $('#activity-phrase');
+const activityClock = $('#activity-clock');
+
+/// How long a statement has to be out before the page says anything.
+///
+/// Nothing here waits on a fast one. A local statement answers in well under a
+/// millisecond, and a bar that flashed on every line typed would be motion in
+/// front of the terminal rather than news about it -- and this is meant for the
+/// case where a page with no feedback looks like it dropped the line, which is
+/// not a case that can arise in 180ms.
+const ACTIVITY_DELAY_MS = 180;
+
+// Counted rather than flagged. `runInShell` serialises what it types, so in
+// practice this is 0 or 1 -- but `observed` wraps every runQuery the shell makes
+// and nothing here gets to promise the shell issues them one at a time.
+let activityDepth = 0;
+let activityStart = 0;
+let activityShow = null;
+let activityTick = null;
+// The wires told they are busy, so the same set is what gets told they are not.
+// Reading the SQL a second time at the end would ask a different question: the
+// statement may have been an ATTACH or a DETACH, and the connection list it is
+// matched against has moved underneath it.
+const activityWires = new Set();
+
+/// A statement has gone out. Say so, once it has been out long enough to matter.
+function startActivity(text) {
+  const remotes = remotesIn(text);
+  for (const c of remotes) {
+    if (activityWires.has(c.name)) continue;
+    activityWires.add(c.name);
+    views.get(c.name)?.wire.setBusy(true);
+  }
+
+  if (activityDepth++ > 0) return;
+
+  activityStart = performance.now();
+  // "running on remote" and not the statement itself. The statement is on
+  // screen, three lines below this, and a truncated copy of it here would be a
+  // second rendering of the one thing the terminal is already good at.
+  activityEl.dataset.where = remotes.length ? 'remote' : 'local';
+  activityPhrase.textContent = remotes.length
+    ? `running on ${remotes.map((c) => c.name).join(', ')}`
+    : 'running here';
+  activityClock.textContent = '';
+
+  activityShow = setTimeout(() => {
+    activityEl.hidden = false;
+    const draw = () => {
+      activityClock.textContent = `${((performance.now() - activityStart) / 1000).toFixed(1)}s`;
+    };
+    draw();
+    activityTick = setInterval(draw, 100);
+  }, ACTIVITY_DELAY_MS);
+}
+
+/// It was answered, one way or the other. Both are the end of the wait.
+///
+/// Called from a `finally`, so a statement that threw clears the strip as
+/// surely as one that returned rows. A bar left sweeping over a failed query is
+/// the worst of both: it says something is still coming, and nothing is.
+function stopActivity() {
+  if (activityDepth > 0 && --activityDepth > 0) return;
+  activityDepth = 0;
+
+  clearTimeout(activityShow);
+  clearInterval(activityTick);
+  activityShow = null;
+  activityTick = null;
+  activityEl.hidden = true;
+
+  // Cleared before `afterQuery` runs its measured pulse, which is the order the
+  // two want: the loop stops, then one round trip is drawn at the length it
+  // actually took.
+  for (const name of activityWires) views.get(name)?.wire.setBusy(false);
+  activityWires.clear();
+}
+
 /// The database the shell drives: `db`, with the queries it runs observed.
 ///
 /// The shell owns its terminal and offers no hook into it -- `embed` takes a
@@ -1016,8 +1116,9 @@ async function typeAtPrompt(sql, { timeoutMs = 60_000 } = {}) {
 /// it. But it
 /// reaches the database through `runQuery`, which is on AsyncDuckDB's published
 /// interface, so wrapping that is where the things the notebook used to do
-/// around a query still fit: pulse the wire the SQL names, redraw the rail
-/// after DDL, and put the remedy for a known failure next to the failure.
+/// around a query still fit: say a statement is out and how long it has been,
+/// pulse the wire the SQL names, redraw the rail after DDL, and put the remedy
+/// for a known failure next to the failure.
 ///
 /// Methods are bound to the real database rather than forwarded with the proxy
 /// as their receiver. AsyncDuckDB keeps its worker, its pending-message table
@@ -1037,6 +1138,7 @@ function observed(database) {
         return async (conn, text) => {
           const t0 = performance.now();
           let result;
+          startActivity(text);
           try {
             result = await value.call(target, conn, text);
           } catch (err) {
@@ -1048,6 +1150,11 @@ function observed(database) {
             // carriage returns and the same sentence twice.
             settle(text, err);
             throw withRemedy(err);
+          } finally {
+            // Both exits, and before either the pulse below or the rethrow
+            // above: whether the answer was rows or an error, the waiting is
+            // over and the strip has nothing left to say.
+            stopActivity();
           }
           const ms = performance.now() - t0;
           afterQuery(text, ms);
@@ -1097,9 +1204,7 @@ function afterQuery(text, ms) {
   // reaching the prompt and being run are different things.
   if (text === GREETING) greeted = true;
   if (!session) return;
-  for (const c of session.connections) {
-    if (c.kind === 'remote' && new RegExp(`\\b${c.name}\\s*\\.`, 'i').test(text)) views.get(c.name)?.wire.pulse(ms);
-  }
+  for (const c of remotesIn(text)) views.get(c.name)?.wire.pulse(ms);
   // DDL typed at the prompt changes what the rail should show. ATTACH and
   // DETACH are the ones that matter, and the session reconciles against
   // duckdb_databases(), so a remote removed by hand leaves the rail on its own.

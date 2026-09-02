@@ -175,6 +175,61 @@ a.ghost {
 .brand { font: 700 0.82rem/1 var(--display); letter-spacing: -0.03em; }
 .bar-right { display: flex; align-items: center; gap: 0.6rem; }
 
+/* --- a statement is running ----------------------------------------------
+ *
+ * A strip under the bar, present only while something is out. It overlays the
+ * top of the workbench rather than taking a row of its own: giving it height
+ * would move the terminal, and moving the terminal makes xterm re-measure and
+ * reflow every line of scrollback -- on every statement.
+ *
+ * Coloured by where the work is, which is the palette's existing rule rather
+ * than a new one: yellow is DuckDB, so a query answered in this tab is yellow;
+ * periwinkle is the wire, so a query that went to another machine is
+ * periwinkle. Told apart at a glance and without reading the note. */
+.activity {
+  position: fixed; inset: var(--bar-h) 0 auto 0; z-index: 19;
+  pointer-events: none;
+}
+.activity-track {
+  height: 3px;
+  background: color-mix(in srgb, var(--line) 70%, transparent);
+  overflow: hidden;
+}
+/* Indeterminate, because there is no fraction to draw: nothing on this page
+   knows how far along a remote query is. A sliver that crosses and crosses
+   again says "still out" without claiming a position in something. */
+.activity-bar {
+  width: 34%; height: 100%;
+  background: var(--signal);
+  animation: activity-sweep 1.15s cubic-bezier(.65,0,.35,1) infinite;
+}
+.activity[data-where="remote"] .activity-bar { background: var(--relay); }
+
+@keyframes activity-sweep {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(394%); }
+}
+
+/* Right-aligned, so it sits over the terminal's top corner rather than over the
+   prompt or the rail's first row. Opaque, and its own chip: floated over a
+   terminal, text with nothing behind it reads as a line the shell printed. */
+.activity-note {
+  position: absolute; top: 0.4rem; right: 0.75rem;
+  margin: 0;
+  display: flex; align-items: baseline; gap: 0.45rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--line); border-radius: 3px;
+  background: var(--ink);
+  font: 500 0.66rem/1 var(--data);
+  letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.activity[data-where="remote"] .activity-note { color: var(--relay); border-color: var(--relay); }
+/* Tabular figures, so a clock counting past 9.9s does not shuffle the words to
+   its left every tenth of a second. */
+.activity-clock { color: var(--paper); font-variant-numeric: tabular-nums; }
+
 /* --- workbench shell ----------------------------------------------------- */
 
 .workbench {
@@ -653,6 +708,12 @@ a.cta:hover { background: #fff759; border-color: #fff759; color: var(--ink); }
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+
+  /* The blanket rule above runs an animation to its last frame and stops, and
+     the sweep's last frame is off the right-hand edge -- so the one thing on
+     the page that says a statement is running would be invisible to whoever
+     asked for less motion. Filled and still says the same thing. */
+  .activity-bar { width: 100%; opacity: 0.55; animation: none !important; }
 }
 
 /* --- booting ----------------------------------------------------------------

@@ -175,6 +175,39 @@ async function announced(page, name) {
   await page.waitForFunction(SETTLED, null, { timeout: 30_000 });
 }
 
+/// Start recording what `#activity` does, and read it back afterwards.
+///
+/// The strip is drawn only while a statement is out and removed the moment it is
+/// answered, so by the time anything could be queried about it, there is nothing
+/// left to query. A MutationObserver on its own attributes catches both halves:
+/// `data-where`, which the page sets as the statement goes out, and `hidden`,
+/// which flips only once the statement has been out long enough to be worth
+/// mentioning.
+///
+/// The phrase is read on the transitions that show the strip rather than on
+/// every mutation. `data-where` is set before the phrase is written, so the text
+/// at that moment still belongs to the statement before this one.
+const watchActivity = (p) =>
+  p.evaluate(() => {
+    const el = document.querySelector('#activity');
+    const seen = { where: new Set(), phrases: new Set(), shown: false };
+    self.__qhActivity = seen;
+    new MutationObserver(() => {
+      seen.where.add(el.dataset.where);
+      if (!el.hidden) {
+        seen.shown = true;
+        seen.phrases.add(document.querySelector('#activity-phrase').textContent);
+      }
+    }).observe(el, { attributes: true });
+  });
+
+const readActivity = (p) =>
+  p.evaluate(() => ({
+    where: [...self.__qhActivity.where],
+    phrases: [...self.__qhActivity.phrases],
+    shown: self.__qhActivity.shown,
+  }));
+
 // The last thing the shell printed before the trailing prompt, for the log.
 const tail = (text, n = 6) =>
   text
@@ -392,9 +425,49 @@ try {
 
   // A statement of the visitor's own, over the remote, through the terminal --
   // the half of the workbench nothing above drives.
+  //
+  // Watched on the way, because `#activity` exists only while a statement is in
+  // flight: it is the one thing on this page that cannot be read afterwards, so
+  // it is recorded as it happens.
+  await watchActivity(page);
   const own = await run(page, 'SELECT count(*) AS n, max(ts) AS newest FROM remote.events;');
   console.log(`\n  own query  ${own.ok ? 'ok' : 'FAIL'}\n            ${tail(own.text)}`);
   if (!own.ok) failed = `the hand-typed query failed:\n${own.text}`;
+
+  // What is asserted for a remote statement is the *decision*, not the drawing.
+  // `data-where` is set the instant the statement goes out, so it always
+  // happens; whether the strip is then shown depends on the round trip beating
+  // a 180ms delay, and a relay that answers in 90ms would fail a test that
+  // demanded it. Under-asserting here beats a check that passes on a slow link
+  // and fails on a good one.
+  const onWire = await readActivity(page);
+  if (!onWire.where.includes('remote')) {
+    failed = `a statement naming remote. was marked "${onWire.where.join(', ') || 'nothing'}"`;
+  } else console.log('  activity  a remote statement is marked as running on the wire');
+
+  // And the drawing is asserted against a local statement slow enough that the
+  // delay is not in question -- nothing here touches the network, so this half
+  // stays deterministic on a link that is having a bad day.
+  //
+  // Hashing rather than counting, and that is not arbitrary: a count over
+  // range(60000000) with a modulo filter answers in under 180ms in wasm and
+  // draws nothing at all, which is the delay doing its job rather than a
+  // failure. Twelve million md5s of a cast integer is a second or so, and it is
+  // slow for a reason no optimiser can take away.
+  await watchActivity(page);
+  const slow = await run(page, "SELECT count(*) AS n FROM range(12000000) WHERE md5(range::VARCHAR) LIKE 'a%';");
+  if (!slow.ok) failed = `the slow local statement failed:\n${slow.text}`;
+  const strip = await readActivity(page);
+  if (!strip.shown) failed = 'the activity strip never appeared for a statement that took seconds';
+  else if (!strip.phrases.includes('running here')) {
+    failed = `the strip said "${strip.phrases.join(', ')}" for a local statement`;
+  } else console.log('  activity  a slow local statement draws the strip, and says it is running here');
+
+  // Gone again once the answer is in. A bar left sweeping over a finished query
+  // says something is still coming when nothing is, and it would say it for the
+  // rest of the session.
+  const stillUp = await page.$eval('#activity', (e) => !e.hidden);
+  if (stillUp) failed = 'the activity strip is still showing after the statement finished';
 
   // --- the tools an agent in the browser gets ------------------------------
   //
