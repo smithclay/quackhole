@@ -565,29 +565,25 @@ async function rebuild() {
   }
 }
 
-/// Say what a newly attached remote holds, in the shell, as a statement the
-/// visitor could have typed.
+/// Say in the shell that a remote is connected, and under what name.
 ///
-/// The rail lists the same tables. This is a different claim: that they are
-/// reachable from the prompt, with ordinary SQL, over the connection just made.
-/// Every row it returns is a statement that runs, so reading one is the whole
-/// instruction -- which is what the notebook's seeded cells used to do before
-/// the shell took the terminal.
+/// Run rather than printed, because the shell has no way to print -- and a
+/// statement that came back is better evidence the connection works than a line
+/// claiming it does.
 ///
-/// `sqlite_master` because a Quack catalog enumerates nothing else: duckdb_tables(),
-/// SHOW TABLES and information_schema are all empty for it. That makes this a
-/// real round trip over the relay rather than a local lookup, which is the point
-/// -- it is the first evidence the remote answers.
+/// Local on purpose. It used to list the remote's tables, which meant a relay
+/// round trip on top of the two the attach already paid, for something the rail
+/// beside it was about to show anyway. The name is the part worth saying: it is
+/// what every later query has to be spelled with.
 ///
-/// The catalog name is interpolated unquoted, safe for the reason session.js
-/// gives where it does the same: nothing but its `#uniqueName` produces one, and
-/// that builds them from a fixed base.
+/// The catalog name goes inside a string literal, safe for the reason session.js
+/// gives where it interpolates the same thing: nothing but its `#uniqueName`
+/// produces one, and that builds them from a fixed base.
 ///
 /// Kept to ASCII. Every character here is dispatched as a `keydown` with itself
 /// as `key`, and xterm is only reliable about that for printable ASCII.
 function announce(conn) {
-  const c = conn.name;
-  typeIntoShell(`SELECT 'FROM ${c}.' || name AS "${c} is attached: run one of these" FROM ${c}.sqlite_master;`);
+  typeIntoShell(`SELECT '${conn.name} connected' AS quackhole;`);
 }
 
 /// The statement the shell opens on. Named, because two places have to agree on

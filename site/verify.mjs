@@ -158,7 +158,7 @@ async function run(page, sql) {
 /// putting on it. Doubles as the assertion that the announcement happens.
 async function announced(page, name) {
   await page.waitForFunction(
-    (n) => new RegExp(`${n} is attached: run one of these`).test(document.querySelector('.xterm-rows')?.innerText ?? ''),
+    (n) => new RegExp(`${n} connected`).test(document.querySelector('.xterm-rows')?.innerText ?? ''),
     name,
     { timeout: 60_000 },
   );
@@ -263,7 +263,7 @@ try {
   // not connect.
   await waitForTables(page, 'remote.');
   await announced(page, 'remote');
-  console.log('  announced  the shell listed the remote\'s tables as runnable statements');
+  console.log('  announced  the shell says the remote is connected');
 
   const tables = await page.$$eval('.schema-item', (els) => els.map((e) => e.textContent.trim()));
   console.log(`  tables    ${tables.join(', ') || '(none)'}`);
