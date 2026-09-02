@@ -57,6 +57,16 @@
   <div class="bar-right">
     <span class="pill" id="status" data-state="booting"><i></i><span id="status-text">booting</span></span>
     <button class="ghost" id="open-notes" type="button">what is this</button>
+    <!-- Octicon's mark, inline rather than fetched: it is 400 bytes and the page
+         is cross-origin isolated, so a remote icon is a CORP negotiation for a
+         link. currentColor, so it takes the bar's palette rather than bringing
+         GitHub's. -->
+    <a class="icon-link" href="https://github.com/smithclay/quackhole" target="_blank" rel="noreferrer"
+       aria-label="quackhole on GitHub" title="quackhole on GitHub">
+      <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+      </svg>
+    </a>
   </div>
 </header>
 
@@ -328,44 +338,66 @@
   <form method="dialog" class="dialog-x"><button value="cancel" aria-label="Close">×</button></form>
   <h2>What is actually happening</h2>
 
+  <!--
+    Written for somebody who has met neither DuckDB nor iroh, and not written
+    down to them. The order is the order the questions arrive in: why a laptop
+    needs any of this, what the address is, why the traffic goes through a
+    relay, and what is actually running in the tab. Terms are used, not avoided
+    -- but each is explained the first time, and none is left to be looked up.
+  -->
   <div class="notes-grid">
+    <section>
+      <h3>Why a laptop needs this</h3>
+      <p>
+        A database on your laptop has no address the internet can reach. Home routers,
+        office networks and cloud sandboxes all hand out private addresses and turn away
+        connections from outside. The usual ways around that are to open a port, run a
+        tunnel, or copy the data somewhere public. Quackhole does none of them. It gives
+        the database an address of a different kind, and dials it from here.
+      </p>
+    </section>
     <section>
       <h3>The address is a public key</h3>
       <p>
-        <code>quack:&lt;endpoint-id&gt;.iroh:9494</code>. That is a 32-byte ed25519 public
-        key in z-base-32 — 52 characters, so it fits a DNS label. Nothing resolves it;
-        quackhole intercepts before a socket exists. Connecting to the right address and
-        authenticating the server are the same operation, so there is no certificate to
-        issue, renew or trust.
+        It looks like <code>quack:8m4o55…​.iroh:9494</code>. The long middle is not a
+        hostname. It is a public key, and nothing looks it up —
+        <a href="https://www.iroh.computer/">iroh</a> finds the machine holding the
+        matching private key, wherever it is.
+      </p>
+      <p>
+        One consequence carries the whole design: reaching the right machine and proving
+        it is the right machine are a single act. There is no certificate to issue, renew
+        or decide to trust.
       </p>
     </section>
     <section>
-      <h3>Quack is still the protocol</h3>
+      <h3>The relay carries sealed traffic</h3>
       <p>
-        quackhole is a transport bridge and nothing else.
-        <a href="https://github.com/hafenkran/duckdb-quack">Quack</a> stays the database
-        protocol; its HTTP rides <a href="https://www.iroh.computer/">iroh</a> QUIC streams,
-        which supply identity, NAT traversal, relay fallback and encryption. The machine
-        you query cannot tell this tab apart from a native DuckDB.
+        Two machines behind routers can often be coaxed into talking directly. A browser
+        cannot: a direct path needs a kind of socket a browser is not allowed to open. So
+        this tab always goes through one of iroh's public relays.
+      </p>
+      <p>
+        A relay is not a middleman. It forwards packets it cannot read, because the
+        encryption runs from this tab to the far machine rather than to the relay. What it
+        learns is which two keys are talking, when, and how much. Two native DuckDBs can
+        still find a direct path; from a browser there is none, and never will be.
       </p>
     </section>
     <section>
-      <h3>A browser can only relay</h3>
+      <h3>A real DuckDB, in this tab</h3>
       <p>
-        iroh compiles its IP transport out entirely under <code>cfg(wasm_browser)</code>,
-        because a browser cannot open a UDP socket. There is no hole punching and no direct
-        path from here — ever. Traffic stays end-to-end encrypted; the relay forwards
-        ciphertext it cannot read. Between two native peers, a direct path is possible.
+        The database on this page is DuckDB compiled to WebAssembly — the same engine,
+        running in your browser, holding what you load into it and nothing else. To reach
+        a remote it speaks <a href="https://github.com/hafenkran/duckdb-quack">Quack</a>,
+        DuckDB's own protocol for querying another DuckDB over HTTP.
       </p>
-    </section>
-    <section>
-      <h3>The bridge under this tab</h3>
       <p>
-        DuckDB-Wasm's Quack client makes <em>synchronous</em> XHR calls from a worker, so the
-        transport has to block. This page replaces <code>XMLHttpRequest</code> inside that
-        worker and parks it in <code>Atomics.wait</code> on a <code>SharedArrayBuffer</code>
-        while a second worker does the async iroh work — which is why the page needs
-        cross-origin isolation.
+        Quackhole changes nothing about that conversation, only what carries it. The far
+        machine cannot tell this tab from a native DuckDB. One wrinkle makes the page
+        unusual: Quack's client stops and waits for each answer, so the transport has to
+        stop with it. A second worker does the network and wakes the first — which is why
+        this page must be served with the headers that permit shared memory.
       </p>
     </section>
   </div>
