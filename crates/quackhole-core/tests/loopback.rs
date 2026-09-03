@@ -8,6 +8,7 @@
 use quackhole_core::Core;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 const BODY: &str = "quack-over-iroh";
@@ -33,9 +34,14 @@ fn get(peer: &str) -> quackhole_core::Request<'static> {
 ///
 /// Closing is what turns the loopback TCP FIN into a QUIC stream FIN, which is
 /// how the dialing side knows the response ended.
-fn spawn_http_server() -> (String, std::thread::JoinHandle<()>) {
+///
+/// The request it read is sent back over the channel. It stands in for Quack, so
+/// what reaches it is what the bridge forwarded -- which is the only place the
+/// request can be inspected after a real round trip.
+fn spawn_http_server() -> (String, mpsc::Receiver<String>, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr").to_string();
+    let (tx, rx) = mpsc::channel();
     let handle = std::thread::spawn(move || {
         for stream in listener.incoming().take(1) {
             let mut stream = match stream {
@@ -43,7 +49,8 @@ fn spawn_http_server() -> (String, std::thread::JoinHandle<()>) {
                 Err(_) => return,
             };
             let mut buf = [0u8; 4096];
-            let _ = stream.read(&mut buf);
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let _ = tx.send(String::from_utf8_lossy(&buf[..n]).into_owned());
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                 BODY.len(),
@@ -53,7 +60,7 @@ fn spawn_http_server() -> (String, std::thread::JoinHandle<()>) {
             let _ = stream.flush();
         }
     });
-    (addr, handle)
+    (addr, rx, handle)
 }
 
 #[test]
@@ -63,7 +70,7 @@ fn request_round_trips_over_iroh() {
         return;
     }
 
-    let (target, server) = spawn_http_server();
+    let (target, requests, server) = spawn_http_server();
 
     let serving = Core::new(None, true, "").expect("serving core");
     serving.serve_start(&target, Vec::new()).expect("serve");
@@ -86,7 +93,26 @@ fn request_round_trips_over_iroh() {
     };
 
     assert_eq!(response.status, 200);
+    // Decoded, and byte-identical. Both ends are compressing here -- the client
+    // asked below and the bridge answered -- so this is also the assertion that
+    // the envelope survives a real iroh round trip rather than only a Vec.
     assert_eq!(response.body, BODY.as_bytes());
+
+    // What Quack was handed. The header has to reach it: a bridge that consumed
+    // the head while sniffing it, or forwarded it short, would still return this
+    // body and fail only against a real Quack.
+    let seen = requests
+        .recv_timeout(Duration::from_secs(5))
+        .expect("request");
+    assert!(
+        seen.to_ascii_lowercase()
+            .contains("x-quackhole-accept-encoding: gzip"),
+        "the client asked for a compressed response: {seen:?}"
+    );
+    assert!(
+        seen.starts_with("GET / HTTP/1.1\r\n") && seen.ends_with("\r\n\r\n"),
+        "and the head arrived whole: {seen:?}"
+    );
 
     let peers = dialing.peer_snapshot();
     assert_eq!(peers.len(), 1);

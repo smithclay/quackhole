@@ -41,6 +41,19 @@ the npm README's own quickstart block against a live server.
   or the browser client. Both drive it; two implementations would drift on the
   `Connection: close` framing, chunk extensions, and which caller headers get
   dropped.
+- **Responses are compressed by quackhole, not by HTTP, and the negotiation is
+  one header plus one magic.** `crates/quackhole-core/src/compress.rs` owns all
+  three. `build_request` always sends `X-Quackhole-Accept-Encoding: gzip`, the
+  bridge in `serve.rs` reads the request head far enough to see it, and if it is
+  there the whole response *stream* is gzipped behind a magic starting with `\0`
+  -- which no HTTP response can begin with, so a client that asked and got a
+  plain answer needs no flag to tell. That is what makes it degrade both ways: an
+  old server forwards the header to Quack, which ignores it. `Content-Encoding`
+  was not used because it is the origin server's to set and cpp-httplib does not
+  compress -- and `parse_response` decodes no content coding, so the day
+  something did, Quack would be handed a gzip stream as a result set. Only the
+  head is offered to `wants_compression`: a body is caller data, and an INSERT
+  carrying that header's name must not switch on a coding the peer cannot read.
 - **Never retry a request that may have reached the peer.** Quack carries
   INSERTs and DDL, so at-most-once is the property that matters. See `may_retry`
   in `dial.rs`.

@@ -1,6 +1,6 @@
 //! Outbound side: one cached QUIC connection per peer, one bi-stream per request.
 
-use crate::{ALPN, PeerMap, record_peer};
+use crate::{ALPN, MAX_RESPONSE_BYTES, PeerMap, record_peer};
 use anyhow::{Context, Result};
 use iroh::endpoint::Connection;
 use iroh::{Endpoint, EndpointAddr, EndpointId};
@@ -11,11 +11,6 @@ use std::sync::{Arc, Mutex};
 use crate::Core;
 #[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
-
-/// Cap on a single buffered response. Quack's fetch loop is bounded by
-/// `quack_fetch_batch_chunks` (default 12 chunks, ~24k rows), so this is a
-/// backstop against a hostile peer, not a working limit.
-const MAX_RESPONSE_BYTES: usize = 512 * 1024 * 1024;
 
 /// Connections cached by peer, held open across requests.
 ///
@@ -185,7 +180,12 @@ pub async fn request_async(
     // Sampled after every round trip rather than once at connect, so an upgrade
     // from relay to direct shows up in quackhole_status().
     record_peer(peers, id, observed_path(&conn), "out");
-    Ok(body)
+    // Here rather than in either caller, because this is the one funnel both of
+    // them come through: native DuckDB and the browser get the envelope undone
+    // by the same code, and neither can be built without it. A response from a
+    // server that does not compress arrives without the magic and is returned
+    // untouched.
+    crate::compress::decode(body)
 }
 
 #[cfg(not(target_family = "wasm"))]
