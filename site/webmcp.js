@@ -11,13 +11,10 @@
 // visitor's click would have left them in. There is deliberately no second way
 // to attach in here -- that is the same trade the rest of this page makes.
 //
-// `run-sql` takes that further and returns no rows at all: it types the
-// statement at the terminal, where the result is drawn for whoever is sitting
-// in front of it. An agent querying somebody's machine over a connection of its
-// own, invisibly, beside a terminal showing nothing, is the version of this
-// page nobody should ship -- and the visible one costs an agent only the thing
-// it can ask for. So what comes back is that the statement ran, not what it
-// said.
+// `run-sql` takes that further and types the statement at the terminal, where
+// the full result is drawn for whoever is sitting in front of it. An agent gets
+// a deliberately tiny, string-only preview to guide its next query, rather than
+// an invisible second result viewer beside the terminal.
 //
 // Registered from `site/` rather than from `web/`. `web/` is the connection
 // model, copied verbatim into anything that vendors it, and a transport library
@@ -37,6 +34,16 @@
 /// builds still answer to both. Reading `document` first means a build that has
 /// both is used through the shape that is going to survive.
 const modelContext = () => document.modelContext ?? navigator.modelContext ?? null;
+const agentDocsUrl = () => new URL('llms.txt', document.baseURI).href;
+
+/// Whether this browser exposes the WebMCP surface at all.
+///
+/// This is deliberately separate from registration. The front door is a choice
+/// about the browser the page opened in, and it has to be made before DuckDB has
+/// finished booting. Registration can still fail later -- for example if another
+/// copy of the page already claimed a tool name -- but that does not turn a
+/// WebMCP-capable browser into an ordinary one.
+export const hasWebMCP = () => modelContext() !== null;
 
 /// A relay's host, or null for a peer whose ticket carried no relay.
 ///
@@ -107,8 +114,9 @@ export async function registerAgentTools({ session, attach, run, refresh, remedy
       description:
         'Attach a remote DuckDB to this workbench from a quackhole ticket -- the qh1_… word that' +
         ' quackhole_serve() prints on the machine holding the data. The ticket embeds an access token,' +
-        ' so treat it as a password. Returns the catalog name the remote was attached under, which is' +
-        ' what qualifies every later query against it.',
+        ' so treat it as a password. If the person needs to prepare an external DuckDB to connect to' +
+        ` this browser tab, read ${agentDocsUrl()} and tell them what to run. Returns the catalog name` +
+        ' the remote was attached under, which is what qualifies every later query against it.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -177,8 +185,9 @@ export async function registerAgentTools({ session, attach, run, refresh, remedy
       title: 'Run SQL in the workbench terminal',
       description:
         "Type one SQL statement at the workbench's terminal and run it, exactly as the person sitting" +
-        ' in front of it would. The result is drawn in their terminal rather than returned here: what' +
-        ' comes back is whether the statement ran and how long it took, so ask the person what it said.' +
+        ' in front of it would. The full result is drawn in their terminal. The reply includes only a' +
+        ' compact preview: row count, at most two rows and six columns, with each value capped at 80' +
+        ' characters. Use it to plan the next query; ask the person about the full result.' +
         ' Reach a remote table by qualifying it with the catalog name list-connections reports, as in' +
         ' "SELECT * FROM remote.events;". A statement that writes runs on the machine that owns the' +
         ' catalog and is delivered at most once -- if one fails, check whether it landed before' +
@@ -197,14 +206,14 @@ export async function registerAgentTools({ session, attach, run, refresh, remedy
         additionalProperties: false,
       },
       // Not read-only: this runs whatever it is given, including INSERT and
-      // DDL, and on a remote that means on somebody else's machine. No rows
-      // come back, but a failure's message does, and DuckDB quotes the offending
-      // value into plenty of them -- so what returns from a remote is still
-      // content this page did not write.
+      // DDL, and on a remote that means on somebody else's machine. The preview
+      // can contain remote values, and DuckDB quotes offending values into
+      // failures too, so what returns is still content this page did not write.
       annotations: { untrustedContentHint: true },
       execute: async ({ sql }) => {
         try {
-          return { ok: true, elapsedMs: Math.round(await run(sql)) };
+          const outcome = await run(sql);
+          return { ok: true, elapsedMs: Math.round(outcome.elapsedMs), preview: outcome.preview };
         } catch (err) {
           return failure(err, remedyFor);
         }

@@ -194,7 +194,7 @@ the remote is connected and leaves the rail beside it to say what is in it.
 | `index.html` | The workbench shell, plus the four onboarding dialogs |
 | `app.js` | A view over `web/session.js`: the DuckDB-Wasm boot, the rail, the embedded shell, the dialogs. No connection model of its own |
 | `wire.js` | The topology diagram, one per remote. Opens broken; pulses per query at the measured latency |
-| `webmcp.js` | The three WebMCP tools, registered on `document.modelContext` when a browser has one. Same session and same redraw as the dialogs; `run-sql` types at the terminal and returns no rows |
+| `webmcp.js` | The three WebMCP tools, registered on `document.modelContext` when a browser has one. Same session and same redraw as the dialogs; `run-sql` types at the terminal and returns a bounded preview |
 | `styles.css` | Yellow is DuckDB, periwinkle is iroh. Nothing else is coloured |
 | `public/llms.txt` | The docs an agent is sent to read, shipped unhashed at the site root. The onboarding prompt names it, so it is part of the product rather than a courtesy |
 | `public/coi-serviceworker.js` | See below. In `public/` so it ships unhashed at the root — it registers itself by its own URL, so a move into `assets/` would scope it there |
@@ -216,12 +216,12 @@ copied verbatim into anything that vendors it, and a library that reached for
 its host page's `document` and hung tools on it would be deciding something
 that is not the transport's to decide. An agent surface is a view.
 
-**`run-sql` returns no rows.** It types the statement at the terminal and the
-result is drawn there, for whoever is sitting in front of it; what comes back
-to the agent is that the statement ran and how long it took. An agent querying
-somebody's machine over a connection of its own, invisibly, beside a terminal
-showing nothing, is the version of this page nobody should ship — and the
-visible one costs the agent only a thing it can ask a person for.
+**`run-sql` returns a bounded preview.** It types the statement at the terminal
+and the full result is drawn there, for whoever is sitting in front of it. The
+agent receives the row count, up to two rows and six columns, with every value
+converted to a string and capped at 80 characters. That is enough context to
+plan the next query without turning the tool into an invisible second result
+viewer beside the terminal.
 
 Typing rather than querying is most of what `runInShell` is, and the prompt is
 a worse target than it looks:

@@ -488,6 +488,11 @@ try {
   if (readOnly.join() !== 'list-connections') {
     failed = `readOnlyHint is on ${readOnly.join(', ') || 'nothing'}, expected list-connections alone`;
   }
+  const attachDescription = registered.find((t) => t.name === 'attach-remote')?.description ?? '';
+  const docsUrl = new URL('llms.txt', base).href;
+  if (!attachDescription.includes(docsUrl)) {
+    failed = `attach-remote does not direct the agent to ${docsUrl}`;
+  }
 
   // The bar's chip is the only thing on screen that says any of the above
   // happened, and it is drawn from what registerAgentTools() returned. This run
@@ -496,6 +501,16 @@ try {
   // and therefore the one nobody would otherwise see before shipping it.
   const surface = await page.$eval('#agents-open', (e) => e.dataset.state);
   if (surface !== 'ready') failed = `the webmcp chip reads "${surface}" with all three tools registered`;
+
+  // An agent-capable browser has no use for the introductory splash: it opened
+  // this page to call its tools. The header makes that state explicit without
+  // putting another modal between the agent and the workbench.
+  const banner = await page.$eval('#webmcp-banner', (e) => ({ hidden: e.hidden, text: e.textContent.trim() }));
+  if (banner.hidden || banner.text !== 'WebMCP compatibility detected: ask your agent to write SQL or add remote sources') {
+    failed = `the WebMCP banner is ${JSON.stringify(banner)}`;
+  }
+  const splashOpen = await page.$eval('#splash', (e) => e.open);
+  if (splashOpen) failed = 'the onboarding splash opened in a WebMCP-compatible browser';
 
   // And the deep link carries a prompt, never a credential. A ?q= is a URL: it
   // lands in an address bar, in a history entry and in OpenAI's logs, and a
@@ -513,9 +528,11 @@ try {
   if (!listed?.ok) failed = `list-connections answered ${JSON.stringify(listed)}`;
   else if (!remoteEntry?.tables.length) failed = 'list-connections found no tables on the remote';
 
-  // run-sql types at the terminal rather than answering with rows, so what it
-  // did is a question about the visitor's screen. Cleared first for the reason
-  // `run` clears: the terminal scrolls, and earlier rows leave the DOM entirely.
+  // run-sql types at the terminal rather than answering with a full result, so
+  // what it did is still a question about the visitor's screen. Its tiny preview
+  // is enough to plan the next query, while the terminal remains the full
+  // result surface. Cleared first for the reason `run` clears: the terminal
+  // scrolls, and earlier rows leave the DOM entirely.
   await page.waitForFunction(SETTLED, null, { timeout: 90_000 });
   await page.click('#shell');
   await page.keyboard.type('.clear');
@@ -534,8 +551,11 @@ try {
   console.log(`  run-sql   ran in ${ran?.elapsedMs}ms\n            ${tail(screen)}`);
   if (ran === null) failed = 'run-sql came back with nothing at all';
   else if (!ran.ok) failed = `run-sql answered ${JSON.stringify(ran)}`;
-  // The point of the whole tool: the rows are the visitor's, not the agent's.
-  else if (ran.rows !== undefined) failed = `run-sql handed back rows: ${JSON.stringify(ran)}`;
+  else if (ran.preview?.columns?.join() !== 'n' || ran.preview?.rowCount !== 1) {
+    failed = `run-sql returned an unexpected preview: ${JSON.stringify(ran)}`;
+  } else if (typeof ran.preview.rows?.[0]?.[0] !== 'string' || !/^\d+$/.test(ran.preview.rows[0][0])) {
+    failed = `run-sql did not stringify the preview value: ${JSON.stringify(ran)}`;
+  }
   else if (!/\b\d+\b/.test(screen.replace(agentSql, ''))) failed = `no result was drawn:\n${screen}`;
   else if (/^[A-Z][A-Za-z ]*Error[:!]/m.test(screen)) failed = `run-sql errored on screen:\n${screen}`;
   // The remedy is a field of its own, so the message must be DuckDB's alone --
@@ -543,6 +563,26 @@ try {
   // returns and a URL because a terminal is what they are for.
   else if (/\r|TROUBLESHOOTING/.test(JSON.stringify(ran))) {
     failed = `run-sql returned terminal formatting: ${JSON.stringify(ran)}`;
+  }
+
+  // A preview is deliberately small even when DuckDB's result is not. This
+  // local query has three rows, seven columns and an 81-character value: one
+  // more than every preview cap except its individual value cap, which it also
+  // exceeds. The remote count above already covers stringifying a BigInt.
+  const cappedSql =
+    "SELECT range AS c1, range + 1 AS c2, range + 2 AS c3, repeat('x', 81) AS long_text," +
+    ' range + 4 AS c5, range + 5 AS c6, range + 6 AS c7 FROM range(3)';
+  const capped = await tool(page, 'run-sql', { sql: cappedSql });
+  await drawn(page, `${cappedSql};`);
+  if (
+    !capped?.ok ||
+    capped.preview?.rowCount !== 3 ||
+    capped.preview.columns?.length !== 6 ||
+    capped.preview.rows?.length !== 2 ||
+    !capped.preview.truncated ||
+    capped.preview.rows?.[0]?.[3]?.length !== 80
+  ) {
+    failed = `run-sql did not cap its preview: ${JSON.stringify(capped)}`;
   }
 
   // A statement is never typed into a line somebody else started. This is the
