@@ -221,7 +221,8 @@ and the full result is drawn there, for whoever is sitting in front of it. The
 agent receives the row count, up to two rows and six columns, with every value
 converted to a string and capped at 80 characters. That is enough context to
 plan the next query without turning the tool into an invisible second result
-viewer beside the terminal.
+viewer beside the terminal. `preview.truncated` is the quick yes/no flag, while
+`preview.truncation` identifies whether rows, columns or values were shortened.
 
 Typing rather than querying is most of what `runInShell` is, and the prompt is
 a worse target than it looks:

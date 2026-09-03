@@ -187,7 +187,8 @@ export async function registerAgentTools({ session, attach, run, refresh, remedy
         "Type one SQL statement at the workbench's terminal and run it, exactly as the person sitting" +
         ' in front of it would. The full result is drawn in their terminal. The reply includes only a' +
         ' compact preview: row count, at most two rows and six columns, with each value capped at 80' +
-        ' characters. Use it to plan the next query; ask the person about the full result.' +
+        ' characters. preview.truncation says whether rows, columns or values were shortened. Use it' +
+        ' to plan the next query; ask the person about the full result.' +
         ' Reach a remote table by qualifying it with the catalog name list-connections reports, as in' +
         ' "SELECT * FROM remote.events;". A statement that writes runs on the machine that owns the' +
         ' catalog and is delivered at most once -- if one fails, check whether it landed before' +

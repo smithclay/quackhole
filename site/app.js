@@ -931,7 +931,8 @@ const compactValue = (value, type = '') => {
   } else text = String(value);
 
   text = text.replace(/\s+/g, ' ');
-  return text.length > PREVIEW_VALUE_CHARS ? `${text.slice(0, PREVIEW_VALUE_CHARS - 1)}…` : text;
+  const truncated = text.length > PREVIEW_VALUE_CHARS;
+  return { value: truncated ? `${text.slice(0, PREVIEW_VALUE_CHARS - 1)}…` : text, truncated };
 };
 
 /// A JSON-safe glimpse of DuckDB's Arrow IPC result, bounded at every dimension.
@@ -943,21 +944,38 @@ function previewResult(ipc) {
     const columns = previewFields.map((field) => String(field.name));
     const rowCount = Number(table?.numRows ?? 0);
     const source = typeof table?.slice === 'function' ? table.slice(0, PREVIEW_ROWS) : table;
+    const truncation = {
+      rows: rowCount > PREVIEW_ROWS,
+      columns: fields.length > PREVIEW_COLUMNS,
+      values: false,
+    };
     const rows = source.toArray().slice(0, PREVIEW_ROWS).map((row) => {
       const values = typeof row?.toJSON === 'function' ? row.toJSON() : row;
-      return previewFields.map((field) => compactValue(values?.[field.name], String(field.type)));
+      return previewFields.map((field) => {
+        const compact = compactValue(values?.[field.name], String(field.type));
+        truncation.values ||= compact.truncated;
+        return compact.value;
+      });
     });
     return {
       rowCount: Number.isSafeInteger(rowCount) ? rowCount : null,
       columns,
       rows,
-      truncated: rowCount > rows.length || fields.length > columns.length,
+      truncated: Object.values(truncation).some(Boolean),
+      truncation,
     };
   } catch (err) {
     // A preview is additive. A peculiar Arrow value must not turn a statement
     // that rendered correctly in the terminal into a reasonless tool failure.
     console.warn('[quackhole] could not make a WebMCP result preview:', err);
-    return { rowCount: null, columns: [], rows: [], truncated: true };
+    return {
+      rowCount: null,
+      columns: [],
+      rows: [],
+      truncated: false,
+      truncation: { rows: false, columns: false, values: false },
+      unavailable: true,
+    };
   }
 }
 

@@ -580,6 +580,9 @@ try {
     capped.preview.columns?.length !== 6 ||
     capped.preview.rows?.length !== 2 ||
     !capped.preview.truncated ||
+    !capped.preview.truncation?.rows ||
+    !capped.preview.truncation?.columns ||
+    !capped.preview.truncation?.values ||
     capped.preview.rows?.[0]?.[3]?.length !== 80
   ) {
     failed = `run-sql did not cap its preview: ${JSON.stringify(capped)}`;
