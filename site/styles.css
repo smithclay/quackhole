@@ -29,6 +29,7 @@
   --term: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
 
   --bar-h: 3.1rem;
+  --webmcp-banner-h: 0rem;
   --rail-w: 17rem;
 
   /* How tall the app gets to be. Not 100vh: on a phone that is the *large*
@@ -175,6 +176,21 @@ a.ghost {
 .brand { font: 700 0.82rem/1 var(--display); letter-spacing: -0.03em; }
 .bar-right { display: flex; align-items: center; gap: 0.6rem; }
 
+body.webmcp-compatible { --webmcp-banner-h: 2.15rem; }
+.webmcp-banner {
+  position: fixed; inset: var(--bar-h) 0 auto 0; z-index: 19;
+  min-height: var(--webmcp-banner-h);
+  display: flex; align-items: center; justify-content: center;
+  padding: 0.35rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--ink-3);
+  color: var(--paper);
+  font: 500 0.68rem/1.35 var(--data);
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+.webmcp-banner[hidden] { display: none; }
+
 /* --- a statement is running ----------------------------------------------
  *
  * A strip under the bar, present only while something is out. It overlays the
@@ -187,7 +203,7 @@ a.ghost {
  * periwinkle is the wire, so a query that went to another machine is
  * periwinkle. Told apart at a glance and without reading the note. */
 .activity {
-  position: fixed; inset: var(--bar-h) 0 auto 0; z-index: 19;
+  position: fixed; inset: calc(var(--bar-h) + var(--webmcp-banner-h)) 0 auto 0; z-index: 18;
   pointer-events: none;
 }
 .activity-track {
@@ -236,7 +252,7 @@ a.ghost {
   display: grid;
   grid-template-columns: var(--rail-w) minmax(0, 1fr);
   min-height: 100%;
-  padding-top: var(--bar-h);
+  padding-top: calc(var(--bar-h) + var(--webmcp-banner-h));
 }
 
 .rail {
@@ -244,10 +260,10 @@ a.ghost {
   background: var(--ink-2);
   padding: 1.25rem 1rem 3rem;
   display: flex; flex-direction: column; gap: 1.75rem;
-  position: sticky; top: var(--bar-h); align-self: start;
+  position: sticky; top: calc(var(--bar-h) + var(--webmcp-banner-h)); align-self: start;
   /* Full viewport height, so the rail reads as a wall of the workbench rather
      than a card floating in the corner when there is little in it. */
-  height: calc(var(--app-h) - var(--bar-h));
+  height: calc(var(--app-h) - var(--bar-h) - var(--webmcp-banner-h));
   overflow-y: auto;
 }
 
@@ -367,7 +383,7 @@ a.ghost {
    it scrolls its own scrollback, which is what a terminal is for and what its
    history, its search and its selection all assume. */
 .shell {
-  height: calc(var(--app-h) - var(--bar-h));
+  height: calc(var(--app-h) - var(--bar-h) - var(--webmcp-banner-h));
   /* Grid children are min-width:auto by default, so a wide result would push
      the rail off the screen rather than scroll inside the terminal. */
   min-width: 0;
@@ -632,6 +648,7 @@ a.cta:hover { background: #fff759; border-color: #fff759; color: var(--ink); }
    either pane deciding a fixed share in advance. */
 @media (max-width: 52rem) {
   :root { --bar-h: 2.75rem; }
+  body.webmcp-compatible { --webmcp-banner-h: 3.2rem; }
 
   .workbench {
     display: flex; flex-direction: column;
@@ -673,7 +690,6 @@ a.cta:hover { background: #fff759; border-color: #fff759; color: var(--ink); }
        until "platform" is "plat/form" and a version is "v1.5/.4"; 52 columns
        fits both. A browser without `zoom` simply gets the 44, which is what it
        had. */
-    zoom: 0.85;
   }
 
   .bar { padding: 0 0.75rem; gap: 0.6rem; }

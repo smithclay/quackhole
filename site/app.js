@@ -26,8 +26,9 @@
 // it. If that ever stops being true, this is the thing to check.
 import * as duckdb from '@duckdb/duckdb-wasm';
 import * as shell from '@duckdb/duckdb-wasm-shell';
+import { tableFromIPC } from 'apache-arrow';
 import { createWire } from './wire.js';
-import { registerAgentTools } from './webmcp.js';
+import { hasWebMCP, registerAgentTools } from './webmcp.js';
 
 // xterm draws the terminal, and the shell package does not carry its
 // stylesheet. Pinned in package.json for this one file: the shell depends on
@@ -47,6 +48,12 @@ const $ = (sel) => document.querySelector(sel);
 // Every asset is resolved against <base>, because this is served from a project
 // Pages site under /quackhole/ where a leading slash means github.io itself.
 const asset = (path) => new URL(path, document.baseURI).href;
+
+// This is decided before DuckDB boots. An agent-compatible browser opened this
+// page to use the tools, not to work through the visitor onboarding first.
+const webmcpCompatible = hasWebMCP();
+document.body.classList.toggle('webmcp-compatible', webmcpCompatible);
+$('#webmcp-banner').hidden = !webmcpCompatible;
 
 // --- what to do about an error -----------------------------------------------
 
@@ -235,8 +242,9 @@ function renderChatPrompt() {
     'run-sql to query one. Qualify a remote table with the catalog name',
     'list-connections gave you.',
     '',
-    'run-sql types the statement into the terminal on screen and tells you',
-    'only that it ran -- the rows are drawn for me, so ask me what it said.',
+    'run-sql types the statement into the terminal on screen and returns a',
+    'tiny preview. The full rows are drawn for me, so ask me about anything',
+    'beyond that preview.',
     '',
     'To reach a database I am serving, ask me for its qh1_ ticket and pass',
     'that to attach-remote. Do not invent one.',
@@ -891,22 +899,93 @@ function typeIntoShell(sql) {
 const pending = new Map();
 
 /// Hand a typed statement's outcome back to whoever typed it.
-const settle = (text, err, ms) => {
+const settle = (text, err, outcome) => {
   const waiter = pending.get(text);
   if (!waiter) return;
   pending.delete(text);
   if (err) waiter.reject(err);
-  else waiter.resolve(ms);
+  else waiter.resolve(outcome);
 };
+
+// `run-sql` needs enough of an answer to choose a sensible next statement, not
+// an invisible second result viewer. These caps keep that answer useful without
+// handing an agent a large or unserializable Arrow table.
+const PREVIEW_ROWS = 2;
+const PREVIEW_COLUMNS = 6;
+const PREVIEW_VALUE_CHARS = 80;
+
+const compactValue = (value, type = '') => {
+  let text;
+  if (value === null || value === undefined) text = 'NULL';
+  else if (value instanceof Date) text = value.toISOString();
+  else if (/date|timestamp|time/i.test(type) && (typeof value === 'number' || typeof value === 'bigint')) {
+    const date = new Date(Number(value));
+    text = Number.isNaN(date.getTime()) ? String(value) : date.toISOString().replace('T', ' ').replace('.000Z', 'Z');
+  }
+  else if (typeof value === 'object') {
+    try {
+      text = JSON.stringify(value, (_, nested) => (typeof nested === 'bigint' ? nested.toString() : nested));
+    } catch {
+      text = String(value);
+    }
+  } else text = String(value);
+
+  text = text.replace(/\s+/g, ' ');
+  const truncated = text.length > PREVIEW_VALUE_CHARS;
+  return { value: truncated ? `${text.slice(0, PREVIEW_VALUE_CHARS - 1)}…` : text, truncated };
+};
+
+/// A JSON-safe glimpse of DuckDB's Arrow IPC result, bounded at every dimension.
+function previewResult(ipc) {
+  try {
+    const table = tableFromIPC(ipc);
+    const fields = table?.schema?.fields ?? [];
+    const previewFields = fields.slice(0, PREVIEW_COLUMNS);
+    const columns = previewFields.map((field) => String(field.name));
+    const rowCount = Number(table?.numRows ?? 0);
+    const source = typeof table?.slice === 'function' ? table.slice(0, PREVIEW_ROWS) : table;
+    const truncation = {
+      rows: rowCount > PREVIEW_ROWS,
+      columns: fields.length > PREVIEW_COLUMNS,
+      values: false,
+    };
+    const rows = source.toArray().slice(0, PREVIEW_ROWS).map((row) => {
+      const values = typeof row?.toJSON === 'function' ? row.toJSON() : row;
+      return previewFields.map((field) => {
+        const compact = compactValue(values?.[field.name], String(field.type));
+        truncation.values ||= compact.truncated;
+        return compact.value;
+      });
+    });
+    return {
+      rowCount: Number.isSafeInteger(rowCount) ? rowCount : null,
+      columns,
+      rows,
+      truncated: Object.values(truncation).some(Boolean),
+      truncation,
+    };
+  } catch (err) {
+    // A preview is additive. A peculiar Arrow value must not turn a statement
+    // that rendered correctly in the terminal into a reasonless tool failure.
+    console.warn('[quackhole] could not make a WebMCP result preview:', err);
+    return {
+      rowCount: null,
+      columns: [],
+      rows: [],
+      truncated: false,
+      truncation: { rows: false, columns: false, values: false },
+      unavailable: true,
+    };
+  }
+}
 
 /// Run a statement in the shell, the way a person does, and say how it went.
 ///
 /// This is what the agent tools run SQL through. An agent's statement belongs
 /// where the visitor can see it -- typed at the prompt, with its result drawn in
 /// the terminal -- rather than on a connection of its own running invisibly
-/// beside one. So the rows are not collected here: they are on screen, which is
-/// the whole reason for putting the statement there. What comes back is whether
-/// it ran, which the `observed` proxy is already watching for.
+/// beside one. The agent gets only a deliberately small, string-only preview;
+/// the terminal remains the full result surface.
 ///
 /// Typed once and never retried. `greet` retries because a greeting that arrives
 /// twice is still a greeting; a statement may have carried an INSERT to another
@@ -1158,7 +1237,7 @@ function observed(database) {
           }
           const ms = performance.now() - t0;
           afterQuery(text, ms);
-          settle(text, null, ms);
+          settle(text, null, { elapsedMs: ms, preview: previewResult(result) });
           return result;
         };
       }
@@ -1453,7 +1532,7 @@ if (fragment.startsWith('qh1_')) {
   // Arriving from the link the server printed: ask about this one peer, rather than
   // opening the setup story the visitor has already been through.
   await offerConnect(fragment);
-} else if (session) {
+} else if (session && !webmcpCompatible) {
   // Nothing to attach and nothing serving yet, so the front door: it is the only
   // screen that says what this is rather than what to do next, and it offers
   // both ways on -- a ticket somebody was handed, or the instructions for
