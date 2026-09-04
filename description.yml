@@ -11,7 +11,7 @@
 extension:
   name: quackhole
   description: Query a DuckDB behind NAT from anywhere, over an encrypted peer-to-peer connection — no port forwarding, VPN, or certificates
-  version: 0.0.2
+  version: 0.0.3
   language: C++
   build: cmake
   license: MIT
